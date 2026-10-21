@@ -1,0 +1,152 @@
+#include "spec.h"
+#include "specs.h"
+
+#include <string.h>
+
+#include "tl_report.h"
+
+/* Демо-проект и спальня за перегородкой с общей раскладкой — как в Python-версии. */
+static TlProject *demo_with_bedroom(void)
+{
+    TlProject *project = tl_project_demo();
+    tl_project_add_partition(project, tl_partition_new(tl_vec2(2000, 0), tl_vec2(2000, 3600), 100));
+    tl_project_update_spaces(project);
+    TlSpace *living = project->spaces.items[0];
+    TlSpace *bedroom = project->spaces.items[2];
+    tl_space_set_name(bedroom, "Спальня");
+    bedroom->source_id = living->id;
+    tl_project_update_spaces(project);
+    return project;
+}
+
+static const TlTileTypeSummary *type_with_width(const TlSummary *summary, double width)
+{
+    for (size_t i = 0; i < summary->types.count; i++)
+        if (summary->types.items[i].tile->tile_width == width)
+            return &summary->types.items[i];
+    return NULL;
+}
+
+void spec_summary(void)
+{
+    DESCRIBE("Сводный расчёт")
+    {
+        IT("совпадает с Python-версией: 100 плиток 600×300 (−6 на стыке, −10 из обрезков), ванная 56")
+        {
+            TlProject *project = demo_with_bedroom();
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 2);
+            const TlTileTypeSummary *main_tile = type_with_width(&summary, 600);
+            const TlTileTypeSummary *bath_tile = type_with_width(&summary, 300);
+            EXPECT(main_tile && bath_tile);
+            if (main_tile && bath_tile) {
+                EXPECT_INT(main_tile->count, 100);
+                EXPECT_INT(main_tile->shared_saving, 6);
+                EXPECT_INT(main_tile->offcut_saving, 10);
+                EXPECT_INT(main_tile->to_buy, 110);
+                EXPECT_INT(main_tile->spaces.count, 2);
+                EXPECT_INT(bath_tile->count, 56);
+                EXPECT_INT(bath_tile->to_buy, 62);
+            }
+            EXPECT_NEAR(summary.glue_total_kg, 125.51, 0.01);
+            EXPECT_INT(summary.glue.count, 1);
+            EXPECT_INT(summary.glue.items[0].units, 6);
+            EXPECT_INT(summary.clip_total, 461);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("комнаты без плитки не входят в площадь под плитку")
+        {
+            TlProject *project = tl_project_demo();
+            project->spaces.items[1]->tile.enabled = false;
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_NEAR(summary.floor_area / 1e6, 22.495, 0.01);
+            EXPECT_NEAR(summary.tiled_area / 1e6, 17.628, 0.01);
+            EXPECT_INT(summary.types.count, 1);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("остатки подрезок: полосы 200 и 196 мм режутся из одной плитки 600")
+        {
+            TlProject *project = tl_project_new();
+            const TlVec2 corners[] = {{0, 0}, {1000, 0}, {1000, 602}, {0, 602}};
+            tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
+            tl_project_update_spaces(project);
+            TlSpace *room = project->spaces.items[0];
+            room->tile.offset_x = 202; /* слева полоса 200, справа 196 */
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.items[0].count, 4);
+            EXPECT_INT(summary.types.items[0].offcut_saving, 2);
+            tl_summary_free(&summary);
+            room->tile.reuse_offcuts = false;
+            summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.items[0].count, 6);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+    }
+
+    DESCRIBE("Нумерация плиток")
+    {
+        IT("сквозная: плитка на стыке комнат с общим полом имеет один номер")
+        {
+            TlProject *project = demo_with_bedroom();
+            tl_report_assign_numbers(project);
+            TlLayout *living = tl_space_layout(project->spaces.items[0]);
+            TlLayout *bedroom = tl_space_layout(project->spaces.items[2]);
+            int shared = 0, same_number = 0, max_number = 0;
+            for (size_t i = 0; i < living->tiles.count; i++) {
+                TlTile *twin = tl_layout_tile_at(bedroom, living->tiles.items[i].cell);
+                if (twin) {
+                    shared++;
+                    same_number += twin->number == living->tiles.items[i].number;
+                }
+                if (living->tiles.items[i].number > max_number)
+                    max_number = living->tiles.items[i].number;
+            }
+            EXPECT_INT(shared, 6);
+            EXPECT_INT(same_number, 6);
+            EXPECT_INT(max_number, 110);
+            TlLayout *bath = tl_space_layout(project->spaces.items[1]);
+            EXPECT_INT(bath->tiles.items[0].number, 111);
+            tl_project_free(project);
+        }
+    }
+
+    DESCRIBE("Чертежи подрезок")
+    {
+        IT("плитка на две комнаты и пара обрезков — каждая на одной карточке")
+        {
+            TlProject *project = demo_with_bedroom();
+            TlCutCardList cards = tl_report_cut_cards(project);
+            int shared_cards = 0, pair_cards = 0;
+            for (size_t i = 0; i < cards.count; i++) {
+                if (cards.items[i].kind == TL_CARD_SHARED_TILE)
+                    shared_cards++;
+                if (cards.items[i].kind == TL_CARD_OFFCUT_PAIR)
+                    pair_cards++;
+                EXPECT(cards.items[i].parts.count >= 1);
+            }
+            EXPECT_INT(shared_cards, 6);
+            EXPECT_INT(pair_cards, 10);
+            tl_cut_card_list_free_all(&cards);
+            tl_project_free(project);
+        }
+    }
+
+    DESCRIBE("Подбор «Минимум плиток»")
+    {
+        IT("из неудачного смещения находит раскладку с меньшим числом плиток")
+        {
+            TlProject *project = demo_with_bedroom();
+            TlSpace *living = project->spaces.items[0];
+            living->tile.offset_x = 37;
+            living->tile.offset_y = 151;
+            TlTileCountResult result;
+            EXPECT(tl_report_optimize_count(project, living, &result));
+            EXPECT(result.after.tiles < result.before.tiles);
+            EXPECT_INT(result.after.tiles, 100);
+            tl_project_free(project);
+        }
+    }
+}
