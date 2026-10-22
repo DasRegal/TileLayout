@@ -1,5 +1,5 @@
 # Сборка и спецификации на Linux и Windows; переносная сборка для Windows x64.
-# Тег vX.Y (совпадающий с версией в tilelayout-c/CMakeLists.txt) — релиз на GitHub с zip.
+# Тег vX.Y (совпадающий с версией в CMakeLists.txt) — релиз на GitHub с zip.
 name: Сборка
 
 on:
@@ -22,7 +22,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build libgtk-3-dev
       - name: Сборка
         run: |
-          cmake -S tilelayout-c -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
       - name: Спецификации
         run: ctest --test-dir build --output-on-failure
@@ -47,10 +47,10 @@ jobs:
       - name: Версия
         id: version
         run: |
-          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' tilelayout-c/CMakeLists.txt)
+          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
-              echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в tilelayout-c/CMakeLists.txt"
+              echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в CMakeLists.txt"
               exit 1
             fi
           else
@@ -59,12 +59,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Сборка
         run: |
-          cmake -S tilelayout-c -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
       - name: Спецификации
         run: ctest --test-dir build --output-on-failure
       - name: Переносная сборка
-        run: tilelayout-c/packaging/windows/make-portable.sh build "${{ steps.version.outputs.version }}" dist
+        run: packaging/windows/make-portable.sh build "${{ steps.version.outputs.version }}" dist
       - uses: actions/upload-artifact@v4
         with:
           name: TileLayout-${{ steps.version.outputs.version }}-win64
