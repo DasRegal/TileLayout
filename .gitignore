@@ -2,9 +2,8 @@
 build/
 build-*/
 
-# Python
-__pycache__/
-*.pyc
-
 # настройки редактора
 .vscode/
+
+# переносная сборка
+dist/

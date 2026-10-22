@@ -5,13 +5,13 @@
 #include "app_canvas.h"
 #include "app_commands.h"
 #include "app_export.h"
+#include "app_file_dialog.h"
 #include "app_icons.h"
 #include "app_panel.h"
 #include "app_print_dialog.h"
 #include "app_widgets.h"
 
 #define APP_NAME "TileLayout"
-#define APP_VERSION "1.0"
 #define PROJECT_EXTENSION ".tilelayout.json"
 
 static const char HELP_TEXT[] =
@@ -131,20 +131,9 @@ static char *project_title(AppWindow *self)
     return title;
 }
 
-static GtkWidget *file_chooser(AppWindow *self, const char *title, GtkFileChooserAction action, const char *accept)
-{
-    GtkWidget *chooser = gtk_file_chooser_dialog_new(title, GTK_WINDOW(self->window), action, "Отмена",
-                                                     GTK_RESPONSE_CANCEL, accept, GTK_RESPONSE_ACCEPT, NULL);
-    GtkFileFilter *filter = gtk_file_filter_new();
-    gtk_file_filter_set_name(filter, "Проект TileLayout (*" PROJECT_EXTENSION ", *.tileplan.json, *.json)");
-    gtk_file_filter_add_pattern(filter, "*.json");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
-    char *folder = app_config_last_directory(self->config);
-    if (folder)
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), folder);
-    g_free(folder);
-    return chooser;
-}
+static const AppFileType PROJECT_FILES = {"Проект TileLayout (*" PROJECT_EXTENSION ", *.tileplan.json, *.json)",
+                                           "*.json", ".json", PROJECT_EXTENSION};
+static const AppFileType PNG_FILES = {"Изображение PNG (*.png)", "*.png", ".png", ".png"};
 
 static bool save_to(AppWindow *self, const char *path)
 {
@@ -163,21 +152,12 @@ static bool save_to(AppWindow *self, const char *path)
 
 static bool save_as(AppWindow *self)
 {
-    GtkWidget *chooser = file_chooser(self, "Сохранить проект", GTK_FILE_CHOOSER_ACTION_SAVE, "Сохранить");
-    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), "plan" PROJECT_EXTENSION);
-    bool saved = false;
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
-        if (!g_str_has_suffix(path, ".json")) {
-            char *with_extension = g_strconcat(path, PROJECT_EXTENSION, NULL);
-            g_free(path);
-            path = with_extension;
-        }
-        saved = save_to(self, path);
-        g_free(path);
-    }
-    gtk_widget_destroy(chooser);
+    char *folder = app_config_last_directory(self->config);
+    char *path = app_file_dialog_save(GTK_WINDOW(self->window), "Сохранить проект", folder, "plan" PROJECT_EXTENSION,
+                                      &PROJECT_FILES);
+    bool saved = path && save_to(self, path);
+    g_free(path);
+    g_free(folder);
     return saved;
 }
 
@@ -229,15 +209,12 @@ static void on_open(GtkMenuItem *item, AppWindow *self)
 {
     if (!confirm_discard(self))
         return;
-    GtkWidget *chooser = file_chooser(self, "Открыть проект", GTK_FILE_CHOOSER_ACTION_OPEN, "Открыть");
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
-        gtk_widget_destroy(chooser);
+    char *folder = app_config_last_directory(self->config);
+    char *path = app_file_dialog_open(GTK_WINDOW(self->window), "Открыть проект", folder, &PROJECT_FILES);
+    if (path)
         open_path(self, path);
-        g_free(path);
-        return;
-    }
-    gtk_widget_destroy(chooser);
+    g_free(path);
+    g_free(folder);
 }
 
 static void on_save(GtkMenuItem *item, AppWindow *self)
@@ -310,25 +287,20 @@ static void rebuild_recent_menu(AppWindow *self)
 
 static void on_export_png(GtkMenuItem *item, AppWindow *self)
 {
-    GtkWidget *chooser = gtk_file_chooser_dialog_new("Экспорт в PNG", GTK_WINDOW(self->window), GTK_FILE_CHOOSER_ACTION_SAVE,
-                                                     "Отмена", GTK_RESPONSE_CANCEL, "Сохранить", GTK_RESPONSE_ACCEPT, NULL);
-    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), "plan.png");
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
-        GtkWidget *area = app_canvas_widget(self->canvas);
-        AppRenderOptions options = app_render_screen_options();
-        options.show_tiles = self->document->view.tiles;
-        options.show_clips = self->document->view.clips;
-        options.show_numbers = self->document->view.numbers;
-        options.show_dims = self->document->view.dims;
-        options.show_grid = false;
-        if (app_export_png(self->document->project, path, gtk_widget_get_allocated_width(area),
-                           gtk_widget_get_allocated_height(area), 2.0, &options))
-            app_document_status(self->document, "Сохранено изображение: %s", path);
-        g_free(path);
-    }
-    gtk_widget_destroy(chooser);
+    char *path = app_file_dialog_save(GTK_WINDOW(self->window), "Экспорт в PNG", NULL, "plan.png", &PNG_FILES);
+    if (!path)
+        return;
+    GtkWidget *area = app_canvas_widget(self->canvas);
+    AppRenderOptions options = app_render_screen_options();
+    options.show_tiles = self->document->view.tiles;
+    options.show_clips = self->document->view.clips;
+    options.show_numbers = self->document->view.numbers;
+    options.show_dims = self->document->view.dims;
+    options.show_grid = false;
+    if (app_export_png(self->document->project, path, gtk_widget_get_allocated_width(area),
+                       gtk_widget_get_allocated_height(area), 2.0, &options))
+        app_document_status(self->document, "Сохранено изображение: %s", path);
+    g_free(path);
 }
 
 static void open_print_dialog(void *data)
@@ -470,7 +442,7 @@ static void on_about(GtkMenuItem *item, AppWindow *self)
                                     "плитки, клея и СВП.\n\nФайлы проектов: *%s\nGTK %d.%d.%d",
                                     PROJECT_EXTENSION, gtk_get_major_version(), gtk_get_minor_version(),
                                     gtk_get_micro_version());
-    gtk_show_about_dialog(GTK_WINDOW(self->window), "program-name", APP_NAME, "version", APP_VERSION, "comments",
+    gtk_show_about_dialog(GTK_WINDOW(self->window), "program-name", APP_NAME, "version", TL_VERSION, "comments",
                           runtime, "logo", app_icon_pixbuf("covering", 64), "title", "О программе", NULL);
     g_free(runtime);
 }

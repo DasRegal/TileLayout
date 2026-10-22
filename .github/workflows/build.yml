@@ -1,0 +1,77 @@
+# Сборка и спецификации на Linux и Windows; переносная сборка для Windows x64.
+# Тег vX.Y (совпадающий с версией в tilelayout-c/CMakeLists.txt) — релиз на GitHub с zip.
+name: Сборка
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Зависимости
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build libgtk-3-dev
+      - name: Сборка
+        run: |
+          cmake -S tilelayout-c -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+      - name: Спецификации
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    permissions:
+      contents: write   # для публикации релиза
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: zip
+          pacboy: >-
+            toolchain:p cmake:p ninja:p gtk3:p librsvg:p
+      - name: Версия
+        id: version
+        run: |
+          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' tilelayout-c/CMakeLists.txt)
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в tilelayout-c/CMakeLists.txt"
+              exit 1
+            fi
+          else
+            version="$version-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Сборка
+        run: |
+          cmake -S tilelayout-c -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+      - name: Спецификации
+        run: ctest --test-dir build --output-on-failure
+      - name: Переносная сборка
+        run: tilelayout-c/packaging/windows/make-portable.sh build "${{ steps.version.outputs.version }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TileLayout-${{ steps.version.outputs.version }}-win64
+          path: dist/*.zip
+      - name: Релиз
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

@@ -2,6 +2,7 @@
 
 #include <math.h>
 
+#include "app_file_dialog.h"
 #include "app_icons.h"
 #include "app_print.h"
 #include "app_widgets.h"
@@ -179,26 +180,17 @@ static gboolean fit_on_open(gpointer data)
 
 static void on_save_pdf(GtkButton *button, PrintDialog *self)
 {
-    GtkWidget *chooser = gtk_file_chooser_dialog_new("Сохранить PDF", GTK_WINDOW(self->dialog), GTK_FILE_CHOOSER_ACTION_SAVE,
-                                                     "Отмена", GTK_RESPONSE_CANCEL, "Сохранить", GTK_RESPONSE_ACCEPT, NULL);
-    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
-    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), "plan.pdf");
-    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
-        char *path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
-        if (!g_str_has_suffix(path, ".pdf") && !g_str_has_suffix(path, ".PDF")) {
-            char *with_extension = g_strconcat(path, ".pdf", NULL);
-            g_free(path);
-            path = with_extension;
-        }
-        bool ok = app_print_job_save_pdf(self->job, path);
-        GtkWidget *message = gtk_message_dialog_new(GTK_WINDOW(self->dialog), GTK_DIALOG_MODAL,
-                                                    ok ? GTK_MESSAGE_INFO : GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-                                                    ok ? "Сохранено:\n%s" : "Не удалось сохранить:\n%s", path);
-        gtk_dialog_run(GTK_DIALOG(message));
-        gtk_widget_destroy(message);
-        g_free(path);
-    }
-    gtk_widget_destroy(chooser);
+    static const AppFileType PDF_FILES = {"Документ PDF (*.pdf)", "*.pdf", ".pdf", ".pdf"};
+    char *path = app_file_dialog_save(GTK_WINDOW(self->dialog), "Сохранить PDF", NULL, "plan.pdf", &PDF_FILES);
+    if (!path)
+        return;
+    bool ok = app_print_job_save_pdf(self->job, path);
+    GtkWidget *message = gtk_message_dialog_new(GTK_WINDOW(self->dialog), GTK_DIALOG_MODAL,
+                                                ok ? GTK_MESSAGE_INFO : GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
+                                                ok ? "Сохранено:\n%s" : "Не удалось сохранить:\n%s", path);
+    gtk_dialog_run(GTK_DIALOG(message));
+    gtk_widget_destroy(message);
+    g_free(path);
 }
 
 static void on_begin_print(GtkPrintOperation *operation, GtkPrintContext *context, PrintDialog *self)

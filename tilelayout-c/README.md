@@ -28,7 +28,25 @@ cmake --build build -j
 ./build/tilelayout.exe
 ```
 
-Чтобы запустить программу на другом компьютере, положите рядом с `tilelayout.exe` нужные DLL из `C:\msys64\mingw64\bin`. Список нужных DLL выдаёт команда `ldd build/tilelayout.exe | grep mingw64`.
+### Переносная сборка для Windows x64
+
+Папка и zip, которые запускаются без установки и без MSYS2. Собираются там же, в оболочке MINGW64:
+
+```sh
+pacman -S zip mingw-w64-x86_64-librsvg
+packaging/windows/make-portable.sh build 1.0
+# результат: dist/TileLayout-1.0-win64/ и dist/TileLayout-1.0-win64.zip
+```
+
+Скрипт сам находит нужные DLL. Кроме них он кладёт в папку:
+- загрузчики значков PNG и SVG;
+- схемы настроек GTK;
+- символьные значки Adwaita;
+- лицензии библиотек.
+
+В конце скрипт проверяет, что программа запускается без MSYS2 в `PATH`.
+
+Переносной режим: если рядом с `tilelayout.exe` лежит `tilelayout.ini`, настройки хранятся в нём. В переносной сборке этот файл уже есть. Без него настройки хранятся в профиле пользователя.
 
 ### Только ядро и тесты
 
@@ -52,6 +70,23 @@ cmake --build build && (cd build && ctest --output-on-failure)
 - «плитка на стыке двух комнат с общим полом считается один раз».
 
 Набор `spec_storage` открывает проект, сохранённый прежней Python-версией. Он проверяет, что количество плиток, клея и СВП совпадает с её расчётами.
+
+## Релизы на GitHub
+
+Сборку делает GitHub Actions: `.github/workflows/build.yml` в корне репозитория.
+- **Каждый push в `main`**: сборка и спецификации на Linux и Windows. Переносной zip для Windows прикладывается к запуску (вкладка Actions → запуск → Artifacts).
+- **Тег `vX.Y`**: то же самое, а zip публикуется в Releases.
+
+Как выпустить версию:
+1. Поднимите версию в `project(TileLayout VERSION X.Y ...)` в `CMakeLists.txt`.
+2. Закоммитьте и отправьте:
+
+   ```sh
+   git tag vX.Y
+   git push origin main vX.Y
+   ```
+
+Если тег не совпадает с версией в `CMakeLists.txt`, сборка остановится с ошибкой. Версию в окне «О программе» CMake тоже берёт из `CMakeLists.txt`.
 
 ## Командная строка
 

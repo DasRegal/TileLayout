@@ -5,6 +5,10 @@
 
 #include "tl_tile_settings.h"
 
+#ifdef G_OS_WIN32
+#include <windows.h>
+#endif
+
 #define CONFIG_FOLDER "TileLayout"
 #define CONFIG_FILE "tilelayout.ini"
 
@@ -45,11 +49,36 @@ static int read_int(GKeyFile *file, const char *group, const char *key, int fall
 
 /* ---- файл ------------------------------------------------------------------------ */
 
+static char *executable_directory(void)
+{
+#ifdef G_OS_WIN32
+    wchar_t module[4096];
+    DWORD length = GetModuleFileNameW(NULL, module, G_N_ELEMENTS(module));
+    char *executable = length ? g_utf16_to_utf8(module, length, NULL, NULL, NULL) : NULL;
+#else
+    char *executable = g_file_read_link("/proc/self/exe", NULL);
+#endif
+    char *directory = executable ? g_path_get_dirname(executable) : NULL;
+    g_free(executable);
+    return directory;
+}
+
+static char *config_path(void)
+{
+    char *directory = executable_directory();
+    char *portable = directory ? g_build_filename(directory, CONFIG_FILE, NULL) : NULL;
+    g_free(directory);
+    if (portable && g_file_test(portable, G_FILE_TEST_IS_REGULAR))
+        return portable;
+    g_free(portable);
+    return g_build_filename(g_get_user_config_dir(), CONFIG_FOLDER, CONFIG_FILE, NULL);
+}
+
 AppConfig *app_config_load(void)
 {
     AppConfig *config = g_new0(AppConfig, 1);
     config->file = g_key_file_new();
-    config->path = g_build_filename(g_get_user_config_dir(), CONFIG_FOLDER, CONFIG_FILE, NULL);
+    config->path = config_path();
     g_key_file_load_from_file(config->file, config->path, G_KEY_FILE_NONE, NULL);
     return config;
 }

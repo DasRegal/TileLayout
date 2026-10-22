@@ -1,6 +1,9 @@
 /*
  * Настройки между запусками: файл tilelayout.ini в папке настроек
  * пользователя (Linux: ~/.config/TileLayout, Windows: %LOCALAPPDATA%\TileLayout).
+ *
+ * Переносной режим: если tilelayout.ini лежит рядом с программой,
+ * настройки читаются и пишутся в него (сборка для флешки).
  */
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
