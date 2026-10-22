@@ -2,8 +2,12 @@
 
 Программа для раскладки плитки на C99 + GTK 3:
 - план дома: стены, перегородки, проёмы;
+- точная форма перегородок для раскроя: каждый угол тела задаётся отдельно, торцы срезаются точно по стене или боку другой перегородки;
 - комнаты появляются из замкнутых областей;
 - раскладка плитки, расчёт плитки, клея и СВП;
+- деформационные швы: режут плитку с заданным зазором, куски видны на плане с номерами и в чертежах подрезок;
+- линейки для измерений: концы притягиваются к углам, серединам, краям и осям стен и к швам плитки;
+- автовыравнивание по горизонтали и вертикали и по углам других стен — с пунктирными вспомогательными линиями;
 - печать и PDF с чертежами подрезок.
 
 Файлы проектов — `*.tilelayout.json`. Открываются и файлы прежней Python-версии программы.
@@ -22,21 +26,59 @@
 
 ## Сборка
 
-### Linux (Debian, Ubuntu, Mint)
+Нужны компилятор C, CMake 3.13 или новее и GTK 3 для разработки.
 
 ```sh
-sudo apt install build-essential cmake pkg-config libgtk-3-dev
+git clone https://github.com/DasRegal/TileLayout.git
+cd TileLayout
+```
+
+### Linux
+
+Установите зависимости одной командой для своего дистрибутива:
+
+| Дистрибутив | Команда |
+|---|---|
+| Ubuntu 20.04+, Linux Mint 20+, Debian 11+ | `sudo apt install build-essential cmake pkg-config libgtk-3-dev` |
+| Fedora | `sudo dnf install gcc cmake pkgconf-pkg-config gtk3-devel` |
+| Arch, Manjaro | `sudo pacman -S --needed base-devel cmake gtk3` |
+
+Сборка, проверка и запуск:
+
+```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+(cd build && ctest --output-on-failure)
 ./build/tilelayout [проект.tilelayout.json]
 ```
 
-### Windows (MSYS2, окружение «MINGW64»)
+С CMake 3.21 и новее можно короче, через пресеты:
 
 ```sh
-pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-gtk3
-cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --preset release && cmake --build --preset release && ctest --preset release
+```
+
+Есть и пресет `debug` (папка `build-debug`). В VS Code с расширением CMake Tools пресеты появляются в строке состояния.
+
+#### Если `libgtk-3-dev` не устанавливается
+
+Так бывает, когда библиотеки GTK в системе новее, чем у её репозиториев. Например, в Linux Mint 19 с GTK из Ubuntu 20.04 apt пишет «unmet dependencies». Тогда:
+
+```sh
+tools/fetch-gtk-dev.sh
+```
+
+Скрипт ничего не устанавливает в систему. Он скачивает файлы для разработки ровно под установленную версию GTK в `~/.cache/tilelayout/gtk3-dev`. CMake находит эту папку сам, дальше собирайте командами выше.
+
+Если потом поставите `libgtk-3-dev` обычным способом, CMake возьмёт системный. Папку можно удалить: `rm -rf ~/.cache/tilelayout`.
+
+### Windows (MSYS2, оболочка «MSYS2 MINGW64»)
+
+```sh
+pacman -S --needed git mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-gtk3
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+(cd build && ctest --output-on-failure)
 ./build/tilelayout.exe
 ```
 
@@ -62,7 +104,7 @@ packaging/windows/make-portable.sh build 1.0
 
 ### Только ядро и тесты
 
-Если GTK не найден, CMake выдаёт предупреждение. Тогда собираются только ядро и спецификации. Кросс-сборка ядра из Linux под Windows:
+Если GTK не найден, CMake выдаёт предупреждение и собирает только ядро и спецификации. Кросс-сборка ядра из Linux под Windows:
 
 ```sh
 cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake -DTL_BUILD_APP=OFF
@@ -87,18 +129,19 @@ cmake --build build && (cd build && ctest --output-on-failure)
 
 Сборку делает GitHub Actions: `.github/workflows/build.yml` в корне репозитория.
 - **Каждый push в `main`**: сборка и спецификации на Linux и Windows. Переносной zip для Windows прикладывается к запуску (вкладка Actions → запуск → Artifacts).
-- **Тег `vX.Y`**: то же самое, а zip публикуется в Releases.
+- **Тег `vX.Y`**: то же самое, а zip публикуется в Releases. Текст релиза — раздел этой версии из [CHANGELOG.md](CHANGELOG.md).
 
 Как выпустить версию:
 1. Поднимите версию в `project(TileLayout VERSION X.Y ...)` в `CMakeLists.txt`.
-2. Закоммитьте и отправьте:
+2. Добавьте в [CHANGELOG.md](CHANGELOG.md) раздел `## [X.Y] — дата`: что добавлено, изменено, исправлено.
+3. Закоммитьте и отправьте:
 
    ```sh
    git tag vX.Y
    git push origin main vX.Y
    ```
 
-Если тег не совпадает с версией в `CMakeLists.txt`, сборка остановится с ошибкой. Версию в окне «О программе» CMake тоже берёт из `CMakeLists.txt`.
+Сборка остановится с ошибкой, если тег не совпадает с версией в `CMakeLists.txt` или в `CHANGELOG.md` нет раздела этой версии. Версию в окне «О программе» CMake тоже берёт из `CMakeLists.txt`.
 
 ## Командная строка
 
@@ -115,6 +158,10 @@ tilelayout --screenshot окно.png [проект]          снимок окн
 src/core/   ядро без GUI: модель, геометрия, раскладка, расчёты, JSON, история
 src/app/    интерфейс GTK: окно, канва, инструменты, панель, печать
 tests/      спецификации ядра и проект прежней Python-версии для проверки совместимости
+tools/      fetch-gtk-dev.sh — GTK для разработки без установки в систему
+packaging/  переносная сборка для Windows
+cmake/      файл кросс-сборки MinGW
+docs/       скриншоты
 ```
 
 Ядро (`tl_*`) не зависит от GTK. Его можно проверить отдельно и собрать любым компилятором C99.
@@ -124,6 +171,8 @@ tests/      спецификации ядра и проект прежней Pyt
 | `tl_geometry`, `tl_regions` | векторы, многоугольники, отсечение; разбиение плоскости на области (заменяет булевы операции) |
 | `tl_outline`, `tl_partition`, `tl_opening`, `tl_band` | сущности плана: контур дома, перегородка, проём, полоса стены |
 | `tl_space`, `tl_tile_settings` | комната и настройки плитки |
+| `tl_ruler`, `tl_expansion_joint`, `tl_measure_snap` | линейка, деформационный шов и притягивание их концов |
+| `tl_align` | автовыравнивание: по направлениям и по опорным точкам |
 | `tl_project*` | проект: поиск комнат, связанные стены, узлы перегородок, транзакции правки |
 | `tl_layout` | раскладка плитки: куски, подрезки, СВП, клей, раскладка от угла и по центру |
 | `tl_report*` | сводка по видам плитки, сквозная нумерация, общие плитки и остатки, карточки подрезок, «Минимум плиток» |

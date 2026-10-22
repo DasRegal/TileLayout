@@ -70,9 +70,22 @@ jobs:
         with:
           name: TileLayout-${{ steps.version.outputs.version }}-win64
           path: dist/*.zip
+      - name: Описание релиза из CHANGELOG.md
+        if: github.ref_type == 'tag'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { inside = 1; next }
+            inside && /^## \[/ { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "::error::В CHANGELOG.md нет раздела ## [$version]"
+            exit 1
+          fi
       - name: Релиз
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
-          generate_release_notes: true
+          body_path: release-notes.md
