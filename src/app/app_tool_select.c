@@ -3,8 +3,11 @@
  *   угол дома — с привязкой к углам и выравниванием по соседним;
  *   стена — параллельно себе (со смежной стеной соседнего дома);
  *   комната — переносит весь дом с перегородками и проёмами;
- *   перегородка за тело — только поперёк себя, за конец — вдоль своей оси;
- *   проём — вдоль своей стены; Ctrl — сетка плитки комнаты.
+ *   перегородка за тело — только поперёк себя; за конец — вдоль своей оси,
+ *     а если увести в сторону — поворачивается (с выравниванием по 0°/90°);
+ *     за угол тела (у выделенной) — угол сдвигается поперёк оси, меняя форму;
+ *   проём — вдоль своей стены; Ctrl — сетка плитки комнаты;
+ *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием.
  * Двойной клик по стене дома добавляет угол.
  */
 #include "app_canvas_private.h"
@@ -13,6 +16,7 @@
 
 #include "app_commands.h"
 #include "app_hit.h"
+#include "tl_align.h"
 #include "tl_layout.h"
 
 #define DRAG_THRESHOLD_PX 3.0
@@ -75,7 +79,22 @@ static void begin_drag(AppCanvas *canvas, const AppPointer *pointer, AppSelectio
         drag->partition = hit.partition;
         drag->original_start = hit.partition->start;
         drag->original_end = hit.partition->end;
+        TlPartitionCorner corner;
+        if (app_selection_partition_corner(&hit, &corner))
+            drag->original_corner_offset = hit.partition->corner_offsets[corner];
         drag->token = tl_project_begin_edit(project, NULL);
+        break;
+    case APP_SELECT_RULER:
+        drag->kind = APP_DRAG_RULER;
+        drag->ruler = hit.ruler;
+        drag->original_start = hit.ruler->start;
+        drag->original_end = hit.ruler->end;
+        break;
+    case APP_SELECT_EXPANSION_JOINT:
+        drag->kind = APP_DRAG_EXPANSION_JOINT;
+        drag->expansion_joint = hit.expansion_joint;
+        drag->original_start = hit.expansion_joint->start;
+        drag->original_end = hit.expansion_joint->end;
         break;
     case APP_SELECT_OPENING:
         if (!tl_project_opening_host(project, hit.opening, &drag->band))
@@ -147,23 +166,82 @@ static void drag_opening(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
     drag->opening->center = tl_band_point(&drag->band, along, tl_band_middle(&drag->band));
 }
 
+/* Отрезок — линейка или шов: за середину — целиком, за конец — с притягиванием
+   и выравниванием от другого конца. */
+static void drag_segment(AppCanvas *canvas, AppDrag *drag, TlVec2 *start, TlVec2 *end, TlSnapTargets targets,
+                         TlVec2 delta, bool free)
+{
+    *start = drag->original_start;
+    *end = drag->original_end;
+    if (drag->index == 0) {
+        *start = tl_vec2_add(*start, delta);
+        *end = tl_vec2_add(*end, delta);
+        return;
+    }
+    TlVec2 *moving = drag->index == 1 ? start : end;
+    const TlVec2 *other = drag->index == 1 ? end : start;
+    *moving = app_canvas_measure_point(canvas, tl_vec2_add(*moving, delta), other, targets, free);
+}
+
+/* Конец перегородки: близко к прежней оси — растягивание по ней, близко к
+   горизонтали/вертикали — поворот точно на неё (если автовыравнивание
+   включено), иначе — свободный поворот с привязками к углам и граням. */
+static TlVec2 partition_end_target(AppCanvas *canvas, TlPartition *partition, TlVec2 fixed, TlVec2 moving,
+                                   TlVec2 target, bool free)
+{
+    app_canvas_clear_guides(canvas);
+    if (free)
+        return target;
+    AppSnapContext context = app_canvas_snap_context(canvas);
+    context.skip_partition = partition;
+    const TlVec2 directions[] = {tl_vec2_sub(moving, fixed), {1, 0}, {0, 1}};
+    size_t direction_count = context.align ? 3 : 1;
+    double tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX);
+    TlVec2 aligned;
+    size_t which;
+    if (!tl_align_direction(fixed, target, directions, direction_count, tolerance, &aligned, &which)) {
+        context.align = false; /* поворот: только углы, грани, сетка */
+        return app_snap_wall_point(&context, target, NULL, false).point;
+    }
+    TlVec2 end = app_snap_stretch(&context, fixed, aligned, aligned, false);
+    if (which > 0) {
+        AppGuides guides = {0};
+        app_guides_add(&guides, fixed, which == 2);
+        app_canvas_show_guides(canvas, &guides, end);
+    }
+    return end;
+}
+
+/* Угол тела — только поперёк оси: меняется его отступ от оси, целыми мм
+   (с Shift — точно за мышью). */
+static void drag_partition_corner(AppDrag *drag, TlPartitionCorner corner, TlVec2 delta, bool free)
+{
+    TlPartition *partition = drag->partition;
+    TlVec2 outward = tl_vec2_scale(tl_vec2_perpendicular(tl_partition_direction(partition)),
+                                   tl_partition_corner_side(corner));
+    double offset = drag->original_corner_offset + tl_vec2_dot(delta, outward);
+    partition->corner_offsets[corner] = fmax(0, free ? offset : round(offset));
+}
+
 static void drag_partition(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
 {
     TlPartition *partition = drag->partition;
     TlEditOptions options = {.master = partition};
-    if (drag->index == 0) { /* тело — только поперёк себя */
+    TlPartitionCorner corner;
+    AppSelection grabbed = {.kind = APP_SELECT_PARTITION, .partition = partition, .index = drag->index};
+    if (app_selection_partition_corner(&grabbed, &corner)) {
+        drag_partition_corner(drag, corner, delta, free);
+    } else if (drag->index == 0) { /* тело — только поперёк себя */
         TlVec2 across = tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(drag->original_end, drag->original_start)));
         double shift = snap_distance(canvas, tl_vec2_dot(delta, across), free);
         partition->start = tl_vec2_add(drag->original_start, tl_vec2_scale(across, shift));
         partition->end = tl_vec2_add(drag->original_end, tl_vec2_scale(across, shift));
-    } else {                /* конец — растягивание вдоль оси */
+    } else {                /* конец — вдоль оси или с поворотом */
         bool moving_start = drag->index == 1;
         TlVec2 moving = moving_start ? drag->original_start : drag->original_end;
         TlVec2 fixed = moving_start ? drag->original_end : drag->original_start;
-        AppSnapContext context = app_canvas_snap_context(canvas);
-        context.skip_partition = partition;
         *tl_partition_end_point(partition, moving_start ? TL_PARTITION_START : TL_PARTITION_END) =
-            app_snap_stretch(&context, fixed, moving, tl_vec2_add(moving, delta), free);
+            partition_end_target(canvas, partition, fixed, moving, tl_vec2_add(moving, delta), free);
         options.frozen = partition; /* второй конец остаётся на месте */
     }
     tl_project_apply_edit(canvas->document->project, drag->token, &options);
@@ -196,7 +274,9 @@ static void drag_outline(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
         context.skip_outline = outline;
         context.skip_vertex = (int)index;
         TlVec2 target = tl_vec2_add(drag->original_corners.items[index], delta);
-        outline->inner.items[index] = app_snap_point(&context, target, neighbours, 2, free).point;
+        AppSnapResult snap = app_snap_point(&context, target, neighbours, 2, free);
+        outline->inner.items[index] = snap.point;
+        app_canvas_show_guides(canvas, &snap.guides, snap.point);
     } else {
         TlVec2 normal;
         tl_outline_wall_frame(outline, index, NULL, &normal);
@@ -218,9 +298,11 @@ static void update_hover(AppCanvas *canvas, const AppPointer *pointer)
         return;
     canvas->hover = hover;
     const char *cursor = "default";
-    if (hover.kind == APP_SELECT_VERTEX || (hover.kind == APP_SELECT_PARTITION && hover.index > 0))
+    bool segment = hover.kind == APP_SELECT_RULER || hover.kind == APP_SELECT_EXPANSION_JOINT;
+    bool end_of_line = (hover.kind == APP_SELECT_PARTITION || segment) && hover.index > 0;
+    if (hover.kind == APP_SELECT_VERTEX || end_of_line)
         cursor = "crosshair";
-    else if (hover.kind == APP_SELECT_WALL || hover.kind == APP_SELECT_PARTITION)
+    else if (hover.kind == APP_SELECT_WALL || hover.kind == APP_SELECT_PARTITION || segment)
         cursor = "move";
     else if (hover.kind == APP_SELECT_OPENING)
         cursor = "ew-resize";
@@ -248,6 +330,14 @@ void app_select_motion(AppCanvas *canvas, const AppPointer *pointer)
     case APP_DRAG_TILES: drag_tiles(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_OPENING: drag_opening(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_PARTITION: drag_partition(canvas, drag, delta, pointer->shift); break;
+    case APP_DRAG_RULER:
+        drag_segment(canvas, drag, &drag->ruler->start, &drag->ruler->end, TL_SNAP_TO_ALL, delta, pointer->shift);
+        break;
+    case APP_DRAG_EXPANSION_JOINT:
+        drag_segment(canvas, drag, &drag->expansion_joint->start, &drag->expansion_joint->end,
+                     TL_SNAP_TO_WALL_SURFACES, delta, pointer->shift);
+        tl_project_update_spaces(canvas->document->project); /* шов режет плитку — раскладка меняется */
+        break;
     default: drag_outline(canvas, drag, delta, pointer->shift); break;
     }
     app_document_commit(canvas->document);
@@ -258,6 +348,8 @@ void app_select_release(AppCanvas *canvas, const AppPointer *pointer)
     if (canvas->drag.kind == APP_DRAG_NONE)
         return;
     free_drag(&canvas->drag);
+    canvas->measure_snap.kind = TL_SNAP_NONE;
+    app_canvas_clear_guides(canvas);
     canvas->hover = (AppSelection){0};
     update_hover(canvas, pointer);
 }
@@ -283,6 +375,8 @@ static bool cancel(AppCanvas *canvas)
     if (canvas->drag.kind == APP_DRAG_NONE)
         return false;
     free_drag(&canvas->drag);
+    canvas->measure_snap.kind = TL_SNAP_NONE;
+    app_canvas_clear_guides(canvas);
     return true;
 }
 

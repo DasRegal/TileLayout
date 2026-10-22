@@ -1,7 +1,11 @@
-/* Проёмы: в теле какой стены стоят и какой прямоугольник вырезают. */
+/* Проёмы: в теле какой стены стоят, какую часть стены вырезают и какие
+ * участки стены остаются глухими. */
 #include "tl_project.h"
 
 #include <math.h>
+#include <stdlib.h>
+
+#include "tl_regions.h"
 
 #define HOST_TOLERANCE 1.0
 #define CUT_MARGIN 1.0
@@ -11,24 +15,63 @@ bool tl_project_opening_host(TlProject *project, const TlOpening *opening, TlBan
     return tl_project_find_band(project, opening->center, HOST_TOLERANCE, band);
 }
 
-void tl_project_opening_extent(TlProject *project, const TlBand *band, double along, double width,
-                               double *along_from, double *along_to, double *across_from,
-                               double *across_to)
+/* ---- форма выреза ---------------------------------------------------------- */
+
+/* Наружная стена: грани параллельны — прямоугольник на всю толщину, вместе с
+   примыкающей стеной соседнего дома. */
+static TlPolygon wall_opening_shape(TlProject *project, const TlBand *band, double from, double to)
 {
-    double far = band->far;
-    if (band->host.kind == TL_HOST_WALL) {
-        /* проём проходит и через примыкающую стену соседнего дома */
-        TlWallRefList links = tl_project_linked_walls(project, band->host.outline, band->host.wall);
-        double neighbour = 0.0;
-        for (size_t i = 0; i < links.count; i++)
-            neighbour = fmax(neighbour, links.items[i].outline->thickness.items[links.items[i].wall]);
-        tl_wall_ref_list_free(&links);
-        far += neighbour;
-    }
-    *along_from = along - width / 2;
-    *along_to = along + width / 2;
-    *across_from = band->near - CUT_MARGIN;
-    *across_to = far + CUT_MARGIN;
+    TlWallRefList links = tl_project_linked_walls(project, band->host.outline, band->host.wall);
+    double neighbour = 0.0;
+    for (size_t i = 0; i < links.count; i++)
+        neighbour = fmax(neighbour, links.items[i].outline->thickness.items[links.items[i].wall]);
+    tl_wall_ref_list_free(&links);
+    return tl_band_rect(band, from, to, band->near - CUT_MARGIN, band->far + neighbour + CUT_MARGIN);
+}
+
+/* Оси полосы: x — вдоль стены от её начала, y — поперёк. */
+static TlVec2 to_band(const TlBand *band, TlVec2 point)
+{
+    TlVec2 offset = tl_vec2_sub(point, band->origin);
+    return tl_vec2(tl_vec2_dot(offset, band->direction), tl_vec2_cross(band->direction, offset));
+}
+
+static TlVec2 from_band(const TlBand *band, TlVec2 local)
+{
+    return tl_vec2_add(band->origin, tl_vec2_add(tl_vec2_scale(band->direction, local.x),
+                                                 tl_vec2_scale(tl_vec2_perpendicular(band->direction), local.y)));
+}
+
+/* Часть многоугольника между поперечными линиями along = from и along = to. */
+static TlPolygon clip_along(const TlBand *band, const TlPolygon *polygon, double from, double to)
+{
+    const double unlimited = 1e9;
+    TlPolygon local = {0};
+    for (size_t i = 0; i < polygon->count; i++)
+        tl_polygon_push(&local, to_band(band, polygon->items[i]));
+    TlPolygon clipped = tl_polygon_clip_rect(&local, (TlRect){from, -unlimited, to, unlimited});
+    for (size_t i = 0; i < clipped.count; i++)
+        clipped.items[i] = from_band(band, clipped.items[i]);
+    tl_polygon_free(&local);
+    return clipped;
+}
+
+/* Перегородка: тело с запасом CUT_MARGIN, чтобы вырез закрыл и обводку боков. */
+static TlPolygon partition_opening_shape(TlProject *project, const TlBand *band, double from, double to)
+{
+    TlPolygon body = tl_project_partition_body(project, band->host.partition, 0);
+    TlPolygon widened = tl_polygon_offset_uniform(&body, CUT_MARGIN);
+    TlPolygon shape = clip_along(band, &widened, from, to);
+    tl_polygon_free(&widened);
+    tl_polygon_free(&body);
+    return shape;
+}
+
+TlPolygon tl_project_opening_shape(TlProject *project, const TlBand *band, double along, double width)
+{
+    double from = along - width / 2, to = along + width / 2;
+    return band->host.kind == TL_HOST_WALL ? wall_opening_shape(project, band, from, to)
+                                           : partition_opening_shape(project, band, from, to);
 }
 
 bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPolygon *cut)
@@ -36,10 +79,9 @@ bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPoly
     TlBand band;
     if (!tl_project_opening_host(project, opening, &band))
         return false;
-    double along, from, to, across_from, across_to;
+    double along;
     tl_band_local(&band, opening->center, &along, NULL);
-    tl_project_opening_extent(project, &band, along, opening->width, &from, &to, &across_from, &across_to);
-    *cut = tl_band_rect(&band, from, to, across_from, across_to);
+    *cut = tl_project_opening_shape(project, &band, along, opening->width);
     return true;
 }
 
@@ -50,4 +92,69 @@ void tl_project_remove_orphan_openings(TlProject *project)
         if (!tl_project_opening_host(project, project->openings.items[i], &band))
             tl_project_delete_opening(project, project->openings.items[i]);
     }
+}
+
+/* ---- глухие участки ---------------------------------------------------------- */
+
+#define MIN_OVERLAP_AREA 1.0 /* мм²: вырез действительно задевает стену */
+
+typedef struct Interval {
+    double from, to;
+} Interval;
+
+static int compare_intervals(const void *a, const void *b)
+{
+    double difference = ((const Interval *)a)->from - ((const Interval *)b)->from;
+    return (difference > 0) - (difference < 0);
+}
+
+static TlPolygon host_body(TlProject *project, const TlBand *band)
+{
+    if (band->host.kind == TL_HOST_WALL)
+        return tl_outline_wall_quad(band->host.outline, band->host.wall, NULL);
+    return tl_project_partition_body(project, band->host.partition, 0);
+}
+
+/* Участок вдоль стены, который закрывает вырез (false — вырез мимо стены). */
+static bool covered_interval(const TlBand *band, const TlPolygon *body, const TlPolygon *cut, Interval *interval)
+{
+    if (tl_polygons_overlap_area(cut, body) < MIN_OVERLAP_AREA)
+        return false;
+    *interval = (Interval){INFINITY, -INFINITY};
+    for (size_t i = 0; i < cut->count; i++) {
+        double along = to_band(band, cut->items[i]).x;
+        interval->from = fmin(interval->from, along);
+        interval->to = fmax(interval->to, along);
+    }
+    return true;
+}
+
+void tl_project_solid_stretch(TlProject *project, const TlBand *band, double *from, double *to)
+{
+    TlPolygon body = host_body(project, band);
+    Interval *covered = tl_malloc((project->openings.count + 1) * sizeof *covered);
+    size_t count = 0;
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon cut;
+        if (!tl_project_opening_cut(project, project->openings.items[i], &cut))
+            continue;
+        if (covered_interval(band, &body, &cut, &covered[count]))
+            count++;
+        tl_polygon_free(&cut);
+    }
+    tl_polygon_free(&body);
+    qsort(covered, count, sizeof *covered, compare_intervals);
+
+    *from = *to = 0;
+    double solid_from = 0;
+    for (size_t i = 0; i <= count; i++) {
+        double solid_to = i < count ? fmin(covered[i].from, band->length) : band->length;
+        if (solid_to - solid_from > *to - *from) {
+            *from = solid_from;
+            *to = solid_to;
+        }
+        if (i < count)
+            solid_from = fmax(solid_from, covered[i].to);
+    }
+    free(covered);
 }

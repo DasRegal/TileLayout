@@ -23,11 +23,19 @@
 #define COLOR_INNER_DIM "#1f4e9c"
 #define COLOR_OUTER_DIM "#8a5a00"
 #define COLOR_OPENING_DIM "#6b3fa0"
+#define COLOR_RULER "#5f6b7a"
+#define COLOR_EXPANSION_JOINT "#37414d"
+#define COLOR_EXPANSION_JOINT_GAP "#fbfaf6"
+#define EXPANSION_JOINT_MIN_WIDTH_PX 3.0
+
+#define RULER_TICK_PX 4.0
+#define RULER_LABEL_OFFSET_PX 9.0
 
 AppRenderOptions app_render_screen_options(void)
 {
     return (AppRenderOptions){.show_tiles = true, .show_clips = true, .show_dims = true,
-                              .show_grid = true, .show_room_labels = true, .show_locks = true};
+                              .show_grid = true, .show_room_labels = true, .show_locks = true,
+                              .show_rulers = true, .show_expansion_joints = true};
 }
 
 bool app_render_plan_bounds(TlProject *project, TlRect *bounds)
@@ -328,13 +336,30 @@ void app_render_dimension_text(cairo_t *cr, TlVec2 a, TlVec2 b, double offset_px
     app_text_along(cr, text, &style, a, b, tl_vec2(d.y, -d.x), offset_px);
 }
 
-/* Белая подпись толщины на теле стены — белая и в чёрно-белом режиме. */
-static void draw_white_label(cairo_t *cr, const char *text, TlVec2 center)
+#define THICKNESS_LABEL_MARGIN_PX 6.0
+
+/* Белая подпись толщины вдоль стены — посередине самого длинного глухого
+ * участка (проёмы её не закрывают); a–b — средняя линия стены в мировых
+ * координатах, той же длины, что и стена. Не помещается в толщину или в
+ * участок — не рисуется. Белая и в чёрно-белом режиме. */
+static void draw_thickness_label(cairo_t *cr, const AppView *view, TlProject *project, TlHost host, TlVec2 a,
+                                 TlVec2 b, double thinnest, const char *text)
 {
+    TlBand band;
+    if (!tl_project_band_of(project, host, &band) || band.length <= 0)
+        return;
+    double solid_from, solid_to;
+    tl_project_solid_stretch(project, &band, &solid_from, &solid_to);
+    TlVec2 from = app_view_to_screen(view, tl_vec2_lerp(a, b, solid_from / band.length));
+    TlVec2 to = app_view_to_screen(view, tl_vec2_lerp(a, b, solid_to / band.length));
+    AppTextStyle white = {9.3, false, {1, 1, 1, 1}, APP_TRANSPARENT};
+    double width, height;
+    app_text_size(text, &white, &width, &height);
+    if (height > thinnest * view->scale || width + 2 * THICKNESS_LABEL_MARGIN_PX > tl_distance(from, to))
+        return;
     bool mono = app_draw_is_mono();
     app_draw_set_mono(false);
-    AppTextStyle white = {9.3, false, {1, 1, 1, 1}, APP_TRANSPARENT};
-    app_text_centered(cr, text, &white, center, 0);
+    app_text_along(cr, text, &white, from, to, tl_vec2(0, 0), 0);
     app_draw_set_mono(mono);
 }
 
@@ -390,12 +415,12 @@ static void render_outer_dimensions(cairo_t *cr, const AppView *view, TlProject 
         AppTextStyle style = {11.3, false, app_color_hex(COLOR_OUTER_DIM), app_color_rgba(255, 255, 255, 0.84)};
         app_text_along(cr, text, &style, da, db, tl_vec2(0, 0), 0);
 
-        if (thickness * view->scale > 11 && length_px > 90) {
-            TlVec2 a = tl_outline_wall_start(outline, wall), b = tl_outline_wall_end(outline, wall);
-            TlVec2 middle = tl_vec2_add(tl_vec2_midpoint(a, b), tl_vec2_scale(normal, thickness / 2));
-            snprintf(text, sizeof text, "%.0f", thickness);
-            draw_white_label(cr, text, app_view_to_screen(view, middle));
-        }
+        TlVec2 to_axis = tl_vec2_scale(normal, thickness / 2);
+        TlVec2 a = tl_vec2_add(tl_outline_wall_start(outline, wall), to_axis);
+        TlVec2 b = tl_vec2_add(tl_outline_wall_end(outline, wall), to_axis);
+        snprintf(text, sizeof text, "%.0f", thickness);
+        TlHost host = {TL_HOST_WALL, outline, wall, NULL};
+        draw_thickness_label(cr, view, project, host, a, b, thickness, text);
     }
     tl_polygon_free(&outer);
 }
@@ -442,12 +467,22 @@ static void render_partition_thickness(cairo_t *cr, const AppView *view, TlProje
 {
     for (size_t i = 0; i < project->partitions.count; i++) {
         const TlPartition *partition = project->partitions.items[i];
-        TlVec2 a = app_view_to_screen(view, partition->start), b = app_view_to_screen(view, partition->end);
-        if (partition->thickness * view->scale <= 11 || tl_distance(a, b) <= 90)
-            continue;
+        /* средняя линия тела: при несимметричных углах ось может быть у самого края */
+        TlPolygon body = tl_partition_body(partition, 0);
+        const TlVec2 *corner = body.items;
+        TlVec2 start_middle = tl_vec2_midpoint(corner[TL_PARTITION_START_LEFT], corner[TL_PARTITION_START_RIGHT]);
+        TlVec2 end_middle = tl_vec2_midpoint(corner[TL_PARTITION_END_LEFT], corner[TL_PARTITION_END_RIGHT]);
+        tl_polygon_free(&body);
+        double start_thickness = tl_partition_thickness_at(partition, TL_PARTITION_START);
+        double end_thickness = tl_partition_thickness_at(partition, TL_PARTITION_END);
         char text[32];
-        snprintf(text, sizeof text, "%.0f", partition->thickness);
-        draw_white_label(cr, text, tl_vec2_midpoint(a, b));
+        if (fabs(start_thickness - end_thickness) > 0.5)
+            snprintf(text, sizeof text, "%.0f→%.0f", start_thickness, end_thickness);
+        else
+            snprintf(text, sizeof text, "%.0f", start_thickness);
+        TlHost host = {TL_HOST_PARTITION, NULL, 0, project->partitions.items[i]};
+        draw_thickness_label(cr, view, project, host, start_middle, end_middle, fmin(start_thickness, end_thickness),
+                             text);
     }
 }
 
@@ -484,6 +519,61 @@ static void render_locks(cairo_t *cr, const AppView *view, TlProject *project)
             render_lock_at(cr, view, tl_band_point(&band, along + offset, tl_band_middle(&band)));
         }
     }
+}
+
+/* ---- линейки ------------------------------------------------------------------ */
+
+void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px)
+{
+    TlVec2 a = app_view_to_screen(view, ruler->start), b = app_view_to_screen(view, ruler->end);
+    if (tl_distance(a, b) < 1)
+        return;
+    TlVec2 normal = tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a)));
+    TlVec2 tick = tl_vec2_scale(normal, RULER_TICK_PX);
+    cairo_move_to(cr, a.x, a.y);
+    cairo_line_to(cr, b.x, b.y);
+    const TlVec2 ends[2] = {a, b};
+    for (int i = 0; i < 2; i++) {
+        cairo_move_to(cr, ends[i].x - tick.x, ends[i].y - tick.y);
+        cairo_line_to(cr, ends[i].x + tick.x, ends[i].y + tick.y);
+    }
+    app_stroke(cr, color, width_px);
+    char text[32];
+    snprintf(text, sizeof text, "%.0f", tl_ruler_length(ruler));
+    AppTextStyle style = {10.5, false, color, app_color_rgba(255, 255, 255, 0.8)};
+    app_text_along(cr, text, &style, a, b, normal, RULER_LABEL_OFFSET_PX);
+}
+
+void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpansionJoint *joint, AppColor color)
+{
+    TlVec2 a = app_view_to_screen(view, joint->start), b = app_view_to_screen(view, joint->end);
+    if (tl_distance(a, b) < 1)
+        return;
+    double half_width = fmax(joint->gap * view->scale, EXPANSION_JOINT_MIN_WIDTH_PX) / 2;
+    TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a))), half_width);
+    cairo_move_to(cr, a.x + half.x, a.y + half.y);
+    cairo_line_to(cr, b.x + half.x, b.y + half.y);
+    cairo_line_to(cr, b.x - half.x, b.y - half.y);
+    cairo_line_to(cr, a.x - half.x, a.y - half.y);
+    cairo_close_path(cr);
+    app_set_fill_color(cr, app_color_hex(COLOR_EXPANSION_JOINT_GAP));
+    cairo_fill_preserve(cr);
+    app_stroke(cr, color, 1);
+    cairo_move_to(cr, a.x, a.y);
+    cairo_line_to(cr, b.x, b.y);
+    app_stroke_dashed(cr, color, 1, 4);
+}
+
+static void render_expansion_joints(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    for (size_t i = 0; i < project->expansion_joints.count; i++)
+        app_render_expansion_joint(cr, view, project->expansion_joints.items[i], app_color_hex(COLOR_EXPANSION_JOINT));
+}
+
+static void render_rulers(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    for (size_t i = 0; i < project->rulers.count; i++)
+        app_render_ruler(cr, view, project->rulers.items[i], app_color_hex(COLOR_RULER), 1);
 }
 
 static void render_scale_bar(cairo_t *cr, const AppView *view)
@@ -529,6 +619,8 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
     }
     for (size_t s = 0; s < project->spaces.count; s++)
         render_floor(cr, view, options, project->spaces.items[s]);
+    if (options->show_expansion_joints)
+        render_expansion_joints(cr, view, project);
     for (size_t o = 0; o < project->outlines.count; o++)
         render_outline_walls(cr, view, options, project->outlines.items[o]);
     render_partitions(cr, view, options, project);
@@ -544,6 +636,8 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         render_partition_thickness(cr, view, project);
     if (options->show_locks && !options->printing)
         render_locks(cr, view, project);
+    if (options->show_rulers)
+        render_rulers(cr, view, project);
     render_scale_bar(cr, view);
     cairo_restore(cr);
     app_draw_set_mono(previous_mono);

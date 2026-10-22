@@ -13,6 +13,8 @@ typedef enum AppToolId {
     APP_TOOL_PARTITION,
     APP_TOOL_OPENING,
     APP_TOOL_TILES,
+    APP_TOOL_RULER,
+    APP_TOOL_EXPANSION_JOINT,
     APP_TOOL_COUNT
 } AppToolId;
 

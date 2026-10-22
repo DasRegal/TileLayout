@@ -21,7 +21,7 @@ typedef struct PrintDialog {
     AppPrintJob *job;
     bool updating;
 
-    GtkWidget *tiles, *clips, *dims, *cuts, *calc, *mono;
+    GtkWidget *tiles, *clips, *dims, *expansion_joints, *cuts, *calc, *mono;
     GtkWidget *orientation, *scale, *offset_x_spin, *offset_y_spin, *info;
 } PrintDialog;
 
@@ -100,6 +100,7 @@ static void read_controls(PrintDialog *self)
     self->options.tiles = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->tiles));
     self->options.clips = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->clips));
     self->options.dims = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->dims));
+    self->options.expansion_joints = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->expansion_joints));
     self->options.cuts = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->cuts));
     self->options.calc = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->calc));
     self->options.mono = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->mono));
@@ -249,6 +250,9 @@ static GtkWidget *build_controls(PrintDialog *self)
     self->tiles = option_check(self, checks, "Плитка", self->options.tiles, NULL);
     self->clips = option_check(self, checks, "СВП", self->options.clips, NULL);
     self->dims = option_check(self, checks, "Размеры", self->options.dims, NULL);
+    self->expansion_joints = option_check(self, checks, "Деформационные швы", self->options.expansion_joints,
+                                          "Показать швы на плане. Плитка у шва всё равно разрезана: куски — "
+                                          "на плане с номерами и в чертежах подрезок");
     self->cuts = option_check(self, checks, "Подрезки", self->options.cuts,
                               "С нового листа — план с номерами плиток, затем чертёж каждой подрезки со\n"
                               "всеми размерами. Плитка на две комнаты и две подрезки из одной плитки —\n"

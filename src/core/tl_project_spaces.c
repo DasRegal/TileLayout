@@ -112,6 +112,22 @@ static void resolve_layout_sources(TlProject *project)
     }
 }
 
+/* Каждой комнате — полосы швов, которые задевают её пол. */
+static void assign_joint_strips(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_polygon_list_free_all(&space->joint_strips);
+        for (size_t j = 0; j < project->expansion_joints.count; j++) {
+            TlPolygon strip = tl_expansion_joint_strip(project->expansion_joints.items[j]);
+            if (tl_polygons_overlap_area(&strip, &space->outline) > 0)
+                tl_polygon_list_push(&space->joint_strips, strip);
+            else
+                tl_polygon_free(&strip);
+        }
+    }
+}
+
 void tl_project_update_spaces(TlProject *project)
 {
     TlPolygonList bodies = tl_project_partition_bodies(project, BODY_EXTENSION);
@@ -191,4 +207,5 @@ void tl_project_update_spaces(TlProject *project)
     free(parent);
     free(old_taken);
     resolve_layout_sources(project);
+    assign_joint_strips(project);
 }

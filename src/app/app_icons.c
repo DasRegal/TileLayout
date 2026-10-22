@@ -132,6 +132,47 @@ static void draw_partition(cairo_t *cr)
     cairo_stroke(cr);
 }
 
+/* Две плитки и шов между ними — пунктир в щели. */
+static void draw_expansion_joint(cairo_t *cr)
+{
+    fill_hex(cr, "#d9c9a8");
+    cairo_rectangle(cr, 3, 5, 11, 22);
+    cairo_rectangle(cr, 18, 5, 11, 22);
+    cairo_fill(cr);
+    ink(cr, "#37414d", 1.3);
+    cairo_rectangle(cr, 3, 5, 11, 22);
+    cairo_rectangle(cr, 18, 5, 11, 22);
+    cairo_stroke(cr);
+    ink(cr, "#37414d", 1.4);
+    const double dashes[2] = {2.5, 2};
+    cairo_set_dash(cr, dashes, 2, 0);
+    cairo_move_to(cr, 16, 3);
+    cairo_line_to(cr, 16, 29);
+    cairo_stroke(cr);
+    cairo_set_dash(cr, NULL, 0, 0);
+}
+
+/* Плоская линейка по диагонали с делениями. */
+static void draw_ruler(cairo_t *cr)
+{
+    cairo_save(cr);
+    cairo_translate(cr, 16, 16);
+    cairo_rotate(cr, -G_PI / 4);
+    app_rounded_rect(cr, -14, -5, 28, 10, 1.5);
+    fill_hex(cr, "#f1d48a");
+    cairo_fill_preserve(cr);
+    ink(cr, "#5f6b7a", 1.4);
+    cairo_stroke(cr);
+    for (int i = 0; i < 7; i++) {
+        double x = -10.5 + i * 3.5;
+        cairo_move_to(cr, x, -5);
+        cairo_line_to(cr, x, i % 2 == 0 ? -0.5 : -2.5);
+    }
+    ink(cr, "#5f6b7a", 1.1);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
 static void draw_opening(cairo_t *cr)
 {
     fill_hex(cr, "#6f7681");
@@ -318,6 +359,7 @@ static const IconEntry ICONS[] = {
     {"covering", draw_covering}, {"svp", draw_svp}, {"numbers", draw_numbers},
     {"lock", draw_lock_closed}, {"unlock", draw_lock_open}, {"house", draw_house},
     {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print},
+    {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint},
 };
 
 void app_icon_draw(cairo_t *cr, const char *name, double x, double y, double size)

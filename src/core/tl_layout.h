@@ -6,6 +6,8 @@
  * раскладки. Плитка (column, row) лежит в
  *     x = offset_x + column·(w + шов) + сдвиг ряда,  y = offset_y + row·(h + шов).
  * Каждая плитка, задевающая пол, — целая, подрезка или узкая подрезка.
+ * Деформационный шов вырезает из пола полосу: плитку, через которую он
+ * проходит, режет на куски по обе стороны от шва.
  */
 #ifndef TL_LAYOUT_H
 #define TL_LAYOUT_H
@@ -50,6 +52,7 @@ typedef struct TlLayout {
     TlPolygon clip_points;       /* точки СВП, в осях раскладки */
     TlPolygon floor_outline;     /* пол под плитку (с отступом от стен), в осях раскладки */
     TlPolygonList floor_holes;
+    TlPolygonList joint_strips;  /* полосы деформационных швов, в осях раскладки */
     bool too_many;               /* плитка слишком мелкая для такой комнаты */
 } TlLayout;
 

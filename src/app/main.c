@@ -74,7 +74,8 @@ static int export_pdf(const CommandLine *line)
     AppDocument *document = load_document(line->project);
     if (!document)
         return 1;
-    AppPrintPreferences print = {true, true, true, true, true, line->mono, true, 0};
+    AppPrintPreferences print = {.tiles = true, .clips = true, .dims = true, .cuts = true, .calc = true,
+                                 .mono = line->mono, .expansion_joints = true, .landscape = true};
     AppPrintJob *job = app_print_job_new(document->project, "TileLayout", &print, 0, 0);
     printf("Страниц: %d\n", app_print_job_page_count(job));
     bool ok = app_print_job_save_pdf(job, line->output);

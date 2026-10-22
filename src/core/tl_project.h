@@ -1,6 +1,6 @@
 /*
  * Проект — всё, что есть на плане: дома (контуры наружных стен),
- * перегородки, проёмы и комнаты. Комнаты не рисуются, а вычисляются:
+ * перегородки, проёмы, деформационные швы, комнаты и линейки. Комнаты не рисуются, а вычисляются:
  * пол каждого дома минус тела перегородок; каждая замкнутая область —
  * комната. Настройки комнаты переходят к новой области с наибольшим
  * перекрытием (tl_project_update_spaces).
@@ -14,9 +14,11 @@
 #define TL_PROJECT_H
 
 #include "tl_band.h"
+#include "tl_expansion_joint.h"
 #include "tl_opening.h"
 #include "tl_outline.h"
 #include "tl_partition.h"
+#include "tl_ruler.h"
 #include "tl_space.h"
 
 #define TL_MIN_SPACE_AREA 20000.0 /* мм²: меньшие области (щели) — не комнаты */
@@ -24,12 +26,16 @@
 TL_ARRAY_DEFINE(TlOutlineList, TlOutline *, tl_outline_list)
 TL_ARRAY_DEFINE(TlPartitionList, TlPartition *, tl_partition_list)
 TL_ARRAY_DEFINE(TlOpeningList, TlOpening *, tl_opening_list)
+TL_ARRAY_DEFINE(TlRulerList, TlRuler *, tl_ruler_list)
+TL_ARRAY_DEFINE(TlExpansionJointList, TlExpansionJoint *, tl_expansion_joint_list)
 
 typedef struct TlProject {
     TlOutlineList outlines;
     TlPartitionList partitions;
     TlOpeningList openings;
     TlSpaceList spaces;
+    TlRulerList rulers;
+    TlExpansionJointList expansion_joints;
     int next_space_id;
 } TlProject;
 
@@ -83,8 +89,15 @@ int tl_project_take_space_id(TlProject *project);
 void tl_project_add_outline(TlProject *project, TlOutline *outline);
 void tl_project_add_partition(TlProject *project, TlPartition *partition);
 void tl_project_add_opening(TlProject *project, TlOpening *opening);
+void tl_project_add_ruler(TlProject *project, TlRuler *ruler);
+/* Швы влияют на раскладку: после добавления, удаления и правки шва —
+   tl_project_update_spaces. */
+void tl_project_add_expansion_joint(TlProject *project, TlExpansionJoint *joint);
 void tl_project_delete_partition(TlProject *project, TlPartition *partition);
 void tl_project_delete_opening(TlProject *project, TlOpening *opening);
+void tl_project_delete_ruler(TlProject *project, TlRuler *ruler);
+void tl_project_delete_all_rulers(TlProject *project);
+void tl_project_delete_expansion_joint(TlProject *project, TlExpansionJoint *joint);
 /* Удаляет дом вместе с перегородками внутри и осиротевшими проёмами. */
 void tl_project_delete_outline(TlProject *project, TlOutline *outline);
 
@@ -114,6 +127,9 @@ void tl_project_set_thickness(TlProject *project, TlOutline *outline, size_t wal
 TlJointList tl_project_joints(TlProject *project);
 /* Заполнение угла «на ус» между двумя перегородками узла (false — не нужно). */
 bool tl_project_joint_cap(const TlJoint *joint, TlPolygon *cap);
+/* Тело перегородки с торцами, срезанными точно по грани, в которую упирается
+   конец, — внутренней стороне стены дома или боку другой перегородки. */
+TlPolygon tl_project_partition_body(TlProject *project, const TlPartition *partition, double extension);
 /* Тела всех перегородок и заполнения углов. */
 TlPolygonList tl_project_partition_bodies(TlProject *project, double extension);
 
@@ -137,12 +153,14 @@ void tl_project_end_edit(TlProject *project, TlEditToken *token, const TlEditOpt
 /* ---- проёмы -------------------------------------------------------------- */
 
 bool tl_project_opening_host(TlProject *project, const TlOpening *opening, TlBand *band);
-/* Прямоугольник проёма: вдоль [from, to], поперёк — на всю толщину стены,
- * включая примыкающую стену соседнего дома. */
-void tl_project_opening_extent(TlProject *project, const TlBand *band, double along, double width,
-                               double *along_from, double *along_to, double *across_from,
-                               double *across_to);
+/* Вырез проёма шириной width с центром along: часть тела стены между краями
+ * проёма. У перегородки — по её точной форме (трапеция, торцы по граням), у
+ * наружной стены — на всю толщину вместе с примыкающей стеной соседнего дома. */
+TlPolygon tl_project_opening_shape(TlProject *project, const TlBand *band, double along, double width);
 bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPolygon *cut);
 void tl_project_remove_orphan_openings(TlProject *project);
+/* Самый длинный участок стены или перегородки, не закрытый проёмами (и
+ * проёмами соседнего дома, проходящими сквозь неё): вдоль от *from до *to. */
+void tl_project_solid_stretch(TlProject *project, const TlBand *band, double *from, double *to);
 
 #endif

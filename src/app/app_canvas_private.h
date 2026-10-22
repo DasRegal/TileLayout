@@ -12,6 +12,7 @@
 #include "app_canvas.h"
 #include "app_snap.h"
 #include "app_view.h"
+#include "tl_measure_snap.h"
 
 typedef struct AppPointer {
     TlVec2 screen;
@@ -43,6 +44,8 @@ extern const AppTool APP_CONTOUR_TOOL;
 extern const AppTool APP_PARTITION_TOOL;
 extern const AppTool APP_OPENING_TOOL;
 extern const AppTool APP_TILES_TOOL;
+extern const AppTool APP_RULER_TOOL;
+extern const AppTool APP_EXPANSION_JOINT_TOOL;
 
 typedef enum AppDragKind {
     APP_DRAG_NONE,
@@ -51,7 +54,9 @@ typedef enum AppDragKind {
     APP_DRAG_HOUSE,
     APP_DRAG_PARTITION,
     APP_DRAG_OPENING,
-    APP_DRAG_TILES
+    APP_DRAG_TILES,
+    APP_DRAG_RULER,
+    APP_DRAG_EXPANSION_JOINT
 } AppDragKind;
 
 /* Перетаскивание в инструменте «Выбор». */
@@ -67,6 +72,9 @@ typedef struct AppDrag {
     TlPartition *partition;
     TlVec2 original_start, original_end;
     TlOpening *opening;
+    TlRuler *ruler;                 /* original_start/original_end — его концы */
+    TlExpansionJoint *expansion_joint; /* и его */
+    double original_corner_offset;  /* угол тела перегородки */
     TlBand band;
     double original_along;
     TlSpace *space;
@@ -101,6 +109,12 @@ struct AppCanvas {
     bool has_opening_preview;
     TlBand opening_band;
     double opening_along;
+    bool has_segment_start;
+    TlVec2 segment_start;
+    TlVec2 segment_press_screen;    /* где нажали: протянули — отрезок готов */
+    TlSnapPoint measure_snap;       /* куда притянулся конец линейки или шва (для значка) */
+    AppGuides guides;               /* вспомогательные линии выравнивания к cursor */
+    TlVec2 guides_to;
 
     AppDrag drag;
 
@@ -130,6 +144,18 @@ void app_canvas_draw_preview_polygon(AppCanvas *canvas, cairo_t *cr, const TlPol
 void app_canvas_draw_opening_preview(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along,
                                      double width, const char *color, bool preview);
 void app_canvas_start_pan(AppCanvas *canvas, TlVec2 screen);
+
+/* Конец линейки или шва: с притягиванием к targets (если включено) и
+   выравниванием по горизонтали/вертикали от anchor — другого конца (если
+   включено и есть). free — без того и другого. Запоминает значок и
+   вспомогательные линии. */
+TlVec2 app_canvas_measure_point(AppCanvas *canvas, TlVec2 world, const TlVec2 *anchor, TlSnapTargets targets,
+                                bool free);
+
+/* Вспомогательные линии выравнивания к точке to (показываются до сброса). */
+void app_canvas_show_guides(AppCanvas *canvas, const AppGuides *guides, TlVec2 to);
+void app_canvas_clear_guides(AppCanvas *canvas);
+void app_canvas_draw_snap_marker(AppCanvas *canvas, cairo_t *cr);
 
 /* Перетаскивание из «Выбора» — общее с инструментом «Сдвиг плитки». */
 void app_select_begin_tiles_drag(AppCanvas *canvas, const AppPointer *pointer);

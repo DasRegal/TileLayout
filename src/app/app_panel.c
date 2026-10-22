@@ -34,7 +34,7 @@ struct AppPanel {
 
     GtkWidget *room_list;
     char *room_names;            /* для проверки, нужно ли перестраивать список */
-    GtkWidget *partition_thickness, *opening_width, *link_walls;
+    GtkWidget *partition_thickness, *opening_width, *expansion_joint_gap, *link_walls, *measure_magnet, *auto_align;
     GtkWidget *hint;
 
     AppSection space_section;
@@ -49,6 +49,14 @@ struct AppPanel {
 
     AppSection partition_section;
     GtkWidget *partition_length, *partition_own_thickness, *partition_angle, *partition_lock;
+    GtkWidget *partition_corner_hint, *partition_corner_box;
+    GtkWidget *partition_corner_name, *partition_corner_offset, *partition_corner_position;
+
+    AppSection ruler_section;
+    GtkWidget *ruler_length, *ruler_count;
+
+    AppSection expansion_joint_section;
+    GtkWidget *expansion_joint_own_gap, *expansion_joint_length;
 
     AppSection opening_section;
     GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
@@ -448,26 +456,71 @@ static TlPartition *selected_partition(AppPanel *panel)
     return !panel->updating && s->kind == APP_SELECT_PARTITION ? s->partition : NULL;
 }
 
-static void on_partition_length(GtkSpinButton *spin, AppPanel *panel)
+/* Правка перегородки с панели — одна точка отмены; узлы и примыкания других
+   перегородок следуют за ней. NULL — перегородка не выделена. */
+static TlEditToken *begin_partition_change(AppPanel *panel, const char *merge_key, TlPartition **partition)
 {
-    TlPartition *partition = selected_partition(panel);
-    if (!partition)
-        return;
-    TlEditToken *token = app_document_begin_geometry(panel->document, "plen", NULL);
-    tl_partition_set_length(partition, gtk_spin_button_get_value(spin));
+    *partition = selected_partition(panel);
+    return *partition ? app_document_begin_geometry(panel->document, merge_key, NULL) : NULL;
+}
+
+static void end_partition_change(AppPanel *panel, TlPartition *partition, TlEditToken *token)
+{
     TlEditOptions options = {.master = partition};
     app_document_end_geometry(panel->document, token, &options);
 }
 
+static void on_partition_length(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlPartition *partition;
+    TlEditToken *token = begin_partition_change(panel, "plen", &partition);
+    if (!token)
+        return;
+    tl_partition_set_length(partition, gtk_spin_button_get_value(spin));
+    end_partition_change(panel, partition, token);
+}
+
 static void on_partition_thickness(GtkSpinButton *spin, AppPanel *panel)
 {
-    TlPartition *partition = selected_partition(panel);
-    if (!partition)
+    TlPartition *partition;
+    TlEditToken *token = begin_partition_change(panel, "pthick", &partition);
+    if (!token)
         return;
-    TlEditToken *token = app_document_begin_geometry(panel->document, "pthick", NULL);
-    partition->thickness = gtk_spin_button_get_value(spin);
-    TlEditOptions options = {.master = partition};
-    app_document_end_geometry(panel->document, token, &options);
+    tl_partition_set_thickness(partition, gtk_spin_button_get_value(spin));
+    end_partition_change(panel, partition, token);
+}
+
+static void on_partition_angle(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlPartition *partition;
+    TlEditToken *token = begin_partition_change(panel, "pangle", &partition);
+    if (!token)
+        return;
+    tl_partition_set_angle(partition, gtk_spin_button_get_value(spin));
+    end_partition_change(panel, partition, token);
+}
+
+static void on_partition_corner_offset(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlPartitionCorner corner;
+    if (!app_selection_partition_corner(&panel->document->selection, &corner))
+        return;
+    TlPartition *partition;
+    TlEditToken *token = begin_partition_change(panel, "pcorner", &partition);
+    if (!token)
+        return;
+    partition->corner_offsets[corner] = gtk_spin_button_get_value(spin);
+    end_partition_change(panel, partition, token);
+}
+
+static void on_partition_make_rectangular(GtkButton *button, AppPanel *panel)
+{
+    TlPartition *partition;
+    TlEditToken *token = begin_partition_change(panel, "", &partition);
+    if (!token)
+        return;
+    tl_partition_set_thickness(partition, tl_partition_thickness_at(partition, TL_PARTITION_START));
+    end_partition_change(panel, partition, token);
 }
 
 static void on_partition_lock(GtkToggleButton *check, AppPanel *panel)
@@ -547,6 +600,35 @@ static void on_link_walls(GtkToggleButton *check, AppPanel *panel)
     panel->document->preferences.link_walls = gtk_toggle_button_get_active(check);
 }
 
+static void on_auto_align(GtkToggleButton *check, AppPanel *panel)
+{
+    panel->document->preferences.auto_align = gtk_toggle_button_get_active(check);
+}
+
+static void on_measure_magnet(GtkToggleButton *check, AppPanel *panel)
+{
+    panel->document->preferences.measure_magnet = gtk_toggle_button_get_active(check);
+}
+
+static void on_expansion_joint_preference(GtkSpinButton *spin, AppPanel *panel)
+{
+    panel->document->preferences.expansion_joint_gap = gtk_spin_button_get_value(spin);
+}
+
+/* Зазор выделенного шва: меняет куски плитки по обе стороны. */
+static void on_expansion_joint_gap(GtkSpinButton *spin, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    if (panel->updating || s->kind != APP_SELECT_EXPANSION_JOINT)
+        return;
+    app_document_checkpoint(panel->document, "jgap");
+    s->expansion_joint->gap = gtk_spin_button_get_value(spin);
+    tl_project_update_spaces(panel->document->project);
+    app_document_commit(panel->document);
+}
+
+static void on_delete_all_rulers(GtkButton *button, AppPanel *panel) { app_command_delete_all_rulers(panel->document); }
+
 static void on_keep_angles(GtkToggleButton *check, AppPanel *panel)
 {
     panel->document->preferences.keep_angles = gtk_toggle_button_get_active(check);
@@ -598,7 +680,7 @@ static void build_rooms(AppPanel *panel, GtkWidget *box)
 
 static void build_tools(AppPanel *panel, GtkWidget *box)
 {
-    AppSection section = app_section_new(box, "Перегородки и проёмы");
+    AppSection section = app_section_new(box, "Перегородки, проёмы, швы, линейки");
     panel->partition_thickness = app_unit_spin_new(10, 1000, 10, 0, "мм");
     g_signal_connect(panel->partition_thickness, "value-changed", G_CALLBACK(on_partition_preference), panel);
     gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "partition", "Перегородка", APP_TOOL_PARTITION), 0, 0, 1, 1);
@@ -607,7 +689,27 @@ static void build_tools(AppPanel *panel, GtkWidget *box)
     g_signal_connect(panel->opening_width, "value-changed", G_CALLBACK(on_opening_preference), panel);
     gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "opening", "Проём", APP_TOOL_OPENING), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(section.grid), panel->opening_width, 1, 1, 1, 1);
-    section.rows = 2;
+    panel->expansion_joint_gap = app_unit_spin_new(1, 100, 1, 0, "мм");
+    gtk_widget_set_tooltip_text(panel->expansion_joint_gap, "Зазор новых деформационных швов");
+    g_signal_connect(panel->expansion_joint_gap, "value-changed", G_CALLBACK(on_expansion_joint_preference), panel);
+    gtk_grid_attach(GTK_GRID(section.grid),
+                    tool_button(panel, "expansion_joint", "Шов", APP_TOOL_EXPANSION_JOINT), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(section.grid), panel->expansion_joint_gap, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "ruler", "Линейка", APP_TOOL_RULER), 0, 3, 1, 1);
+    panel->measure_magnet = gtk_check_button_new_with_label("Примагничивать");
+    gtk_widget_set_tooltip_text(panel->measure_magnet,
+                                "Концы линейки притягиваются к углам, серединам, краям и осям стен и к швам плитки, "
+                                "концы деформационного шва — к поверхностям стен. Shift — временно без притягивания.");
+    g_signal_connect(panel->measure_magnet, "toggled", G_CALLBACK(on_measure_magnet), panel);
+    gtk_grid_attach(GTK_GRID(section.grid), panel->measure_magnet, 1, 3, 1, 1);
+    section.rows = 4;
+    panel->auto_align = gtk_check_button_new_with_label("Автовыравнивание по горизонтали и вертикали");
+    gtk_widget_set_tooltip_text(panel->auto_align,
+                                "Почти горизонтальная или вертикальная линейка, стена или перегородка выпрямляется, "
+                                "а точка встаёт на одну линию с углами других стен (видна пунктирная линия). "
+                                "Shift — временно без выравнивания.");
+    g_signal_connect(panel->auto_align, "toggled", G_CALLBACK(on_auto_align), panel);
+    app_section_wide(&section, panel->auto_align);
     panel->link_walls = gtk_check_button_new_with_label("Связывать смежные стены соседних домов");
     g_signal_connect(panel->link_walls, "toggled", G_CALLBACK(on_link_walls), panel);
     app_section_wide(&section, panel->link_walls);
@@ -683,6 +785,35 @@ static void build_wall(AppPanel *panel, GtkWidget *box)
     app_section_wide(s, panel->wall_lock);
 }
 
+/* Углы тела: квадратные маркеры на плане; выделенный угол — точно здесь. */
+static void build_partition_corners(AppPanel *panel, AppSection *section)
+{
+    GtkWidget *title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(title), "<b>Углы тела</b> — для точного раскроя");
+    gtk_label_set_xalign(GTK_LABEL(title), 0);
+    app_section_wide(section, title);
+    panel->partition_corner_hint = gtk_label_new("Выделите квадратный маркер на углу перегородки: его можно "
+                                                 "тянуть поперёк оси или задать отступ здесь.");
+    gtk_label_set_line_wrap(GTK_LABEL(panel->partition_corner_hint), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(panel->partition_corner_hint), 0);
+    gtk_widget_set_opacity(panel->partition_corner_hint, 0.7);
+    app_section_wide(section, panel->partition_corner_hint);
+
+    AppSection corner = {gtk_box_new(GTK_ORIENTATION_VERTICAL, 0), gtk_grid_new(), 0};
+    gtk_grid_set_row_spacing(GTK_GRID(corner.grid), 4);
+    gtk_grid_set_column_spacing(GTK_GRID(corner.grid), 8);
+    gtk_container_add(GTK_CONTAINER(corner.frame), corner.grid);
+    panel->partition_corner_name = app_section_value_label(&corner, "Угол");
+    panel->partition_corner_offset = spin_with(panel, 0, 2000, 1, 1, "мм", G_CALLBACK(on_partition_corner_offset));
+    gtk_widget_set_tooltip_text(panel->partition_corner_offset, "Расстояние от оси перегородки до этого угла");
+    app_section_row(&corner, "От оси", panel->partition_corner_offset);
+    panel->partition_corner_position = app_section_value_label(&corner, "Координаты");
+    panel->partition_corner_box = corner.frame;
+    app_section_wide(section, corner.frame);
+    app_section_wide(section, connect_button(gtk_button_new_with_label("Сделать прямоугольной"),
+                                             G_CALLBACK(on_partition_make_rectangular), panel));
+}
+
 static void build_partition(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->partition_section;
@@ -691,12 +822,42 @@ static void build_partition(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "Длина (по оси)", panel->partition_length);
     panel->partition_own_thickness = spin_with(panel, 1, 2000, 10, 0, "мм", G_CALLBACK(on_partition_thickness));
     app_section_row(s, "Толщина", panel->partition_own_thickness);
-    panel->partition_angle = app_section_value_label(s, "Направление");
+    panel->partition_angle = spin_with(panel, 0, 360, 1, 1, "°", G_CALLBACK(on_partition_angle));
+    gtk_spin_button_set_wrap(GTK_SPIN_BUTTON(panel->partition_angle), TRUE);
+    gtk_widget_set_tooltip_text(panel->partition_angle, "Поворот вокруг начала перегородки. 0° — вправо, 90° — вверх");
+    app_section_row(s, "Направление", panel->partition_angle);
+
+    build_partition_corners(panel, s);
     panel->partition_lock = lock_check();
     g_signal_connect(panel->partition_lock, "toggled", G_CALLBACK(on_partition_lock), panel);
     app_section_wide(s, panel->partition_lock);
     app_section_wide(s, connect_button(app_icon_button_new("delete", "Удалить перегородку"),
                                        G_CALLBACK(on_delete_selection), panel));
+}
+
+static void build_expansion_joint(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->expansion_joint_section;
+    *s = app_section_new(box, "Деформационный шов");
+    panel->expansion_joint_own_gap = spin_with(panel, 1, 100, 1, 1, "мм", G_CALLBACK(on_expansion_joint_gap));
+    gtk_widget_set_tooltip_text(panel->expansion_joint_own_gap, "Ширина шва: на столько плитка отступает от линии шва "
+                                                                "(поровну с каждой стороны)");
+    app_section_row(s, "Зазор", panel->expansion_joint_own_gap);
+    panel->expansion_joint_length = app_section_value_label(s, "Длина");
+    app_section_wide(s, connect_button(app_icon_button_new("delete", "Удалить шов"),
+                                       G_CALLBACK(on_delete_selection), panel));
+}
+
+static void build_ruler(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->ruler_section;
+    *s = app_section_new(box, "Линейка");
+    panel->ruler_length = app_section_value_label(s, "Длина");
+    panel->ruler_count = app_section_value_label(s, "Всего линеек");
+    app_section_wide(s, connect_button(app_icon_button_new("delete", "Удалить линейку"),
+                                       G_CALLBACK(on_delete_selection), panel));
+    app_section_wide(s, connect_button(gtk_button_new_with_label("Удалить все линейки"),
+                                       G_CALLBACK(on_delete_all_rulers), panel));
 }
 
 static void build_opening(AppPanel *panel, GtkWidget *box)
@@ -925,13 +1086,34 @@ static void refresh_wall(AppPanel *panel, TlOutline *outline, size_t wall)
     gtk_widget_set_sensitive(panel->wall_outer, movable && outline->thickness.items[wall] > 0);
 }
 
+static void refresh_partition_corner(AppPanel *panel, TlPartition *partition)
+{
+    TlPartitionCorner corner;
+    bool selected = app_selection_partition_corner(&panel->document->selection, &corner);
+    gtk_widget_set_visible(panel->partition_corner_box, selected);
+    gtk_widget_set_visible(panel->partition_corner_hint, !selected);
+    if (!selected)
+        return;
+    bool at_start = tl_partition_corner_end(corner) == TL_PARTITION_START;
+    gtk_label_set_text(GTK_LABEL(panel->partition_corner_name), at_start ? "у начала перегородки" : "у конца перегородки");
+    set_spin(panel->partition_corner_offset, partition->corner_offsets[corner]);
+    gtk_widget_set_sensitive(panel->partition_corner_offset, !partition->locked);
+    TlPolygon body = tl_project_partition_body(panel->document->project, partition, 0);
+    char text[64];
+    g_snprintf(text, sizeof text, "X %.1f   Y %.1f мм", body.items[corner].x, body.items[corner].y);
+    gtk_label_set_text(GTK_LABEL(panel->partition_corner_position), text);
+    tl_polygon_free(&body);
+}
+
 static void refresh_partition(AppPanel *panel, TlPartition *partition)
 {
     set_spin(panel->partition_length, tl_partition_length(partition));
-    set_spin(panel->partition_own_thickness, partition->thickness);
-    set_label(panel->partition_angle, "%.1f°", tl_partition_angle(partition));
+    set_spin(panel->partition_own_thickness, tl_partition_thickness_at(partition, TL_PARTITION_START));
+    set_spin(panel->partition_angle, tl_partition_angle(partition));
+    gtk_widget_set_sensitive(panel->partition_angle, !partition->locked);
     set_check(panel->partition_lock, partition->locked);
     gtk_widget_set_sensitive(panel->partition_length, !partition->locked);
+    refresh_partition_corner(panel, partition);
 }
 
 static void refresh_opening(AppPanel *panel, TlOpening *opening)
@@ -969,6 +1151,9 @@ static void refresh(AppPanel *panel)
     set_spin(panel->opening_width, document->preferences.opening_width);
     set_check(panel->link_walls, document->preferences.link_walls);
     set_check(panel->keep_angles, document->preferences.keep_angles);
+    set_check(panel->measure_magnet, document->preferences.measure_magnet);
+    set_spin(panel->expansion_joint_gap, document->preferences.expansion_joint_gap);
+    set_check(panel->auto_align, document->preferences.auto_align);
 
     gtk_widget_set_visible(panel->space_section.frame, space != NULL);
     gtk_widget_set_visible(panel->tile_section.frame, space != NULL);
@@ -978,6 +1163,8 @@ static void refresh(AppPanel *panel)
     gtk_widget_set_visible(panel->wall_section.frame, s->kind == APP_SELECT_WALL);
     gtk_widget_set_visible(panel->partition_section.frame, s->kind == APP_SELECT_PARTITION);
     gtk_widget_set_visible(panel->opening_section.frame, s->kind == APP_SELECT_OPENING);
+    gtk_widget_set_visible(panel->ruler_section.frame, s->kind == APP_SELECT_RULER);
+    gtk_widget_set_visible(panel->expansion_joint_section.frame, s->kind == APP_SELECT_EXPANSION_JOINT);
     gtk_widget_set_visible(panel->hint, s->kind == APP_SELECT_NONE);
 
     if (space)
@@ -992,6 +1179,14 @@ static void refresh(AppPanel *panel)
         refresh_partition(panel, s->partition);
     if (s->kind == APP_SELECT_OPENING)
         refresh_opening(panel, s->opening);
+    if (s->kind == APP_SELECT_RULER) {
+        set_label(panel->ruler_length, "%.0f мм", tl_ruler_length(s->ruler));
+        set_label(panel->ruler_count, "%.0f", (double)document->project->rulers.count);
+    }
+    if (s->kind == APP_SELECT_EXPANSION_JOINT) {
+        set_spin(panel->expansion_joint_own_gap, s->expansion_joint->gap);
+        set_label(panel->expansion_joint_length, "%.0f мм", tl_expansion_joint_length(s->expansion_joint));
+    }
 
     char *markup = app_calc_markup(document->project, space);
     gtk_label_set_markup(GTK_LABEL(panel->calc), markup);
@@ -1017,7 +1212,7 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     gtk_container_set_border_width(GTK_CONTAINER(box), 6);
     build_rooms(panel, box);
     build_tools(panel, box);
-    panel->hint = gtk_label_new("Выберите комнату, стену, перегородку или проём.");
+    panel->hint = gtk_label_new("Выберите комнату, стену, перегородку, проём, шов или линейку.");
     gtk_label_set_line_wrap(GTK_LABEL(panel->hint), TRUE);
     gtk_widget_set_no_show_all(panel->hint, TRUE);
     gtk_box_pack_start(GTK_BOX(box), panel->hint, FALSE, FALSE, 0);
@@ -1026,10 +1221,14 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_wall(panel, box);
     build_partition(panel, box);
     build_opening(panel, box);
+    build_expansion_joint(panel, box);
+    build_ruler(panel, box);
     build_tile(panel, box);
     build_calc(panel, box);
     AppSection *conditional[] = {&panel->space_section, &panel->outline_section, &panel->wall_section,
-                                 &panel->partition_section, &panel->opening_section, &panel->tile_section,
+                                 &panel->partition_section, &panel->opening_section, &panel->ruler_section,
+                                 &panel->expansion_joint_section,
+                                 &panel->tile_section,
                                  &panel->glue_section, &panel->clip_section};
     for (size_t i = 0; i < G_N_ELEMENTS(conditional); i++) {
         gtk_widget_show_all(conditional[i]->frame);

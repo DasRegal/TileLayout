@@ -161,6 +161,7 @@ static void draw_layout_centered(cairo_t *cr, PangoLayout *layout, const AppText
     app_set_color(cr, style->color);
     cairo_move_to(cr, -w / 2.0, -h / 2.0);
     pango_cairo_show_layout(cr, layout);
+    cairo_new_path(cr); /* иначе следующая фигура продолжится линией от текста */
 }
 
 void app_text_centered(cairo_t *cr, const char *text, const AppTextStyle *style, TlVec2 center,
@@ -225,5 +226,6 @@ void app_text_in_rect(cairo_t *cr, const char *text, const AppTextStyle *style, 
     app_set_color(cr, style->color);
     cairo_move_to(cr, x, y + (height - h) / 2);
     pango_cairo_show_layout(cr, layout);
+    cairo_new_path(cr); /* иначе следующая фигура продолжится линией от текста */
     g_object_unref(layout);
 }

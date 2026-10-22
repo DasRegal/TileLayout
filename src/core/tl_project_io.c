@@ -115,9 +115,28 @@ static TlJson *partition_to_json(const TlPartition *partition)
     TlJson *object = tl_json_object();
     tl_json_object_set(object, "p1", point_to_json(partition->start));
     tl_json_object_set(object, "p2", point_to_json(partition->end));
-    tl_json_object_set(object, "thick", tl_json_number(partition->thickness));
+    tl_json_object_set(object, "thick", tl_json_number(tl_partition_thickness_at(partition, TL_PARTITION_START)));
+    TlJson *corners = tl_json_array(); /* отступы углов тела от оси, по порядку TlPartitionCorner */
+    for (int corner = 0; corner < TL_PARTITION_CORNER_COUNT; corner++)
+        tl_json_array_push(corners, tl_json_number(partition->corner_offsets[corner]));
+    tl_json_object_set(object, "corners", corners);
     tl_json_object_set(object, "locked", tl_json_bool(partition->locked));
     return object;
+}
+
+/* Форма: четыре угла; в старых файлах — толщина и, может быть, толщина у конца. */
+static void read_partition_shape(TlPartition *partition, const TlJson *object)
+{
+    const TlJson *corners = tl_json_get(object, "corners");
+    if (tl_json_length(corners) == TL_PARTITION_CORNER_COUNT) {
+        for (int corner = 0; corner < TL_PARTITION_CORNER_COUNT; corner++)
+            partition->corner_offsets[corner] = tl_json_number_or(tl_json_at(corners, (size_t)corner), 50);
+        return;
+    }
+    double start_thickness = tl_partition_thickness_at(partition, TL_PARTITION_START);
+    double end_thickness = tl_json_number_or(tl_json_get(object, "thick_end"), start_thickness);
+    partition->corner_offsets[TL_PARTITION_END_LEFT] = end_thickness / 2;
+    partition->corner_offsets[TL_PARTITION_END_RIGHT] = end_thickness / 2;
 }
 
 static TlPartition *partition_from_json(const TlJson *object)
@@ -125,8 +144,37 @@ static TlPartition *partition_from_json(const TlJson *object)
     TlPartition *partition = tl_partition_new(point_from_json(tl_json_get(object, "p1")),
                                               point_from_json(tl_json_get(object, "p2")),
                                               tl_json_number_or(tl_json_get(object, "thick"), 100));
+    read_partition_shape(partition, object);
     partition->locked = tl_json_bool_or(tl_json_get(object, "locked"), false);
     return partition;
+}
+
+static TlJson *ruler_to_json(const TlRuler *ruler)
+{
+    TlJson *object = tl_json_object();
+    tl_json_object_set(object, "p1", point_to_json(ruler->start));
+    tl_json_object_set(object, "p2", point_to_json(ruler->end));
+    return object;
+}
+
+static TlRuler *ruler_from_json(const TlJson *object)
+{
+    return tl_ruler_new(point_from_json(tl_json_get(object, "p1")), point_from_json(tl_json_get(object, "p2")));
+}
+
+static TlJson *expansion_joint_to_json(const TlExpansionJoint *joint)
+{
+    TlJson *object = tl_json_object();
+    tl_json_object_set(object, "p1", point_to_json(joint->start));
+    tl_json_object_set(object, "p2", point_to_json(joint->end));
+    tl_json_object_set(object, "gap", tl_json_number(joint->gap));
+    return object;
+}
+
+static TlExpansionJoint *expansion_joint_from_json(const TlJson *object)
+{
+    return tl_expansion_joint_new(point_from_json(tl_json_get(object, "p1")), point_from_json(tl_json_get(object, "p2")),
+                                  tl_json_number_or(tl_json_get(object, "gap"), TL_EXPANSION_JOINT_DEFAULT_GAP));
 }
 
 static TlJson *opening_to_json(const TlOpening *opening)
@@ -175,7 +223,8 @@ TlJson *tl_project_to_json(const TlProject *project)
 {
     TlJson *root = tl_json_object();
     TlJson *outlines = tl_json_array(), *partitions = tl_json_array();
-    TlJson *openings = tl_json_array(), *spaces = tl_json_array();
+    TlJson *openings = tl_json_array(), *spaces = tl_json_array(), *rulers = tl_json_array();
+    TlJson *expansion_joints = tl_json_array();
     for (size_t i = 0; i < project->outlines.count; i++)
         tl_json_array_push(outlines, outline_to_json(project->outlines.items[i]));
     for (size_t i = 0; i < project->partitions.count; i++)
@@ -184,11 +233,17 @@ TlJson *tl_project_to_json(const TlProject *project)
         tl_json_array_push(openings, opening_to_json(project->openings.items[i]));
     for (size_t i = 0; i < project->spaces.count; i++)
         tl_json_array_push(spaces, space_to_json(project->spaces.items[i]));
+    for (size_t i = 0; i < project->rulers.count; i++)
+        tl_json_array_push(rulers, ruler_to_json(project->rulers.items[i]));
+    for (size_t i = 0; i < project->expansion_joints.count; i++)
+        tl_json_array_push(expansion_joints, expansion_joint_to_json(project->expansion_joints.items[i]));
     tl_json_object_set(root, "version", tl_json_number(FORMAT_VERSION));
     tl_json_object_set(root, "outlines", outlines);
     tl_json_object_set(root, "partitions", partitions);
     tl_json_object_set(root, "openings", openings);
     tl_json_object_set(root, "spaces", spaces);
+    tl_json_object_set(root, "rulers", rulers);
+    tl_json_object_set(root, "expansion_joints", expansion_joints);
     tl_json_object_set(root, "next_id", tl_json_number(project->next_space_id));
     return root;
 }
@@ -224,6 +279,12 @@ bool tl_project_from_json(TlProject *project, const TlJson *root, char *error, s
     list = tl_json_get(root, "openings");
     for (size_t i = 0; i < tl_json_length(list); i++)
         tl_project_add_opening(project, opening_from_json(tl_json_at(list, i)));
+    list = tl_json_get(root, "expansion_joints");
+    for (size_t i = 0; i < tl_json_length(list); i++)
+        tl_project_add_expansion_joint(project, expansion_joint_from_json(tl_json_at(list, i)));
+    list = tl_json_get(root, "rulers");
+    for (size_t i = 0; i < tl_json_length(list); i++)
+        tl_project_add_ruler(project, ruler_from_json(tl_json_at(list, i)));
     list = tl_json_get(root, "spaces");
     int max_id = 0;
     for (size_t i = 0; i < tl_json_length(list); i++) {

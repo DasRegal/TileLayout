@@ -17,7 +17,7 @@
 
 /* Настройки окна печати. */
 typedef struct AppPrintPreferences {
-    bool tiles, clips, dims, cuts, calc, mono;
+    bool tiles, clips, dims, cuts, calc, mono, expansion_joints;
     bool landscape;
     int scale;          /* 0 — по размеру листа, иначе 1:N */
 } AppPrintPreferences;

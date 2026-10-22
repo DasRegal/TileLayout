@@ -186,6 +186,8 @@ static void render_plan_page(AppPrintJob *job, cairo_t *cr, int index, bool numb
         .show_tiles = job->options.tiles || numbers,  /* номера без плиток бессмысленны */
         .show_clips = job->options.clips,
         .show_dims = job->options.dims && !numbers,   /* на плане с номерами — без размеров */
+        .show_rulers = false,                         /* линейки — инструмент экрана */
+        .show_expansion_joints = job->options.expansion_joints,
         .show_numbers = numbers,
         .show_room_labels = !numbers,                 /* плашки закрывали бы номера */
         .printing = true,

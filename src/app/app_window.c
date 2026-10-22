@@ -14,26 +14,41 @@
 #define APP_NAME "TileLayout"
 #define PROJECT_EXTENSION ".tilelayout.json"
 
-static const char HELP_TEXT[] =
+/* Справка по разделам: одна строка длиннее 4095 символов не гарантируется стандартом C99. */
+static const char *const HELP_SECTIONS[] = {
     "<b>Как устроен план</b>\n"
     "• <b>Контур</b> — дом или квартира: замкнутая цепочка наружных стен. Рисуется прямоугольником (R) "
     "или по точкам (P) <i>на пустом месте</i>.\n"
     "• <b>Перегородки</b> (W) ставятся внутри контура. Как только они замыкают область, появляется "
     "<b>комната</b> со своим полом, плиткой и расчётом. Удалили перегородку — комнаты сливаются.\n"
     "• Прямоугольник или контур <i>внутри</i> дома сразу становится комнатой из перегородок.\n"
-    "• Перегородки привязаны к стенам; концы, соединённые в узел, движутся вместе.\n\n"
+    "• Перегородки привязаны к стенам; концы, соединённые в узел, движутся вместе.\n\n",
     "<b>Мышь</b>\n"
-    "• Клик — выделить; тянуть угол, стену, перегородку (за тело — поперёк, за конец — вдоль), проём.\n"
+    "• Клик — выделить; тянуть угол, стену, перегородку (за тело — поперёк, за конец — вдоль или с поворотом), проём.\n"
     "• Тянуть комнату — переместить весь дом. Двойной клик по наружной стене — добавить угол.\n"
     "• Ctrl + тянуть (или «Сдвиг плитки», T) — сдвиг сетки плитки. Shift — без привязок.\n"
     "• Колесо — масштаб; правая/средняя кнопка или пустое место — панорама.\n"
-    "• Стрелки — сдвиг выделенного на шаг привязки (Shift — 1 мм, Ctrl — плитка). Delete — удалить.\n\n"
+    "• Стрелки — сдвиг выделенного на шаг привязки (Shift — 1 мм, Ctrl — плитка). Delete — удалить.\n\n",
     "<b>Рисование</b>: длину можно набрать на клавиатуре и нажать Enter.\n"
+    "<b>Линейка</b> (M): клик — клик или протянуть мышью. Концы притягиваются к углам (□), серединам (△) "
+    "и краям стен (○), к швам плитки и их пересечениям (◇); Shift или флажок «Примагничивать» на панели — "
+    "без притягивания. Выделенную линейку можно тянуть за концы, двигать и удалить (Delete).\n"
+    "<b>Автовыравнивание</b>: почти горизонтальные и вертикальные линейки, стены и перегородки выпрямляются, "
+    "точка встаёт на одну линию с углами других стен — видна пунктирная линия. Отключается флажком на панели, "
+    "Shift — на время.\n"
+    "<b>Перегородка</b>: конец тянется вдоль оси, а если увести в сторону — перегородка поворачивается; "
+    "угол можно задать на панели. У выделенной перегородки квадратные маркеры на углах тела: их можно "
+    "тянуть поперёк оси или задать отступ на панели — так задаётся точная форма для раскроя. Торец, "
+    "упирающийся в стену или в бок другой перегородки, срезается точно по ней.\n",
+    "<b>Деформационный шов</b> (J): ставится, как линейка, концы притягиваются к поверхностям стен. "
+    "Плитка в шов не заходит: шов режет её на куски с зазором между ними — они видны на плане с номерами и "
+    "в чертежах подрезок. Зазор задаётся на панели. Кнопка «Швы» прячет и показывает швы на плане.\n",
     "<b>Esc</b> — отменить построение, повторный Esc — режим «Выбор».\n"
     "<b>Блокировка</b>: флажок у стены, перегородки и проёма — объект нельзя сдвинуть или удалить.\n\n"
     "<b>Пол</b>: своя раскладка или «как в комнате X» — общая сетка, плитка на стыке — одна.\n"
     "<b>Клей</b>: расход на 1 мм × толщина слоя × площадь. <b>СВП</b> — только в швах между плитками.\n"
-    "<b>Мин. ширина подрезки</b>: более узкие куски подсвечиваются красным.";
+    "<b>Мин. ширина подрезки</b>: более узкие куски подсвечиваются красным.",
+    NULL};
 
 typedef struct ToolEntry {
     AppToolId tool;
@@ -47,6 +62,8 @@ static const ToolEntry TOOL_ENTRIES[] = {
     {APP_TOOL_PARTITION, "partition", "Перегородка", "Перегородка любой длины (W)"},
     {APP_TOOL_OPENING, "opening", "Проём", "Проём в стене или перегородке (O)"},
     {APP_TOOL_TILES, "tile_move", "Сдвиг плитки", "Сдвинуть сетку плитки мышью (T)"},
+    {APP_TOOL_EXPANSION_JOINT, "expansion_joint", "Шов", "Деформационный шов в покрытии (J)"},
+    {APP_TOOL_RULER, "ruler", "Линейка", "Линейка: измерить расстояние (M)"},
 };
 
 typedef struct ViewToggle {
@@ -59,6 +76,7 @@ static const ViewToggle VIEW_TOGGLES[] = {
     {"covering", "Покрытие", "<Control>1", offsetof(AppViewFlags, tiles), true},
     {"svp", "СВП", "<Control>2", offsetof(AppViewFlags, clips), true},
     {"numbers", "Номера", "<Control>3", offsetof(AppViewFlags, numbers), true},
+    {"expansion_joint", "Швы", "<Control>4", offsetof(AppViewFlags, expansion_joints), true},
     {NULL, "Размеры", NULL, offsetof(AppViewFlags, dims), false},
     {NULL, "Сетка", NULL, offsetof(AppViewFlags, grid), false},
 };
@@ -319,6 +337,7 @@ static void on_quit(GtkMenuItem *item, AppWindow *self) { gtk_window_close(GTK_W
 static void on_undo(GtkWidget *widget, AppWindow *self) { app_document_undo(self->document); }
 static void on_redo(GtkWidget *widget, AppWindow *self) { app_document_redo(self->document); }
 static void on_delete(GtkMenuItem *item, AppWindow *self) { app_command_delete_selection(self->document); }
+static void on_delete_all_rulers(GtkMenuItem *item, AppWindow *self) { app_command_delete_all_rulers(self->document); }
 
 static GtkWidget *add_spin_row(GtkWidget *grid, int row, const char *label, double value)
 {
@@ -429,11 +448,13 @@ static void on_snap_changed(GtkComboBox *combo, AppWindow *self)
 
 static void on_help(GtkMenuItem *item, AppWindow *self)
 {
+    char *help = g_strjoinv("", (char **)HELP_SECTIONS);
     GtkWidget *dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(self->window), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO,
-                                                           GTK_BUTTONS_OK, "%s", HELP_TEXT);
+                                                           GTK_BUTTONS_OK, "%s", help);
     gtk_window_set_title(GTK_WINDOW(dialog), "Управление");
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
+    g_free(help);
 }
 
 static void on_about(GtkMenuItem *item, AppWindow *self)
@@ -503,6 +524,7 @@ static GtkWidget *build_menu(AppWindow *self)
     separator(edit);
     menu_item(self, edit, "Удалить выделенное", NULL, G_CALLBACK(on_delete));
     menu_item(self, edit, "Новый дом / квартира по размерам…", NULL, G_CALLBACK(on_add_house));
+    menu_item(self, edit, "Удалить все линейки", NULL, G_CALLBACK(on_delete_all_rulers));
 
     GtkWidget *tools = submenu(bar, "_Инструменты");
     GSList *group = NULL;
@@ -547,13 +569,27 @@ static GtkToolItem *tool_button(GtkToolItem *item, const char *icon, const char 
     gtk_tool_button_set_icon_widget(GTK_TOOL_BUTTON(item), gtk_image_new_from_pixbuf(app_icon_pixbuf(icon, 26)));
     gtk_tool_button_set_label(GTK_TOOL_BUTTON(item), label);
     gtk_widget_set_tooltip_text(GTK_WIDGET(item), tip);
+    gtk_tool_item_set_homogeneous(item, FALSE); /* ширина — по своей подписи, а не по самой длинной */
     return item;
+}
+
+/* Кнопки панели инструментов — с узкими полями по бокам, чтобы все уместились. */
+static void compact_toolbar_buttons(GtkWidget *toolbar)
+{
+    static const char CSS[] = "#main-toolbar toolbutton > button { padding-left: 5px; padding-right: 5px; }";
+    gtk_widget_set_name(toolbar, "main-toolbar");
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider, CSS, -1, NULL);
+    gtk_style_context_add_provider_for_screen(gtk_widget_get_screen(toolbar), GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
 }
 
 static GtkWidget *build_toolbar(AppWindow *self)
 {
     GtkWidget *toolbar = gtk_toolbar_new();
     gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH);
+    compact_toolbar_buttons(toolbar);
     GtkToolItem *undo = tool_button(gtk_tool_button_new(NULL, NULL), "undo", "Отменить", "Отменить (Ctrl+Z)");
     g_signal_connect(undo, "clicked", G_CALLBACK(on_undo), self);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), undo, -1);

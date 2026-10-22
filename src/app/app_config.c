@@ -117,17 +117,21 @@ typedef struct DoubleSetting {
 static const BoolSetting BOOL_SETTINGS[] = {
     {"edit", "link_walls", DOCUMENT_FIELD(preferences.link_walls)},
     {"edit", "keep_angles", DOCUMENT_FIELD(preferences.keep_angles)},
+    {"edit", "ruler_magnet", DOCUMENT_FIELD(preferences.measure_magnet)},
+    {"edit", "auto_align", DOCUMENT_FIELD(preferences.auto_align)},
     {"view", "show_tiles", DOCUMENT_FIELD(view.tiles)},
     {"view", "show_clips", DOCUMENT_FIELD(view.clips)},
     {"view", "show_numbers", DOCUMENT_FIELD(view.numbers)},
     {"view", "show_dims", DOCUMENT_FIELD(view.dims)},
     {"view", "show_grid", DOCUMENT_FIELD(view.grid)},
+    {"view", "show_expansion_joints", DOCUMENT_FIELD(view.expansion_joints)},
 };
 
 static const DoubleSetting DOUBLE_SETTINGS[] = {
     {"edit", "snap", DOCUMENT_FIELD(preferences.snap_step)},
     {"edit", "partition_thick", DOCUMENT_FIELD(preferences.partition_thickness)},
     {"edit", "opening_width", DOCUMENT_FIELD(preferences.opening_width)},
+    {"edit", "expansion_joint_gap", DOCUMENT_FIELD(preferences.expansion_joint_gap)},
     {"edit", "outline_thick", DOCUMENT_FIELD(preferences.outline_thickness)},
     {"house", "w", DOCUMENT_FIELD(preferences.house_width)},
     {"house", "h", DOCUMENT_FIELD(preferences.house_height)},
@@ -220,6 +224,7 @@ AppPrintPreferences app_config_read_print(AppConfig *config)
         .tiles = read_bool(f, "print", "tiles", true), .clips = read_bool(f, "print", "svp", false),
         .dims = read_bool(f, "print", "dims", true), .cuts = read_bool(f, "print", "cuts", false),
         .calc = read_bool(f, "print", "calc", true), .mono = read_bool(f, "print", "mono", false),
+        .expansion_joints = read_bool(f, "print", "expansion_joints", true),
         .landscape = read_bool(f, "print", "landscape", true), .scale = read_int(f, "print", "scale", 0)};
 }
 
@@ -232,6 +237,7 @@ void app_config_write_print(AppConfig *config, const AppPrintPreferences *print)
     g_key_file_set_boolean(f, "print", "cuts", print->cuts);
     g_key_file_set_boolean(f, "print", "calc", print->calc);
     g_key_file_set_boolean(f, "print", "mono", print->mono);
+    g_key_file_set_boolean(f, "print", "expansion_joints", print->expansion_joints);
     g_key_file_set_boolean(f, "print", "landscape", print->landscape);
     g_key_file_set_integer(f, "print", "scale", print->scale);
 }

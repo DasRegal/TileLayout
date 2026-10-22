@@ -19,6 +19,7 @@ void tl_space_free(TlSpace *space)
     free(space->name);
     tl_polygon_free(&space->outline);
     tl_polygon_list_free_all(&space->holes);
+    tl_polygon_list_free_all(&space->joint_strips);
     tl_layout_cache_free(space->layout_cache);
     free(space);
 }

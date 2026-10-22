@@ -13,21 +13,16 @@
 
 #define MIN_RECT_SIDE 10.0
 
-/* Точка курсора: привязки и выравнивание с первой точкой контура. */
+/* Точка курсора: привязки и выравнивание с уже поставленными точками контура. */
 static TlVec2 cursor_point(AppCanvas *canvas, const AppPointer *pointer)
 {
     AppSnapContext context = app_canvas_snap_context(canvas);
+    context.extra_refs = canvas->draw_points.items;
+    context.extra_ref_count = canvas->draw_points.count;
     const TlVec2 *last = tl_polygon_last(&canvas->draw_points);
-    TlVec2 point = app_snap_wall_point(&context, pointer->world, last, pointer->shift).point;
-    if (canvas->draw_points.count && !pointer->shift) {
-        TlVec2 first = canvas->draw_points.items[0];
-        double tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX);
-        if (fabs(point.x - first.x) < tolerance)
-            point.x = first.x;
-        if (fabs(point.y - first.y) < tolerance)
-            point.y = first.y;
-    }
-    return point;
+    AppSnapResult snap = app_snap_wall_point(&context, pointer->world, last, pointer->shift);
+    app_canvas_show_guides(canvas, &snap.guides, snap.point);
+    return snap.point;
 }
 
 static void finish_contour(AppCanvas *canvas)

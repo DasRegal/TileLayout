@@ -8,14 +8,21 @@
 #include "app_draw.h"
 #include "app_hit.h"
 #include "app_render.h"
+#include "tl_align.h"
 
 #define FIT_MARGIN 70
 #define ZOOM_STEP 1.15
 
 static const AppTool *const TOOLS[APP_TOOL_COUNT] = {
     &APP_SELECT_TOOL, &APP_RECT_TOOL, &APP_CONTOUR_TOOL,
-    &APP_PARTITION_TOOL, &APP_OPENING_TOOL, &APP_TILES_TOOL,
+    &APP_PARTITION_TOOL, &APP_OPENING_TOOL, &APP_TILES_TOOL, &APP_RULER_TOOL,
+    &APP_EXPANSION_JOINT_TOOL,
 };
+
+#define RULER_SNAP_RADIUS_PX 10.0
+#define SNAP_MARKER_PX 6.5
+#define COLOR_SNAP_MARKER "#e8710a"
+#define GUIDE_OVERSHOOT_PX 40.0
 
 /* ---- общее для инструментов ---------------------------------------------- */
 
@@ -34,8 +41,102 @@ void app_canvas_set_cursor(AppCanvas *canvas, const char *name)
 
 AppSnapContext app_canvas_snap_context(AppCanvas *canvas)
 {
-    return (AppSnapContext){canvas->document->project, &canvas->view,
-                            canvas->document->preferences.snap_step, NULL, -1, NULL};
+    return (AppSnapContext){.project = canvas->document->project, .view = &canvas->view,
+                            .grid_step = canvas->document->preferences.snap_step, .skip_vertex = -1,
+                            .align = canvas->document->preferences.auto_align};
+}
+
+void app_canvas_show_guides(AppCanvas *canvas, const AppGuides *guides, TlVec2 to)
+{
+    canvas->guides = *guides;
+    canvas->guides_to = to;
+}
+
+void app_canvas_clear_guides(AppCanvas *canvas) { canvas->guides.count = 0; }
+
+/* Выпрямление по горизонтали/вертикали от anchor. Если конец притянут к
+   линии — точка на пересечении этой линии с горизонталью/вертикалью. */
+static TlVec2 align_ruler_end(AppCanvas *canvas, TlVec2 point, TlVec2 anchor, double radius)
+{
+    static const TlVec2 AXES[] = {{1, 0}, {0, 1}};
+    TlVec2 aligned;
+    size_t which;
+    if (!tl_align_direction(anchor, point, AXES, 2, radius, &aligned, &which))
+        return point;
+    TlSnapPoint *snap = &canvas->measure_snap;
+    TlVec2 crossing;
+    bool on_line = snap->kind != TL_SNAP_NONE &&
+                   tl_line_intersection(anchor, AXES[which], snap->point, snap->direction, &crossing) &&
+                   tl_distance(crossing, point) < radius;
+    if (on_line)
+        aligned = crossing;
+    else
+        snap->kind = TL_SNAP_NONE;
+    AppGuides guides = {0};
+    app_guides_add(&guides, anchor, which == 1);
+    app_canvas_show_guides(canvas, &guides, aligned);
+    return aligned;
+}
+
+TlVec2 app_canvas_measure_point(AppCanvas *canvas, TlVec2 world, const TlVec2 *anchor, TlSnapTargets targets,
+                                bool free)
+{
+    const AppEditPreferences *preferences = &canvas->document->preferences;
+    canvas->measure_snap = (TlSnapPoint){world, TL_SNAP_NONE, {0, 0}};
+    app_canvas_clear_guides(canvas);
+    if (free)
+        return world;
+    double radius = app_view_pixels_to_mm(&canvas->view, RULER_SNAP_RADIUS_PX);
+    if (preferences->measure_magnet)
+        tl_measure_snap(canvas->document->project, world, radius, targets, &canvas->measure_snap);
+    TlVec2 point = canvas->measure_snap.point;
+    bool on_point = canvas->measure_snap.kind != TL_SNAP_NONE && !tl_snap_kind_is_line(canvas->measure_snap.kind);
+    if (preferences->auto_align && anchor && !on_point)
+        point = align_ruler_end(canvas, point, *anchor, radius);
+    return point;
+}
+
+static void draw_guides(AppCanvas *canvas, cairo_t *cr)
+{
+    for (int i = 0; i < canvas->guides.count; i++) {
+        const AppGuide *guide = &canvas->guides.items[i];
+        TlVec2 to = guide->vertical ? tl_vec2(guide->from.x, canvas->guides_to.y)
+                                    : tl_vec2(canvas->guides_to.x, guide->from.y);
+        /* чуть дальше точки — чтобы линия была видна и вдоль самой линейки */
+        TlVec2 beyond = tl_vec2_scale(tl_vec2_normalized(tl_vec2_sub(to, guide->from)),
+                                      app_view_pixels_to_mm(&canvas->view, GUIDE_OVERSHOOT_PX));
+        app_path_line(cr, &canvas->view, tl_vec2_sub(guide->from, beyond), tl_vec2_add(to, beyond));
+        app_stroke_dashed(cr, app_color_hex(COLOR_SNAP_MARKER), 1, 4);
+    }
+}
+
+/* Значок притяжения: квадрат — угол, треугольник — середина грани,
+   ромб — пересечение швов, кружок — грань или шов. */
+void app_canvas_draw_snap_marker(AppCanvas *canvas, cairo_t *cr)
+{
+    const TlSnapPoint *snap = &canvas->measure_snap;
+    if (snap->kind == TL_SNAP_NONE)
+        return;
+    TlVec2 s = app_view_to_screen(&canvas->view, snap->point);
+    const double r = SNAP_MARKER_PX;
+    switch (snap->kind) {
+    case TL_SNAP_CORNER: cairo_rectangle(cr, s.x - r, s.y - r, 2 * r, 2 * r); break;
+    case TL_SNAP_WALL_MIDDLE:
+        cairo_move_to(cr, s.x, s.y - r);
+        cairo_line_to(cr, s.x + r, s.y + r * 0.8);
+        cairo_line_to(cr, s.x - r, s.y + r * 0.8);
+        cairo_close_path(cr);
+        break;
+    case TL_SNAP_JOINT_CROSSING:
+        cairo_move_to(cr, s.x, s.y - r);
+        cairo_line_to(cr, s.x + r, s.y);
+        cairo_line_to(cr, s.x, s.y + r);
+        cairo_line_to(cr, s.x - r, s.y);
+        cairo_close_path(cr);
+        break;
+    default: cairo_arc(cr, s.x, s.y, r * 0.8, 0, 2 * G_PI); break;
+    }
+    app_stroke(cr, app_color_hex(COLOR_SNAP_MARKER), 1.3);
 }
 
 TlVec2 app_canvas_typed_target(const AppCanvas *canvas, TlVec2 start, TlVec2 toward)
@@ -102,6 +203,16 @@ static void draw_handle(cairo_t *cr, TlVec2 screen, double radius, bool active, 
     app_stroke(cr, app_color_hex(color), 1.5);
 }
 
+/* Квадратный маркер угла тела перегородки. */
+static void draw_corner_handle(cairo_t *cr, TlVec2 screen, bool active)
+{
+    double half = active ? 4.5 : 3.5;
+    cairo_rectangle(cr, screen.x - half, screen.y - half, 2 * half, 2 * half);
+    app_set_color(cr, active ? app_color_hex(APP_BLUE) : app_color_hex("#ffffff"));
+    cairo_fill_preserve(cr);
+    app_stroke(cr, app_color_hex(APP_BLUE), 1.2);
+}
+
 void app_canvas_draw_preview_polygon(AppCanvas *canvas, cairo_t *cr, const TlPolygon *polygon, bool closed)
 {
     for (size_t i = 0; i < polygon->count; i++) {
@@ -137,11 +248,15 @@ static void draw_hover(AppCanvas *canvas, cairo_t *cr)
         cairo_fill(cr);
         tl_polygon_free(&quad);
     } else if (hover->kind == APP_SELECT_PARTITION) {
-        TlPolygon body = tl_partition_body(hover->partition, 0);
+        TlPolygon body = tl_project_partition_body(canvas->document->project, hover->partition, 0);
         app_path_polygon(cr, &canvas->view, &body);
         app_set_color(cr, app_color_rgba(80, 160, 255, 0.35));
         cairo_fill(cr);
         tl_polygon_free(&body);
+    } else if (hover->kind == APP_SELECT_RULER) {
+        app_render_ruler(cr, &canvas->view, hover->ruler, app_color_hex(APP_BLUE), 1);
+    } else if (hover->kind == APP_SELECT_EXPANSION_JOINT) {
+        app_render_expansion_joint(cr, &canvas->view, hover->expansion_joint, app_color_rgba(80, 160, 255, 1));
     }
 }
 
@@ -168,13 +283,11 @@ static void draw_opening_distances(AppCanvas *canvas, cairo_t *cr, const TlBand 
 void app_canvas_draw_opening_preview(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along,
                                      double width, const char *color, bool preview)
 {
-    double from, to, across_from, across_to;
-    tl_project_opening_extent(canvas->document->project, band, along, width, &from, &to, &across_from, &across_to);
-    TlPolygon rect = tl_band_rect(band, from, to, across_from, across_to);
-    app_path_polygon(cr, &canvas->view, &rect);
+    TlPolygon shape = tl_project_opening_shape(canvas->document->project, band, along, width);
+    app_path_polygon(cr, &canvas->view, &shape);
     AppColor fill = preview ? app_color_rgba(11, 128, 67, 0.43) : app_color_rgba(26, 115, 232, 0.27);
     fill_and_outline(cr, fill, color, preview ? 1.5 : 2.2);
-    tl_polygon_free(&rect);
+    tl_polygon_free(&shape);
     draw_opening_distances(canvas, cr, band, along, width, color);
 }
 
@@ -182,10 +295,27 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
 {
     const AppSelection *s = &canvas->document->selection;
     AppView *view = &canvas->view;
+    if (s->kind == APP_SELECT_EXPANSION_JOINT) {
+        const TlExpansionJoint *joint = s->expansion_joint;
+        app_render_expansion_joint(cr, view, joint, app_color_hex(APP_BLUE));
+        draw_handle(cr, app_view_to_screen(view, joint->start), s->index == 1 ? 5 : 3.5, s->index == 1, APP_BLUE);
+        draw_handle(cr, app_view_to_screen(view, joint->end), s->index == 2 ? 5 : 3.5, s->index == 2, APP_BLUE);
+        app_canvas_draw_dimension(canvas, cr, joint->start, joint->end, false, APP_BLUE);
+        return;
+    }
+    if (s->kind == APP_SELECT_RULER) {
+        app_render_ruler(cr, view, s->ruler, app_color_hex(APP_BLUE), 1.5);
+        draw_handle(cr, app_view_to_screen(view, s->ruler->start), s->index == 1 ? 5 : 3.5, s->index == 1, APP_BLUE);
+        draw_handle(cr, app_view_to_screen(view, s->ruler->end), s->index == 2 ? 5 : 3.5, s->index == 2, APP_BLUE);
+        return;
+    }
     if (s->kind == APP_SELECT_PARTITION) {
-        TlPolygon body = tl_partition_body(s->partition, 0);
+        TlPolygon body = tl_project_partition_body(canvas->document->project, s->partition, 0);
         app_path_polygon(cr, view, &body);
         fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.35), APP_BLUE, 2.2);
+        for (size_t corner = 0; corner < body.count; corner++)
+            draw_corner_handle(cr, app_view_to_screen(view, body.items[corner]),
+                               s->index == APP_PARTITION_FIRST_CORNER + (int)corner);
         tl_polygon_free(&body);
         draw_handle(cr, app_view_to_screen(view, s->partition->start), s->index == 1 ? 6 : 4.5, s->index == 1, APP_BLUE);
         draw_handle(cr, app_view_to_screen(view, s->partition->end), s->index == 2 ? 6 : 4.5, s->index == 2, APP_BLUE);
@@ -236,6 +366,7 @@ void app_canvas_render(AppCanvas *canvas, cairo_t *cr, int width, int height)
     options.show_numbers = flags->numbers;
     options.show_dims = flags->dims;
     options.show_grid = flags->grid;
+    options.show_expansion_joints = flags->expansion_joints;
     options.highlighted_outline = app_selection_outline(&canvas->document->selection);
     app_render_plan(cr, canvas->document->project, &canvas->view, &options);
     if (canvas->tool_id == APP_TOOL_SELECT)
@@ -243,6 +374,8 @@ void app_canvas_render(AppCanvas *canvas, cairo_t *cr, int width, int height)
     draw_selection(canvas, cr);
     if (canvas->tool->draw)
         canvas->tool->draw(canvas, cr);
+    draw_guides(canvas, cr);
+    app_canvas_draw_snap_marker(canvas, cr);
 }
 
 static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer data)
@@ -371,6 +504,7 @@ static bool switch_tool_by_letter(AppCanvas *canvas, gunichar character)
     } LETTERS[] = {{'v', 0x043c, APP_TOOL_SELECT},  {'r', 0x043a, APP_TOOL_RECT},
                    {'p', 0x0437, APP_TOOL_CONTOUR}, {'w', 0x0446, APP_TOOL_PARTITION},
                    {'o', 0x0449, APP_TOOL_OPENING}, {'t', 0x0435, APP_TOOL_TILES},
+                   {'m', 0x044c, APP_TOOL_RULER},   {'j', 0x043e, APP_TOOL_EXPANSION_JOINT},
                    {'f', 0x0430, -1}};
     gunichar lower = g_unichar_tolower(character);
     for (size_t i = 0; i < sizeof LETTERS / sizeof LETTERS[0]; i++)
@@ -440,6 +574,9 @@ void app_canvas_set_tool(AppCanvas *canvas, AppToolId tool)
     tl_polygon_clear(&canvas->draw_points);
     canvas->typed[0] = '\0';
     canvas->has_rect_start = canvas->has_wall_start = canvas->has_opening_preview = false;
+    canvas->has_segment_start = false;
+    canvas->measure_snap.kind = TL_SNAP_NONE;
+    app_canvas_clear_guides(canvas);
     canvas->wall_snap.on_face = false;
     canvas->hover = (AppSelection){0};
     if (canvas->tool->activate)

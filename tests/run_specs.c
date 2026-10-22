@@ -10,5 +10,9 @@ int main(void)
     spec_layout();
     spec_summary();
     spec_storage();
+    spec_ruler();
+    spec_alignment();
+    spec_partition_shape();
+    spec_expansion_joint();
     return spec_report() == 0 ? 0 : 1;
 }

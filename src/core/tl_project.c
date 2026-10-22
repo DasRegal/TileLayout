@@ -21,6 +21,10 @@ void tl_project_clear(TlProject *project)
         tl_opening_free(project->openings.items[i]);
     for (size_t i = 0; i < project->spaces.count; i++)
         tl_space_free(project->spaces.items[i]);
+    tl_project_delete_all_rulers(project);
+    for (size_t i = 0; i < project->expansion_joints.count; i++)
+        tl_expansion_joint_free(project->expansion_joints.items[i]);
+    tl_expansion_joint_list_clear(&project->expansion_joints);
     tl_outline_list_clear(&project->outlines);
     tl_partition_list_clear(&project->partitions);
     tl_opening_list_clear(&project->openings);
@@ -37,6 +41,8 @@ void tl_project_free(TlProject *project)
     tl_partition_list_free(&project->partitions);
     tl_opening_list_free(&project->openings);
     tl_space_list_free(&project->spaces);
+    tl_ruler_list_free(&project->rulers);
+    tl_expansion_joint_list_free(&project->expansion_joints);
     free(project);
 }
 
@@ -57,6 +63,23 @@ void tl_project_add_opening(TlProject *project, TlOpening *opening)
     tl_opening_list_push(&project->openings, opening);
 }
 
+void tl_project_add_ruler(TlProject *project, TlRuler *ruler) { tl_ruler_list_push(&project->rulers, ruler); }
+
+void tl_project_add_expansion_joint(TlProject *project, TlExpansionJoint *joint)
+{
+    tl_expansion_joint_list_push(&project->expansion_joints, joint);
+}
+
+void tl_project_delete_expansion_joint(TlProject *project, TlExpansionJoint *joint)
+{
+    long index;
+    TL_ARRAY_INDEX_OF(&project->expansion_joints, joint, index);
+    if (index < 0)
+        return;
+    tl_expansion_joint_list_remove_at(&project->expansion_joints, (size_t)index);
+    tl_expansion_joint_free(joint);
+}
+
 void tl_project_delete_partition(TlProject *project, TlPartition *partition)
 {
     long index;
@@ -75,6 +98,23 @@ void tl_project_delete_opening(TlProject *project, TlOpening *opening)
         return;
     tl_opening_list_remove_at(&project->openings, (size_t)index);
     tl_opening_free(opening);
+}
+
+void tl_project_delete_ruler(TlProject *project, TlRuler *ruler)
+{
+    long index;
+    TL_ARRAY_INDEX_OF(&project->rulers, ruler, index);
+    if (index < 0)
+        return;
+    tl_ruler_list_remove_at(&project->rulers, (size_t)index);
+    tl_ruler_free(ruler);
+}
+
+void tl_project_delete_all_rulers(TlProject *project)
+{
+    for (size_t i = 0; i < project->rulers.count; i++)
+        tl_ruler_free(project->rulers.items[i]);
+    tl_ruler_list_clear(&project->rulers);
 }
 
 static bool partition_inside_outline(const TlPartition *partition, const TlOutline *outline)

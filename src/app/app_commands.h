@@ -1,6 +1,7 @@
 /*
  * Команды над документом — общие для канвы, панели и меню: добавление
- * домов, комнат, перегородок и проёмов, удаление, сдвиг стрелками.
+ * домов, комнат, перегородок, проёмов, линеек и деформационных швов,
+ * удаление, сдвиг стрелками.
  * Каждая команда — одна точка отмены.
  */
 #ifndef APP_COMMANDS_H
@@ -17,6 +18,9 @@ void app_command_add_house(AppDocument *document, TlVec2 origin, double width, d
                            double thickness);
 void app_command_add_partition(AppDocument *document, TlVec2 start, TlVec2 end);
 void app_command_add_opening(AppDocument *document, const TlBand *band, double along);
+void app_command_add_ruler(AppDocument *document, TlVec2 start, TlVec2 end);
+void app_command_delete_all_rulers(AppDocument *document);
+void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2 end);
 void app_command_insert_vertex(AppDocument *document, TlOutline *outline, size_t wall, TlVec2 point);
 
 void app_command_delete_selection(AppDocument *document);

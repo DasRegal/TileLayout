@@ -9,5 +9,9 @@ void spec_project(void);
 void spec_layout(void);
 void spec_summary(void);
 void spec_storage(void);
+void spec_ruler(void);
+void spec_alignment(void);
+void spec_partition_shape(void);
+void spec_expansion_joint(void);
 
 #endif

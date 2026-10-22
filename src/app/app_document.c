@@ -29,9 +29,11 @@ AppDocument *app_document_new(void)
     document->history = tl_history_new();
     document->preferences = (AppEditPreferences){
         .snap_step = 10, .partition_thickness = 100, .opening_width = 800, .link_walls = true,
-        .keep_angles = true, .house_width = 6000, .house_height = 4000, .house_thickness = 200,
+        .keep_angles = true, .measure_magnet = true, .auto_align = true,
+        .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .house_width = 6000, .house_height = 4000, .house_thickness = 200,
         .outline_thickness = 200};
-    document->view = (AppViewFlags){.tiles = true, .clips = true, .dims = true, .grid = true};
+    document->view = (AppViewFlags){.tiles = true, .clips = true, .dims = true, .grid = true,
+                                    .expansion_joints = true};
     return document;
 }
 
@@ -82,6 +84,14 @@ TlOutline *app_selection_outline(const AppSelection *selection)
     }
 }
 
+bool app_selection_partition_corner(const AppSelection *selection, TlPartitionCorner *corner)
+{
+    if (selection->kind != APP_SELECT_PARTITION || selection->index < APP_PARTITION_FIRST_CORNER)
+        return false;
+    *corner = (TlPartitionCorner)(selection->index - APP_PARTITION_FIRST_CORNER);
+    return true;
+}
+
 bool app_selection_equal(const AppSelection *a, const AppSelection *b)
 {
     return memcmp(a, b, sizeof *a) == 0;
@@ -97,7 +107,7 @@ void app_document_select(AppDocument *document, AppSelection selection)
 
 void app_document_clear_selection(AppDocument *document)
 {
-    app_document_select(document, (AppSelection){APP_SELECT_NONE, NULL, NULL, NULL, NULL, 0});
+    app_document_select(document, (AppSelection){0});
 }
 
 static bool contains_pointer(void *const *items, size_t count, const void *item)
@@ -124,6 +134,9 @@ static bool selection_is_valid(AppDocument *document)
         return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition);
     case APP_SELECT_OPENING:
         return contains_pointer((void *const *)p->openings.items, p->openings.count, s->opening);
+    case APP_SELECT_RULER: return contains_pointer((void *const *)p->rulers.items, p->rulers.count, s->ruler);
+    case APP_SELECT_EXPANSION_JOINT:
+        return contains_pointer((void *const *)p->expansion_joints.items, p->expansion_joints.count, s->expansion_joint);
     }
     return false;
 }
@@ -195,6 +208,13 @@ static SelectionKey selection_key(AppDocument *document)
     case APP_SELECT_OPENING:
         key.position = position_in((void *const *)p->openings.items, p->openings.count, s->opening);
         break;
+    case APP_SELECT_RULER:
+        key.position = position_in((void *const *)p->rulers.items, p->rulers.count, s->ruler);
+        break;
+    case APP_SELECT_EXPANSION_JOINT:
+        key.position = position_in((void *const *)p->expansion_joints.items, p->expansion_joints.count,
+                                   s->expansion_joint);
+        break;
     default: break;
     }
     return key;
@@ -227,6 +247,16 @@ static void restore_selection(AppDocument *document, SelectionKey key)
         found = found && position < p->openings.count;
         if (found)
             s.opening = p->openings.items[position];
+        break;
+    case APP_SELECT_RULER:
+        found = found && position < p->rulers.count;
+        if (found)
+            s.ruler = p->rulers.items[position];
+        break;
+    case APP_SELECT_EXPANSION_JOINT:
+        found = found && position < p->expansion_joints.count;
+        if (found)
+            s.expansion_joint = p->expansion_joints.items[position];
         break;
     default: found = false; break;
     }

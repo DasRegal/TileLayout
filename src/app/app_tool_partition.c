@@ -14,6 +14,7 @@ static void track(AppCanvas *canvas, const AppPointer *pointer)
     canvas->wall_snap = app_snap_wall_point(&context, pointer->world,
                                             canvas->has_wall_start ? &canvas->wall_start : NULL, pointer->shift);
     canvas->cursor = canvas->wall_snap.point;
+    app_canvas_show_guides(canvas, &canvas->wall_snap.guides, canvas->cursor);
     app_canvas_redraw(canvas);
 }
 
@@ -83,7 +84,8 @@ static void draw(AppCanvas *canvas, cairo_t *cr)
         TlVec2 start = canvas->wall_start;
         TlVec2 end = app_canvas_typed_target(canvas, start, canvas->cursor);
         if (tl_distance(start, end) >= 1) {
-            TlPartition preview = {start, end, canvas->document->preferences.partition_thickness, false};
+            TlPartition preview = {.start = start, .end = end};
+            tl_partition_set_thickness(&preview, canvas->document->preferences.partition_thickness);
             TlPolygon body = tl_partition_body(&preview, 0);
             app_path_polygon(cr, &canvas->view, &body);
             app_set_color(cr, app_color_rgba(11, 128, 67, 0.47));

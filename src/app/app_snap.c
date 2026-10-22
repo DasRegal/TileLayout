@@ -2,7 +2,30 @@
 
 #include <math.h>
 
+#include "tl_align.h"
+
 #define ORTHO_DEGREES 6.0
+
+void app_guides_add(AppGuides *guides, TlVec2 from, bool vertical)
+{
+    for (int i = 0; i < guides->count; i++)
+        if (guides->items[i].vertical == vertical && tl_distance(guides->items[i].from, from) < 1e-9)
+            return;
+    if (guides->count < APP_MAX_GUIDES)
+        guides->items[guides->count++] = (AppGuide){from, vertical};
+}
+
+void app_guides_keep_valid(AppGuides *guides, TlVec2 point)
+{
+    int kept = 0;
+    for (int i = 0; i < guides->count; i++) {
+        const AppGuide *guide = &guides->items[i];
+        double offset = guide->vertical ? point.x - guide->from.x : point.y - guide->from.y;
+        if (fabs(offset) < 0.5 && tl_distance(point, guide->from) > 1)
+            guides->items[kept++] = *guide;
+    }
+    guides->count = kept;
+}
 
 TlVec2 app_snap_grid(double step, TlVec2 point)
 {
@@ -61,7 +84,7 @@ static bool nearest_vertex(const AppSnapContext *context, TlVec2 point, TlVec2 *
 AppSnapResult app_snap_point(const AppSnapContext *context, TlVec2 point, const TlVec2 *refs,
                              size_t ref_count, bool free)
 {
-    AppSnapResult result = {point, false, false, {0, 0}, {0, 0}};
+    AppSnapResult result = {.point = point};
     if (free)
         return result;
     if (nearest_vertex(context, point, &result.point)) {
@@ -69,23 +92,65 @@ AppSnapResult app_snap_point(const AppSnapContext *context, TlVec2 point, const 
         return result;
     }
     result.point = app_snap_grid(context->grid_step, point);
+    if (!context->align || ref_count == 0)
+        return result;
     double tolerance = app_view_pixels_to_mm(context->view, APP_SNAP_TOLERANCE_PX);
-    for (size_t i = 0; i < ref_count; i++) {
-        if (fabs(point.x - refs[i].x) < tolerance)
-            result.point.x = refs[i].x;
-        if (fabs(point.y - refs[i].y) < tolerance)
-            result.point.y = refs[i].y;
+    TlTracking tracking = tl_align_tracking(point, refs, ref_count, tolerance);
+    if (tracking.has_x) {
+        result.point.x = tracking.point.x;
+        app_guides_add(&result.guides, tracking.x_reference, true);
+    }
+    if (tracking.has_y) {
+        result.point.y = tracking.point.y;
+        app_guides_add(&result.guides, tracking.y_reference, false);
     }
     return result;
+}
+
+/* Опорные точки для выравнивания: start, точки инструмента, углы домов, концы перегородок. */
+static TlPolygon tracking_references(const AppSnapContext *context, const TlVec2 *start)
+{
+    TlPolygon refs = {0};
+    if (start)
+        tl_polygon_push(&refs, *start);
+    for (size_t i = 0; i < context->extra_ref_count; i++)
+        tl_polygon_push(&refs, context->extra_refs[i]);
+    TlProject *project = context->project;
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlOutline *outline = project->outlines.items[o];
+        for (size_t i = 0; i < outline->inner.count; i++)
+            tl_polygon_push(&refs, outline->inner.items[i]);
+        TlPolygon outer = tl_outline_outer(outline);
+        for (size_t i = 0; i < outer.count; i++)
+            tl_polygon_push(&refs, outer.items[i]);
+        tl_polygon_free(&outer);
+    }
+    for (size_t i = 0; i < project->partitions.count; i++) {
+        const TlPartition *partition = project->partitions.items[i];
+        if (partition == context->skip_partition)
+            continue;
+        tl_polygon_push(&refs, partition->start);
+        tl_polygon_push(&refs, partition->end);
+    }
+    return refs;
 }
 
 AppSnapResult app_snap_wall_point(const AppSnapContext *context, TlVec2 point, const TlVec2 *start,
                                   bool free)
 {
-    AppSnapResult result = app_snap_point(context, point, start, start ? 1 : 0, free);
+    TlPolygon refs = context->align ? tracking_references(context, start) : (TlPolygon){0};
+    AppSnapResult result = app_snap_point(context, point, refs.items, refs.count, free);
+    tl_polygon_free(&refs);
     if (free || result.on_vertex)
         return result;
-    TlVec2 q = start ? app_snap_ortho(result.point, *start) : result.point;
+    TlVec2 q = result.point;
+    if (start && context->align) {
+        q = app_snap_ortho(result.point, *start);
+        if (q.x == start->x && q.y != start->y)
+            app_guides_add(&result.guides, *start, true);
+        else if (q.y == start->y && q.x != start->x)
+            app_guides_add(&result.guides, *start, false);
+    }
     result.point = q;
 
     double tolerance = app_view_pixels_to_mm(context->view, APP_SNAP_TOLERANCE_PX);
@@ -121,6 +186,7 @@ AppSnapResult app_snap_wall_point(const AppSnapContext *context, TlVec2 point, c
         }
     }
     tl_face_list_free(&faces);
+    app_guides_keep_valid(&result.guides, result.point);
     return result;
 }
 

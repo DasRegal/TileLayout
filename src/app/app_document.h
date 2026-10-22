@@ -23,8 +23,11 @@ typedef enum AppSelectionKind {
     APP_SELECT_VERTEX,     /* угол дома: outline + index */
     APP_SELECT_WALL,       /* наружная стена: outline + index */
     APP_SELECT_SPACE,      /* комната */
-    APP_SELECT_PARTITION,  /* перегородка: index 0 — тело, 1 — начало, 2 — конец */
-    APP_SELECT_OPENING
+    APP_SELECT_PARTITION,  /* перегородка: index 0 — тело, 1 — начало, 2 — конец,
+                              APP_PARTITION_FIRST_CORNER + TlPartitionCorner — угол тела */
+    APP_SELECT_OPENING,
+    APP_SELECT_RULER,      /* линейка: index 0 — вся, 1 — начало, 2 — конец */
+    APP_SELECT_EXPANSION_JOINT /* деформационный шов: index 0 — весь, 1 — начало, 2 — конец */
 } AppSelectionKind;
 
 typedef struct AppSelection {
@@ -33,6 +36,8 @@ typedef struct AppSelection {
     TlSpace *space;
     TlPartition *partition;
     TlOpening *opening;
+    TlRuler *ruler;
+    TlExpansionJoint *expansion_joint;
     int index;
 } AppSelection;
 
@@ -51,13 +56,16 @@ typedef struct AppEditPreferences {
     double opening_width;
     bool link_walls;
     bool keep_angles;
+    bool measure_magnet;          /* концы линеек и деформационных швов притягиваются к стенам */
+    bool auto_align;              /* выравнивание по горизонтали/вертикали и по углам стен */
+    double expansion_joint_gap;   /* зазор новых деформационных швов */
     double house_width, house_height, house_thickness;
     double outline_thickness;     /* поле «Толщина» в свойствах контура */
 } AppEditPreferences;
 
 /* Что показывать на плане. */
 typedef struct AppViewFlags {
-    bool tiles, clips, numbers, dims, grid;
+    bool tiles, clips, numbers, dims, grid, expansion_joints;
 } AppViewFlags;
 
 typedef struct AppDocument AppDocument;
@@ -99,6 +107,11 @@ void app_document_clear_selection(AppDocument *document);
 /* Дом выделенной стены, угла или комнаты. */
 TlOutline *app_selection_outline(const AppSelection *selection);
 bool app_selection_equal(const AppSelection *a, const AppSelection *b);
+
+#define APP_PARTITION_FIRST_CORNER 3
+
+/* Выделен угол тела перегородки (тогда *corner — какой). */
+bool app_selection_partition_corner(const AppSelection *selection, TlPartitionCorner *corner);
 
 /* ---- файлы -------------------------------------------------------------------- */
 

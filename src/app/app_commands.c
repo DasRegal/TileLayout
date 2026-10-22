@@ -186,6 +186,40 @@ void app_command_add_opening(AppDocument *document, const TlBand *band, double a
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
+void app_command_add_ruler(AppDocument *document, TlVec2 start, TlVec2 end)
+{
+    if (tl_distance(start, end) < 1)
+        return;
+    app_document_checkpoint(document, "");
+    TlRuler *ruler = tl_ruler_new(start, end);
+    tl_project_add_ruler(document->project, ruler);
+    document->selection = (AppSelection){.kind = APP_SELECT_RULER, .ruler = ruler};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2 end)
+{
+    if (tl_distance(start, end) < 1)
+        return;
+    app_document_checkpoint(document, "");
+    TlExpansionJoint *joint = tl_expansion_joint_new(start, end, document->preferences.expansion_joint_gap);
+    tl_project_add_expansion_joint(document->project, joint);
+    tl_project_update_spaces(document->project);
+    document->selection = (AppSelection){.kind = APP_SELECT_EXPANSION_JOINT, .expansion_joint = joint};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_delete_all_rulers(AppDocument *document)
+{
+    if (document->project->rulers.count == 0)
+        return;
+    app_document_checkpoint(document, "");
+    tl_project_delete_all_rulers(document->project);
+    app_document_commit(document);
+}
+
 void app_command_insert_vertex(AppDocument *document, TlOutline *outline, size_t wall, TlVec2 point)
 {
     if (outline->locked.items[wall]) {
@@ -214,6 +248,15 @@ void app_command_delete_selection(AppDocument *document)
         return;
     }
     switch (s.kind) {
+    case APP_SELECT_RULER:
+        app_document_checkpoint(document, "");
+        tl_project_delete_ruler(project, s.ruler);
+        break;
+    case APP_SELECT_EXPANSION_JOINT:
+        app_document_checkpoint(document, "");
+        tl_project_delete_expansion_joint(project, s.expansion_joint);
+        tl_project_update_spaces(project);
+        break;
     case APP_SELECT_OPENING:
         app_document_checkpoint(document, "");
         tl_project_delete_opening(project, s.opening);
@@ -294,6 +337,13 @@ void app_command_nudge(AppDocument *document, double dx, double dy, bool move_ti
         TlTileSettings *tile = tl_space_effective_tile(s.space);
         tile->offset_x += dx;
         tile->offset_y += dy;
+    } else if (s.kind == APP_SELECT_RULER) {
+        app_document_checkpoint(document, "nudge");
+        tl_ruler_translate(s.ruler, offset);
+    } else if (s.kind == APP_SELECT_EXPANSION_JOINT) {
+        app_document_checkpoint(document, "nudge");
+        tl_expansion_joint_translate(s.expansion_joint, offset);
+        tl_project_update_spaces(project);
     } else if (s.kind == APP_SELECT_OPENING) {
         app_document_checkpoint(document, "nudge");
         nudge_opening(project, s.opening, offset);

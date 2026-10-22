@@ -42,6 +42,74 @@ static bool hit_partition_end(TlProject *project, TlVec2 world, double tolerance
     return false;
 }
 
+/* Часть отрезка под курсором: 1 — начало, 2 — конец, 0 — сам отрезок, −1 — мимо.
+   Концы важнее середины. */
+static int segment_part_at(TlVec2 start, TlVec2 end, TlVec2 world, double end_tolerance, double line_tolerance)
+{
+    if (tl_distance(world, start) < end_tolerance)
+        return 1;
+    if (tl_distance(world, end) < end_tolerance)
+        return 2;
+    return tl_point_segment_distance(world, start, end, NULL) < line_tolerance ? 0 : -1;
+}
+
+/* Линейки лежат поверх плана — проверяются первыми. */
+static bool hit_ruler(TlProject *project, TlVec2 world, double end_tolerance, double line_tolerance,
+                      AppSelection *hit)
+{
+    for (size_t i = project->rulers.count; i-- > 0;) {
+        TlRuler *ruler = project->rulers.items[i];
+        int part = segment_part_at(ruler->start, ruler->end, world, end_tolerance, line_tolerance);
+        if (part >= 0) {
+            *hit = (AppSelection){.kind = APP_SELECT_RULER, .ruler = ruler, .index = part};
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool hit_expansion_joint(TlProject *project, TlVec2 world, double end_tolerance, double line_tolerance,
+                                AppSelection *hit)
+{
+    for (size_t i = project->expansion_joints.count; i-- > 0;) {
+        TlExpansionJoint *joint = project->expansion_joints.items[i];
+        int part = segment_part_at(joint->start, joint->end, world, end_tolerance, fmax(line_tolerance, joint->gap / 2));
+        if (part >= 0) {
+            *hit = (AppSelection){.kind = APP_SELECT_EXPANSION_JOINT, .expansion_joint = joint, .index = part};
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Маркеры выделенной перегородки: концы и углы тела — ближайший к курсору. */
+static bool hit_selected_partition_handle(TlProject *project, const AppSelection *current, TlVec2 world,
+                                          double tolerance, AppSelection *hit)
+{
+    if (!current || current->kind != APP_SELECT_PARTITION)
+        return false;
+    TlPartition *partition = current->partition;
+    TlPolygon body = tl_project_partition_body(project, partition, 0);
+    double best = tolerance;
+    int index = -1;
+    const TlVec2 ends[2] = {partition->start, partition->end};
+    for (int end = 0; end < 2; end++)
+        if (tl_distance(world, ends[end]) < best) {
+            best = tl_distance(world, ends[end]);
+            index = end + 1;
+        }
+    for (int corner = 0; corner < (int)body.count; corner++)
+        if (tl_distance(world, body.items[corner]) < best) {
+            best = tl_distance(world, body.items[corner]);
+            index = APP_PARTITION_FIRST_CORNER + corner;
+        }
+    tl_polygon_free(&body);
+    if (index < 0)
+        return false;
+    *hit = (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition, .index = index};
+    return true;
+}
+
 static bool near_polygon(const TlPolygon *polygon, TlVec2 world, double tolerance)
 {
     return tl_polygon_contains(polygon, world) || tl_polygon_on_boundary(polygon, world, tolerance);
@@ -67,8 +135,10 @@ static bool hit_partition_body(TlProject *project, TlVec2 world, double toleranc
 {
     for (size_t i = 0; i < project->partitions.count; i++) {
         TlPartition *partition = project->partitions.items[i];
-        double distance = tl_point_segment_distance(world, partition->start, partition->end, NULL);
-        if (distance < fmax(partition->thickness / 2, tolerance)) {
+        TlPolygon body = tl_project_partition_body(project, partition, 0);
+        bool inside = near_polygon(&body, world, tolerance);
+        tl_polygon_free(&body);
+        if (inside) {
             *hit = (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition};
             return true;
         }
@@ -112,7 +182,10 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
     TlOutline **outlines = g_new(TlOutline *, project->outlines.count + 1);
     size_t outline_count = ordered_outlines(project, current, outlines);
     AppSelection hit = none();
-    bool found = hit_vertex(outlines, outline_count, world, vertex_tolerance, &hit) ||
+    bool found = hit_ruler(project, world, vertex_tolerance, wall_tolerance, &hit) ||
+                 hit_expansion_joint(project, world, vertex_tolerance, wall_tolerance, &hit) ||
+                 hit_selected_partition_handle(project, current, world, vertex_tolerance, &hit) ||
+                 hit_vertex(outlines, outline_count, world, vertex_tolerance, &hit) ||
                  hit_partition_end(project, world, vertex_tolerance, &hit) ||
                  hit_opening(project, world, app_view_pixels_to_mm(view, 3), &hit) ||
                  hit_partition_body(project, world, wall_tolerance, &hit) ||

@@ -18,8 +18,8 @@ TlBand tl_band_of_partition(TlPartition *partition)
     band.normal = tl_vec2_perpendicular(band.direction);
     band.origin = partition->start;
     band.length = tl_partition_length(partition);
-    band.near = -partition->thickness / 2;
-    band.far = partition->thickness / 2;
+    band.near = -tl_partition_max_thickness(partition) / 2; /* у трапеции — по толстому концу */
+    band.far = tl_partition_max_thickness(partition) / 2;
     return band;
 }
 
