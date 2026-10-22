@@ -1,0 +1,28 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+    "configurePresets": [
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Сборка для работы: build/",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+        },
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Сборка для отладки: build-debug/",
+            "binaryDir": "${sourceDir}/build-debug",
+            "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}
+        }
+    ],
+    "buildPresets": [
+        {"name": "release", "configurePreset": "release"},
+        {"name": "debug", "configurePreset": "debug"}
+    ],
+    "testPresets": [
+        {"name": "release", "configurePreset": "release", "output": {"outputOnFailure": true}},
+        {"name": "debug", "configurePreset": "debug", "output": {"outputOnFailure": true}}
+    ]
+}

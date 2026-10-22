@@ -18,8 +18,7 @@ static void remember_failure(const char *text)
 {
     current_failures++;
     if (message_count < MAX_MESSAGES) {
-        strncpy(messages[message_count], text, MESSAGE_LENGTH - 1);
-        messages[message_count][MESSAGE_LENGTH - 1] = '\0';
+        snprintf(messages[message_count], MESSAGE_LENGTH, "%s", text);
         message_count++;
     }
 }
