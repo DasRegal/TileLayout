@@ -1,4 +1,4 @@
-# TileLayout (C)
+# TileLayout
 
 Программа для раскладки плитки на C99 + GTK 3:
 - план дома: стены, перегородки, проёмы;
@@ -7,6 +7,18 @@
 - печать и PDF с чертежами подрезок.
 
 Файлы проектов — `*.tilelayout.json`. Открываются и файлы прежней Python-версии программы.
+
+<p align="center">
+  <a href="docs/screenshots/screenshot_main.png"><img src="docs/screenshots/screenshot_main.png" width="760" alt="Главное окно: план дома, раскладка плитки и расчёт"></a>
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="33%"><a href="docs/screenshots/screenshot_conv_1.png"><img src="docs/screenshots/screenshot_conv_1.png" alt="Печать: план с номерами плиток"></a><br>План с номерами плиток</td>
+    <td align="center" width="33%"><a href="docs/screenshots/screenshot_conv_2.png"><img src="docs/screenshots/screenshot_conv_2.png" alt="Печать: чертежи подрезок"></a><br>Чертежи подрезок</td>
+    <td align="center" width="33%"><a href="docs/screenshots/screenshot_conv_3.png"><img src="docs/screenshots/screenshot_conv_3.png" alt="Печать: лист расчёта"></a><br>Лист расчёта</td>
+  </tr>
+</table>
 
 ## Сборка
 
