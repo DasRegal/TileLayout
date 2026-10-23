@@ -21,6 +21,7 @@ typedef struct TlSpace {
     TlPolygon room_outline;        /* контур без проёмов: от него строится сетка плитки */
     TlPolygonList holes;           /* отдельно стоящие перегородки */
     TlPolygonList joint_strips;    /* полосы деформационных швов, задевающих пол (мир) */
+    TlPolygonList threshold_strips; /* стыки в проёмах у пола комнаты (мир) */
     TlOutline *house;              /* дом, в котором комната */
     struct TlSpace *layout_source; /* чья раскладка используется (сама или источник) */
 

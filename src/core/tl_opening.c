@@ -6,6 +6,7 @@ TlOpening *tl_opening_new(TlVec2 center, double width)
     opening->center = center;
     opening->width = width;
     opening->threshold = TL_OPENING_DEFAULT_THRESHOLD;
+    opening->threshold_gap = TL_OPENING_DEFAULT_THRESHOLD_GAP;
     return opening;
 }
 

@@ -21,6 +21,7 @@ void tl_space_free(TlSpace *space)
     tl_polygon_free(&space->room_outline);
     tl_polygon_list_free_all(&space->holes);
     tl_polygon_list_free_all(&space->joint_strips);
+    tl_polygon_list_free_all(&space->threshold_strips);
     tl_layout_cache_free(space->layout_cache);
     free(space);
 }

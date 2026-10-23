@@ -1,12 +1,14 @@
 /*
  * Вычисление комнат: пол каждого дома минус тела перегородок, но с полом
- * дверных проёмов в них. Проём делит стык — тончайшая щель, — поэтому
- * комнаты через дверь не сливаются, а каждая получает свою часть проёма.
+ * дверных проёмов в них. Проём делит стык — щель шириной в шов двери (хоть
+ * тончайшая), — поэтому комнаты через дверь не сливаются, а каждая получает
+ * свою часть проёма.
  * Новые области сопоставляются с прежними комнатами по площади перекрытия,
  * чтобы названия и настройки плитки сохранялись при правках.
  */
 #include "tl_project.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -14,7 +16,7 @@
 
 #define BODY_EXTENSION 0.05      /* удлинение тел, чтобы стыки надёжно смыкались */
 #define CLEAN_TOLERANCE 0.2
-#define THRESHOLD_GAP 0.1        /* мм — ширина стыка в проёме: разделяет комнаты */
+#define THRESHOLD_GAP 0.1        /* мм — наименьшая ширина стыка в проёме: разделяет комнаты */
 #define THRESHOLD_OVERRUN 1.0    /* мм — стык заходит за косяки, в тело перегородки */
 
 /* Что вырезает пол комнат: тела перегородок, их проёмы (возвращают пол) и стыки. */
@@ -38,15 +40,20 @@ typedef struct OverlapPair {
 TL_ARRAY_DEFINE(ComponentList, Component, component_list)
 TL_ARRAY_DEFINE(OverlapPairList, OverlapPair, overlap_pair_list)
 
-/* Стык — полоска шириной THRESHOLD_GAP по линии стыка. */
-static TlPolygon threshold_strip(TlVec2 from, TlVec2 to)
+/* Стык — полоска шириной в шов двери (не уже THRESHOLD_GAP) по линии стыка. */
+static bool threshold_strip(TlProject *project, const TlOpening *opening, TlPolygon *strip)
 {
+    TlVec2 from, to;
+    if (!tl_project_opening_threshold(project, opening, &from, &to))
+        return false;
     TlVec2 direction = tl_vec2_normalized(tl_vec2_sub(to, from));
-    TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(direction), THRESHOLD_GAP / 2);
+    double width = fmax(THRESHOLD_GAP, opening->threshold_gap);
+    TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(direction), width / 2);
     TlVec2 a = tl_vec2_sub(from, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
     TlVec2 b = tl_vec2_add(to, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
     const TlVec2 corners[] = {tl_vec2_add(a, half), tl_vec2_add(b, half), tl_vec2_sub(b, half), tl_vec2_sub(a, half)};
-    return tl_polygon_from_points(corners, 4);
+    *strip = tl_polygon_from_points(corners, 4);
+    return true;
 }
 
 static FloorCutters floor_cutters(TlProject *project)
@@ -54,13 +61,12 @@ static FloorCutters floor_cutters(TlProject *project)
     FloorCutters cutters = {tl_project_partition_bodies(project, BODY_EXTENSION), {0}, {0}};
     for (size_t i = 0; i < project->openings.count; i++) {
         const TlOpening *opening = project->openings.items[i];
-        TlPolygon doorway;
-        TlVec2 from, to;
+        TlPolygon doorway, strip;
         if (!tl_project_opening_doorway(project, opening, &doorway))
             continue;
         tl_polygon_list_push(&cutters.doorways, doorway);
-        if (tl_project_opening_threshold(project, opening, &from, &to))
-            tl_polygon_list_push(&cutters.thresholds, threshold_strip(from, to));
+        if (threshold_strip(project, opening, &strip))
+            tl_polygon_list_push(&cutters.thresholds, strip);
     }
     return cutters;
 }
@@ -222,6 +228,29 @@ static void assign_joint_strips(TlProject *project)
     }
 }
 
+/* Каждой комнате — стыки в проёмах у её пола: на этом краю плитка без отступа от стен. */
+static void assign_threshold_strips(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++)
+        tl_polygon_list_free_all(&project->spaces.items[s]->threshold_strips);
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon doorway, strip;
+        if (!tl_project_opening_doorway(project, project->openings.items[i], &doorway))
+            continue;
+        tl_polygon_free(&doorway);
+        if (!threshold_strip(project, project->openings.items[i], &strip))
+            continue;
+        TlRect bounds = tl_polygon_bounds(&strip);
+        bounds = (TlRect){bounds.left - 1, bounds.top - 1, bounds.right + 1, bounds.bottom + 1};
+        for (size_t s = 0; s < project->spaces.count; s++) {
+            TlSpace *space = project->spaces.items[s];
+            if (tl_rect_intersects(bounds, tl_polygon_bounds(&space->outline)))
+                tl_polygon_list_push(&space->threshold_strips, tl_polygon_copy(&strip));
+        }
+        tl_polygon_free(&strip);
+    }
+}
+
 void tl_project_update_spaces(TlProject *project)
 {
     FloorCutters cutters = floor_cutters(project);
@@ -304,4 +333,5 @@ void tl_project_update_spaces(TlProject *project)
     free(old_taken);
     resolve_layout_sources(project);
     assign_joint_strips(project);
+    assign_threshold_strips(project);
 }

@@ -1,6 +1,7 @@
 #include "tl_layout.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "tl_regions.h"
@@ -39,11 +40,40 @@ static TlAffine world_to_local(TlSpace *space)
     return tl_affine_inverted(&to_world);
 }
 
+#define ON_THRESHOLD_MM 0.3
+
+/* Край пола лежит на стыке в проёме: там плитка без отступа от стен — зазор задан швом двери. */
+static bool on_threshold(const TlSpace *space, TlVec2 a, TlVec2 b)
+{
+    TlVec2 middle = tl_vec2_midpoint(a, b);
+    for (size_t i = 0; i < space->threshold_strips.count; i++) {
+        const TlPolygon *strip = &space->threshold_strips.items[i];
+        if (tl_polygon_contains(strip, middle))
+            return true;
+        for (size_t k = 0; k < strip->count; k++)
+            if (tl_point_segment_distance(middle, strip->items[k], strip->items[(k + 1) % strip->count], NULL) <
+                ON_THRESHOLD_MM)
+                return true;
+    }
+    return false;
+}
+
 static LocalFloor make_local_floor(TlSpace *space, const TlAffine *to_local, double wall_gap)
 {
     LocalFloor floor = {0};
     TlPolygon outline = tl_affine_apply_polygon(to_local, &space->outline);
-    floor.outline = wall_gap > 0 ? tl_polygon_offset_uniform(&outline, -wall_gap) : tl_polygon_copy(&outline);
+    if (wall_gap > 0) {
+        double *distances = tl_malloc(outline.count * sizeof(double));
+        for (size_t i = 0; i < outline.count; i++) {
+            const TlPolygon *world = &space->outline;
+            bool threshold = on_threshold(space, world->items[i], world->items[(i + 1) % world->count]);
+            distances[i] = threshold ? 0 : -wall_gap;
+        }
+        floor.outline = tl_polygon_offset(&outline, distances);
+        free(distances);
+    } else {
+        floor.outline = tl_polygon_copy(&outline);
+    }
     tl_polygon_free(&outline);
     for (size_t i = 0; i < space->holes.count; i++) {
         TlPolygon hole = tl_affine_apply_polygon(to_local, &space->holes.items[i]);

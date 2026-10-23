@@ -61,7 +61,7 @@ struct AppPanel {
     AppSection opening_section;
     GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
     GtkWidget *threshold_box, *threshold_depth_caption, *threshold_depth;
-    GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right;
+    GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap;
 
     AppSection tile_section, glue_section, clip_section;
     GtkWidget *shared_note, *row_shift, *color_button;
@@ -619,6 +619,16 @@ static void on_threshold_depth(GtkSpinButton *spin, AppPanel *panel)
         set_threshold(panel, gtk_spin_button_get_value(spin) / sides.depth);
 }
 
+static void on_threshold_gap(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlOpening *opening = selected_opening(panel);
+    if (!opening)
+        return;
+    app_document_checkpoint(panel->document, "threshold_gap");
+    opening->threshold_gap = gtk_spin_button_get_value(spin);
+    app_document_commit_rooms(panel->document);
+}
+
 static void on_threshold_preset(GtkButton *button, AppPanel *panel)
 {
     set_threshold(panel, *(const double *)g_object_get_data(G_OBJECT(button), "share"));
@@ -939,6 +949,14 @@ static void build_threshold(AppPanel *panel, AppSection *section)
     gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_depth_caption, 0, 0, 1, 1);
     gtk_widget_set_hexpand(panel->threshold_depth, TRUE);
     gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_depth, 1, 0, 1, 1);
+    panel->threshold_gap = spin_with(panel, 0, 50, 0.5, 1, "мм", G_CALLBACK(on_threshold_gap));
+    gtk_widget_set_tooltip_text(panel->threshold_gap, "Зазор между плиткой комнат по линии стыка — поровну в обе "
+                                                      "стороны.\nОтступ плитки от стен у стыка не действует: "
+                                                      "зазор там задаёт только шов");
+    GtkWidget *gap_caption = gtk_label_new("Шов");
+    gtk_label_set_xalign(GTK_LABEL(gap_caption), 0);
+    gtk_grid_attach(GTK_GRID(threshold.grid), gap_caption, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_gap, 1, 1, 1, 1);
     GtkWidget *presets = app_hbox(4);
     panel->threshold_to_left = threshold_button(panel, &ALL_TO_LEFT);
     panel->threshold_middle = threshold_button(panel, &HALVES);
@@ -976,10 +994,11 @@ static void refresh_threshold(AppPanel *panel, TlOpening *opening)
     g_free(caption);
     gtk_spin_button_set_range(GTK_SPIN_BUTTON(panel->threshold_depth), 0, sides.depth);
     set_spin(panel->threshold_depth, opening->threshold * sides.depth);
+    set_spin(panel->threshold_gap, opening->threshold_gap);
     label_threshold_button(panel->threshold_to_left, sides.left_room); /* стык у правого бока */
     label_threshold_button(panel->threshold_to_right, sides.right_room);
-    GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_to_left, panel->threshold_middle,
-                             panel->threshold_to_right};
+    GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_gap, panel->threshold_to_left,
+                             panel->threshold_middle, panel->threshold_to_right};
     for (size_t i = 0; i < G_N_ELEMENTS(controls); i++)
         gtk_widget_set_sensitive(controls[i], !opening->locked);
 }

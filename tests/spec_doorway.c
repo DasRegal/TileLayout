@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include "tl_layout.h"
 #include "tl_project.h"
 #include "tl_project_io.h"
 
@@ -88,17 +89,44 @@ void spec_doorway(void)
             EXPECT_NEAR(area_of_room_at(project, 1000, 1500), before, 1e-6);
             tl_project_free(project);
         }
-        IT("новый проём — со стыком посередине; положение стыка сохраняется в файле")
+        IT("шов двери — зазор по линии стыка, поровну в обе комнаты")
+        {
+            TlProject *project = two_rooms_with_door(0.5);
+            project->openings.items[0]->threshold_gap = 10;
+            tl_project_update_spaces(project);
+            EXPECT_INT(project->spaces.count, 2);
+            EXPECT_NEAR(area_of_room_at(project, 1000, 1500), 1950 * 3000 + 45 * 800, DIVIDER_LOSS);
+            EXPECT_NEAR(area_of_room_at(project, 3000, 1500), 1950 * 3000 + 45 * 800, DIVIDER_LOSS);
+            TlSpace *left = tl_project_space_at(project, tl_vec2(1000, 1500));
+            EXPECT(left && tl_space_contains(left, tl_vec2(1994, 1500)));
+            EXPECT(left && !tl_space_contains(left, tl_vec2(1996, 1500)));
+            tl_project_free(project);
+        }
+        IT("отступ плитки от стен у стыка не действует: зазор там — только шов двери")
+        {
+            TlProject *project = two_rooms_with_door(0.5);
+            TlSpace *left = tl_project_space_at(project, tl_vec2(1000, 1500));
+            left->tile.wall_gap = 20;
+            TlLayout *layout = tl_space_layout(left);
+            /* комната 1950×3000 минус 20 по стенам; пол проёма — до стыка, от косяков тоже 20 */
+            double expected = 1910.0 * 2960 + (2000 - 1930) * 760.0;
+            EXPECT_NEAR(fabs(tl_polygon_area(&layout->floor_outline)), expected, DIVIDER_LOSS);
+            tl_project_free(project);
+        }
+        IT("новый проём — со стыком посередине и без шва; стык и шов сохраняются в файле")
         {
             TlOpening *opening = tl_opening_new(tl_vec2(0, 0), 800);
             EXPECT_NEAR(opening->threshold, 0.5, 1e-12);
+            EXPECT_NEAR(opening->threshold_gap, 0, 1e-12);
             tl_opening_free(opening);
             TlProject *project = two_rooms_with_door(0.2);
+            project->openings.items[0]->threshold_gap = 3;
             char *text = tl_project_to_string(project);
             TlProject *loaded = tl_project_new();
             char error[128] = "";
             EXPECT(tl_project_from_string(loaded, text, error, sizeof error));
             EXPECT_NEAR(loaded->openings.items[0]->threshold, 0.2, 1e-12);
+            EXPECT_NEAR(loaded->openings.items[0]->threshold_gap, 3, 1e-12);
             free(text);
             tl_project_free(loaded);
             tl_project_free(project);
