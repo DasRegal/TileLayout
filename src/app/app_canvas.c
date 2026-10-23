@@ -28,12 +28,27 @@ static const AppTool *const TOOLS[APP_TOOL_COUNT] = {
 
 void app_canvas_redraw(AppCanvas *canvas) { gtk_widget_queue_draw(canvas->area); }
 
+/* Имя курсора, который система точно покажет. GTK для Windows знает только
+ * курсоры из своей таблицы системных («default», «crosshair», «move»…); для
+ * незнакомого имени, например «grab», он молча создаёт пустой — невидимый —
+ * курсор. Там «схватить» и «тащить» показываем курсором перемещения. */
+static const char *visible_cursor_name(const char *name)
+{
+    if (!name)
+        return "default";
+#ifdef G_OS_WIN32
+    if (strcmp(name, "grab") == 0 || strcmp(name, "grabbing") == 0)
+        return "move";
+#endif
+    return name;
+}
+
 void app_canvas_set_cursor(AppCanvas *canvas, const char *name)
 {
     GdkWindow *window = gtk_widget_get_window(canvas->area);
     if (!window)
         return;
-    GdkCursor *cursor = gdk_cursor_new_from_name(gdk_window_get_display(window), name ? name : "default");
+    GdkCursor *cursor = gdk_cursor_new_from_name(gdk_window_get_display(window), visible_cursor_name(name));
     gdk_window_set_cursor(window, cursor);
     if (cursor)
         g_object_unref(cursor);
