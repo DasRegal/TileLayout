@@ -87,11 +87,24 @@ bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPoly
     return true;
 }
 
-/* Проём в перегородке: её полоса и края проёма вдоль неё. */
-static bool partition_opening_span(TlProject *project, const TlOpening *opening, TlBand *band, double *from,
-                                   double *to)
+/* ---- пол под проёмом ---------------------------------------------------------- */
+
+#define WALL_FLOOR_OVERLAP 0.05 /* мм — пол проёма заходит в пол дома, чтобы сомкнуться с ним */
+#define MIN_FLOOR_DEPTH 0.5     /* мм — меньше этого пола под проёмом в наружной стене нет */
+
+/* Проём в основной стене: поперёк — от внутренней грани (0) до дальней (depth):
+   у стены между домами это внутренняя грань соседнего дома, у наружной — улица. */
+typedef struct WallPassage {
+    TlBand band;
+    double from, to;   /* края проёма вдоль стены */
+    double depth;
+    TlOutline *neighbour; /* дом за стеной; NULL — за стеной улица */
+} WallPassage;
+
+static bool opening_span(TlProject *project, const TlOpening *opening, TlHostKind kind, TlBand *band,
+                         double *from, double *to)
 {
-    if (!tl_project_opening_host(project, opening, band) || band->host.kind != TL_HOST_PARTITION)
+    if (!tl_project_opening_host(project, opening, band) || band->host.kind != kind)
         return false;
     double along;
     tl_band_local(band, opening->center, &along, NULL);
@@ -100,14 +113,27 @@ static bool partition_opening_span(TlProject *project, const TlOpening *opening,
     return true;
 }
 
-bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, TlPolygon *doorway)
+static bool wall_passage(TlProject *project, const TlOpening *opening, WallPassage *passage)
 {
-    TlBand band;
-    double from, to;
-    if (!partition_opening_span(project, opening, &band, &from, &to))
+    if (!opening_span(project, opening, TL_HOST_WALL, &passage->band, &passage->from, &passage->to))
         return false;
-    *doorway = partition_opening_shape(project, &band, from, to, 0);
+    TlWallRefList links = tl_project_linked_walls(project, passage->band.host.outline, passage->band.host.wall);
+    passage->depth = passage->band.far;
+    passage->neighbour = NULL;
+    for (size_t i = 0; i < links.count; i++) {
+        double neighbour_depth = passage->band.far + links.items[i].outline->thickness.items[links.items[i].wall];
+        if (!passage->neighbour || neighbour_depth > passage->depth) {
+            passage->depth = neighbour_depth;
+            passage->neighbour = links.items[i].outline;
+        }
+    }
+    tl_wall_ref_list_free(&links);
     return true;
+}
+
+static double wall_split(const WallPassage *passage, const TlOpening *opening)
+{
+    return opening->threshold * passage->depth;
 }
 
 /* Точка стыка на расстоянии along от начала перегородки: между её боками. */
@@ -121,14 +147,61 @@ static TlVec2 threshold_point(const TlPartition *partition, double along, double
     return tl_vec2_lerp(right, left, threshold);
 }
 
+bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, TlPolygon *doorway)
+{
+    TlBand band;
+    double from, to;
+    if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from, &to)) {
+        *doorway = partition_opening_shape(project, &band, from, to, 0);
+        return true;
+    }
+    WallPassage passage;
+    if (!wall_passage(project, opening, &passage))
+        return false;
+    double floor_to = passage.neighbour ? passage.depth : wall_split(&passage, opening);
+    if (floor_to < MIN_FLOOR_DEPTH)
+        return false;
+    *doorway = tl_band_rect(&passage.band, passage.from, passage.to, 0, floor_to);
+    return true;
+}
+
+bool tl_project_opening_wall_floor(TlProject *project, const TlOpening *opening, const TlOutline *house,
+                                   TlPolygon *floor)
+{
+    WallPassage passage;
+    if (!wall_passage(project, opening, &passage))
+        return false;
+    double split = wall_split(&passage, opening);
+    double across_from, across_to;
+    if (house == passage.band.host.outline) {
+        across_from = -WALL_FLOOR_OVERLAP;
+        across_to = split;
+    } else if (house == passage.neighbour) {
+        across_from = split;
+        across_to = passage.depth + WALL_FLOOR_OVERLAP;
+    } else {
+        return false;
+    }
+    if (across_to - across_from < MIN_FLOOR_DEPTH + WALL_FLOOR_OVERLAP)
+        return false;
+    *floor = tl_band_rect(&passage.band, passage.from, passage.to, across_from, across_to);
+    return true;
+}
+
 bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, TlVec2 *from, TlVec2 *to)
 {
     TlBand band;
     double from_along, to_along;
-    if (!partition_opening_span(project, opening, &band, &from_along, &to_along))
+    if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from_along, &to_along)) {
+        *from = threshold_point(band.host.partition, from_along, opening->threshold);
+        *to = threshold_point(band.host.partition, to_along, opening->threshold);
+        return true;
+    }
+    WallPassage passage;
+    if (!wall_passage(project, opening, &passage))
         return false;
-    *from = threshold_point(band.host.partition, from_along, opening->threshold);
-    *to = threshold_point(band.host.partition, to_along, opening->threshold);
+    *from = tl_band_point(&passage.band, passage.from, wall_split(&passage, opening));
+    *to = tl_band_point(&passage.band, passage.to, wall_split(&passage, opening));
     return true;
 }
 
@@ -136,12 +209,30 @@ bool tl_project_opening_section(TlProject *project, const TlOpening *opening, Tl
 {
     TlBand band;
     double from_along, to_along;
-    if (!partition_opening_span(project, opening, &band, &from_along, &to_along))
+    if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from_along, &to_along)) {
+        double middle = (from_along + to_along) / 2;
+        *right = threshold_point(band.host.partition, middle, 0);
+        *left = threshold_point(band.host.partition, middle, 1);
+        return true;
+    }
+    WallPassage passage;
+    if (!wall_passage(project, opening, &passage))
         return false;
-    double middle = (from_along + to_along) / 2;
-    *right = threshold_point(band.host.partition, middle, 0);
-    *left = threshold_point(band.host.partition, middle, 1);
+    double middle = (passage.from + passage.to) / 2;
+    *right = tl_band_point(&passage.band, middle, 0);
+    *left = tl_band_point(&passage.band, middle, passage.depth);
     return true;
+}
+
+bool tl_project_opening_outside(TlProject *project, const TlOpening *opening)
+{
+    WallPassage passage;
+    return wall_passage(project, opening, &passage) && !passage.neighbour;
+}
+
+double tl_project_default_threshold(TlProject *project, const TlOpening *opening)
+{
+    return tl_project_opening_outside(project, opening) ? 0 : TL_OPENING_DEFAULT_THRESHOLD;
 }
 
 void tl_project_remove_orphan_openings(TlProject *project)

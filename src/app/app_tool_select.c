@@ -173,8 +173,8 @@ static void drag_opening(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
     tl_project_update_spaces(canvas->document->project); /* пол проёма переходит с ним */
 }
 
-/* Стык комнат — поперёк перегородки: доля её толщины. Притягивается к бокам
-   и середине, иначе ставится на целые мм; Shift — точно за мышью. */
+/* Стык — поперёк стены или перегородки: доля глубины проёма. Притягивается к
+   граням и середине, иначе ставится на целые мм; Shift — точно за мышью. */
 static void drag_threshold(AppCanvas *canvas, AppDrag *drag, TlVec2 world, bool free)
 {
     static const double STOPS[] = {0, 0.5, 1};

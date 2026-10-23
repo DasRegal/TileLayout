@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FORMAT_VERSION 3
+#define FORMAT_VERSION 4 /* 4 — стык и пол под проёмами основных стен */
 
 /* ---- настройки плитки (таблица полей — в tl_tile_settings) ------------- */
 
@@ -254,6 +254,19 @@ TlJson *tl_project_to_json(const TlProject *project)
     return root;
 }
 
+/* До версии 4 пол был только под проёмами перегородок, а у проёмов основных
+   стен стык записывался, но не действовал: ставим им стык по умолчанию, чтобы
+   проект остался прежним (в наружной стене — без пола). */
+static void reset_wall_thresholds(TlProject *project)
+{
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlOpening *opening = project->openings.items[i];
+        TlBand band;
+        if (tl_project_opening_host(project, opening, &band) && band.host.kind == TL_HOST_WALL)
+            opening->threshold = tl_project_default_threshold(project, opening);
+    }
+}
+
 /* Файлы первых версий: каждая комната — отдельный контур с плиткой. */
 static void load_legacy_rooms(TlProject *project, const TlJson *rooms)
 {
@@ -285,6 +298,8 @@ bool tl_project_from_json(TlProject *project, const TlJson *root, char *error, s
     list = tl_json_get(root, "openings");
     for (size_t i = 0; i < tl_json_length(list); i++)
         tl_project_add_opening(project, opening_from_json(tl_json_at(list, i)));
+    if (tl_json_number_or(tl_json_get(root, "version"), 0) < 4)
+        reset_wall_thresholds(project);
     list = tl_json_get(root, "expansion_joints");
     for (size_t i = 0; i < tl_json_length(list); i++)
         tl_project_add_expansion_joint(project, expansion_joint_from_json(tl_json_at(list, i)));

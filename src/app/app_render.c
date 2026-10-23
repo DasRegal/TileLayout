@@ -235,22 +235,30 @@ static void render_outline_walls(cairo_t *cr, const AppView *view, const AppRend
     tl_polygon_free(&outer);
 }
 
-/* Всё, кроме пола дверных проёмов в перегородках: тело перегородки его не закрывает. */
-static void clip_out_doorways(cairo_t *cr, const AppView *view, TlProject *project)
+/* Рисовать дальше всюду, кроме этих многоугольников. */
+static void clip_out(cairo_t *cr, const AppView *view, const TlPolygon *polygons, size_t count)
 {
     const double everywhere = 1e7;
     cairo_new_path(cr);
     cairo_rectangle(cr, -everywhere, -everywhere, 2 * everywhere, 2 * everywhere);
-    for (size_t i = 0; i < project->openings.count; i++) {
-        TlPolygon doorway;
-        if (!tl_project_opening_doorway(project, project->openings.items[i], &doorway))
-            continue;
-        app_path_polygon(cr, view, &doorway);
-        tl_polygon_free(&doorway);
-    }
+    for (size_t i = 0; i < count; i++)
+        app_path_polygon(cr, view, &polygons[i]);
     cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
     cairo_clip(cr);
     cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
+}
+
+/* Всё, кроме пола под проёмами: тело стены или перегородки его не закрывает. */
+static void clip_out_doorways(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    TlPolygonList doorways = {0};
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon doorway;
+        if (tl_project_opening_doorway(project, project->openings.items[i], &doorway))
+            tl_polygon_list_push(&doorways, doorway);
+    }
+    clip_out(cr, view, doorways.items, doorways.count);
+    tl_polygon_list_free_all(&doorways);
 }
 
 /* Тела перегородок одним силуэтом: сначала обводка вдвое толще, затем заливка
@@ -320,14 +328,43 @@ static void render_doorway(cairo_t *cr, const AppView *view, const AppRenderOpti
                              tl_vec2_midpoint(to_jamb[0], to_jamb[1]));
 }
 
+/* Проём основной стены — вырез с откосами; пол под ним (до стыка, если за
+   стеной улица) виден, поверх — стык. */
+static void render_wall_opening(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
+                                TlProject *project, const TlOpening *opening, const TlPolygon *cut)
+{
+    TlPolygon doorway;
+    bool floor = tl_project_opening_doorway(project, opening, &doorway);
+    cairo_save(cr);
+    if (floor) { /* пол под проёмом не закрашиваем */
+        clip_out(cr, view, &doorway, 1);
+        tl_polygon_free(&doorway);
+    }
+    app_path_polygon(cr, view, cut);
+    app_set_fill_color(cr, app_color_hex(COLOR_OPENING_FLOOR));
+    cairo_fill(cr);
+    app_path_line(cr, view, cut->items[0], cut->items[1]);   /* линии порога */
+    app_path_line(cr, view, cut->items[3], cut->items[2]);
+    app_stroke_dashed(cr, app_color_hex(COLOR_OPENING_EDGE), 1, 4);
+    cairo_restore(cr);
+    app_path_line(cr, view, cut->items[1], cut->items[2]);   /* откосы */
+    app_path_line(cr, view, cut->items[3], cut->items[0]);
+    app_stroke(cr, app_color_hex(COLOR_WALL_EDGE), 1.4);
+    TlVec2 from, to;
+    if (floor && tl_project_opening_threshold(project, opening, &from, &to))
+        app_render_threshold(cr, view, from, to, app_color_hex(COLOR_THRESHOLD), 2);
+    if (options->show_dims)
+        render_opening_width(cr, view, opening, tl_vec2_midpoint(cut->items[0], cut->items[3]),
+                             tl_vec2_midpoint(cut->items[1], cut->items[2]));
+}
+
 static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
                             TlProject *project)
 {
     for (size_t i = 0; i < project->openings.count; i++) {
         const TlOpening *opening = project->openings.items[i];
-        TlPolygon doorway;
-        if (tl_project_opening_doorway(project, opening, &doorway)) {
-            tl_polygon_free(&doorway);
+        TlBand band;
+        if (tl_project_opening_host(project, opening, &band) && band.host.kind == TL_HOST_PARTITION) {
             render_doorway(cr, view, options, project, opening);
             continue;
         }
@@ -340,18 +377,7 @@ static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOpt
             }
             continue;
         }
-        app_path_polygon(cr, view, &cut);
-        app_set_fill_color(cr, app_color_hex(COLOR_OPENING_FLOOR));
-        cairo_fill(cr);
-        app_path_line(cr, view, cut.items[1], cut.items[2]);   /* откосы */
-        app_path_line(cr, view, cut.items[3], cut.items[0]);
-        app_stroke(cr, app_color_hex(COLOR_WALL_EDGE), 1.4);
-        app_path_line(cr, view, cut.items[0], cut.items[1]);   /* линии порога */
-        app_path_line(cr, view, cut.items[3], cut.items[2]);
-        app_stroke_dashed(cr, app_color_hex(COLOR_OPENING_EDGE), 1, 4);
-        if (options->show_dims)
-            render_opening_width(cr, view, opening, tl_vec2_midpoint(cut.items[0], cut.items[3]),
-                                 tl_vec2_midpoint(cut.items[1], cut.items[2]));
+        render_wall_opening(cr, view, options, project, opening, &cut);
         tl_polygon_free(&cut);
     }
 }
@@ -686,8 +712,11 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         render_floor(cr, view, options, project->spaces.items[s]);
     if (options->show_expansion_joints)
         render_expansion_joints(cr, view, project);
+    cairo_save(cr);
+    clip_out_doorways(cr, view, project);
     for (size_t o = 0; o < project->outlines.count; o++)
         render_outline_walls(cr, view, options, project->outlines.items[o]);
+    cairo_restore(cr);
     render_partitions(cr, view, options, project);
     render_openings(cr, view, options, project);
     if (options->show_numbers && options->show_tiles)

@@ -1,8 +1,8 @@
 /*
  * Вычисление комнат: пол каждого дома минус тела перегородок, но с полом
- * дверных проёмов в них. Проём делит стык — щель шириной в шов двери (хоть
- * тончайшая), — поэтому комнаты через дверь не сливаются, а каждая получает
- * свою часть проёма.
+ * дверных проёмов в них и своей частью пола под проёмами основных стен.
+ * Проём делит стык — щель шириной в шов двери (хоть тончайшая), — поэтому
+ * комнаты через дверь не сливаются, а каждая получает свою часть проёма.
  * Новые области сопоставляются с прежними комнатами по площади перекрытия,
  * чтобы названия и настройки плитки сохранялись при правках.
  */
@@ -19,7 +19,8 @@
 #define THRESHOLD_GAP 0.1        /* мм — наименьшая ширина стыка в проёме: разделяет комнаты */
 #define THRESHOLD_OVERRUN 1.0    /* мм — стык заходит за косяки, в тело перегородки */
 
-/* Что вырезает пол комнат: тела перегородок, их проёмы (возвращают пол) и стыки. */
+/* Что вырезает пол комнат: тела перегородок, их проёмы (возвращают пол) и стыки
+   (во всех проёмах с полом — и в основных стенах). */
 typedef struct FloorCutters {
     TlPolygonList bodies, doorways, thresholds;
 } FloorCutters;
@@ -62,9 +63,13 @@ static FloorCutters floor_cutters(TlProject *project)
     for (size_t i = 0; i < project->openings.count; i++) {
         const TlOpening *opening = project->openings.items[i];
         TlPolygon doorway, strip;
+        TlBand band;
         if (!tl_project_opening_doorway(project, opening, &doorway))
             continue;
-        tl_polygon_list_push(&cutters.doorways, doorway);
+        if (tl_project_opening_host(project, opening, &band) && band.host.kind == TL_HOST_PARTITION)
+            tl_polygon_list_push(&cutters.doorways, doorway);
+        else
+            tl_polygon_free(&doorway); /* пол под проёмом стены — у каждого дома свой, см. wall_floors_of */
         if (threshold_strip(project, opening, &strip))
             tl_polygon_list_push(&cutters.thresholds, strip);
     }
@@ -78,9 +83,10 @@ static void free_floor_cutters(FloorCutters *cutters)
     tl_polygon_list_free_all(&cutters->thresholds);
 }
 
-/* Многоугольники для разбиения: [0] — пол дома, затем тела, проёмы, стыки. */
+/* Многоугольники для разбиения: [0] — пол дома, затем тела перегородок, их
+   проёмы, пол дома под проёмами основных стен, стыки. */
 typedef struct FloorLayout {
-    size_t body_count, doorway_count;
+    size_t body_count, doorway_count, wall_floor_count;
 } FloorLayout;
 
 static bool any_inside(const bool *inside, size_t from, size_t count)
@@ -94,11 +100,13 @@ static bool any_inside(const bool *inside, size_t from, size_t count)
 static bool keep_floor(const bool *inside, size_t polygon_count, void *context)
 {
     const FloorLayout *layout = context;
-    size_t doorways = 1 + layout->body_count, thresholds = doorways + layout->doorway_count;
+    size_t doorways = 1 + layout->body_count, wall_floors = doorways + layout->doorway_count;
+    size_t thresholds = wall_floors + layout->wall_floor_count;
     bool in_body = any_inside(inside, 1, layout->body_count);
     bool in_doorway = any_inside(inside, doorways, layout->doorway_count);
+    bool in_floor = inside[0] || any_inside(inside, wall_floors, layout->wall_floor_count);
     bool on_threshold = any_inside(inside, thresholds, polygon_count - thresholds);
-    return inside[0] && (!in_body || in_doorway) && !on_threshold;
+    return in_floor && (!in_body || in_doorway) && !on_threshold;
 }
 
 static void push_near(TlPolygonList *polygons, const TlPolygonList *candidates, TlRect bounds, size_t *count)
@@ -125,28 +133,47 @@ static TlPolygon room_part(const TlPolygon *outline, const TlPolygonList *doorwa
     return room;
 }
 
-static void collect_components_of_house(TlOutline *house, const FloorCutters *cutters, ComponentList *components)
+/* Пол дома под проёмами основных стен — своих и соседнего дома. */
+static TlPolygonList wall_floors_of(TlProject *project, const TlOutline *house)
+{
+    TlPolygonList floors = {0};
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon floor;
+        if (tl_project_opening_wall_floor(project, project->openings.items[i], house, &floor))
+            tl_polygon_list_push(&floors, floor);
+    }
+    return floors;
+}
+
+static void collect_components_of_house(TlProject *project, TlOutline *house, const FloorCutters *cutters,
+                                        ComponentList *components)
 {
     if (house->inner.count < 3 || tl_outline_area(house) < 1)
         return;
     TlRect house_bounds = tl_polygon_bounds(&house->inner);
-    TlPolygonList polygons = {0}; /* неглубокие копии: принадлежат cutters и дому */
+    TlPolygonList wall_floors = wall_floors_of(project, house);
+    TlPolygonList polygons = {0}; /* неглубокие копии: принадлежат cutters, дому и wall_floors */
     tl_polygon_list_push(&polygons, house->inner);
-    FloorLayout layout;
+    FloorLayout layout = {.wall_floor_count = wall_floors.count};
     size_t threshold_count;
     push_near(&polygons, &cutters->bodies, house_bounds, &layout.body_count);
     push_near(&polygons, &cutters->doorways, house_bounds, &layout.doorway_count);
+    for (size_t i = 0; i < wall_floors.count; i++)
+        tl_polygon_list_push(&polygons, wall_floors.items[i]);
     push_near(&polygons, &cutters->thresholds, house_bounds, &threshold_count);
 
     TlRegionList regions = tl_regions_build_merged(polygons.items, polygons.count, keep_floor, &layout);
     tl_polygon_list_free(&polygons);
+    TlPolygonList floor_extras = tl_polygon_list_copy(&cutters->doorways); /* пол проёмов — не в сетку */
+    for (size_t i = 0; i < wall_floors.count; i++)
+        tl_polygon_list_push(&floor_extras, wall_floors.items[i]);
     for (size_t r = 0; r < regions.count; r++) {
         TlRegion *region = &regions.items[r];
         tl_polygon_clean(&region->outline, CLEAN_TOLERANCE);
         if (region->outline.count >= 3 && tl_polygon_area(&region->outline) >= TL_MIN_SPACE_AREA) {
             for (size_t h = 0; h < region->holes.count; h++)
                 tl_polygon_clean(&region->holes.items[h], CLEAN_TOLERANCE);
-            Component component = {region->outline, room_part(&region->outline, &cutters->doorways),
+            Component component = {region->outline, room_part(&region->outline, &floor_extras),
                                     region->holes, house};
             component_list_push(components, component);
         } else {
@@ -154,6 +181,8 @@ static void collect_components_of_house(TlOutline *house, const FloorCutters *cu
         }
     }
     tl_region_list_free(&regions); /* сами многоугольники перешли в components */
+    tl_polygon_list_free(&floor_extras);
+    tl_polygon_list_free_all(&wall_floors);
 }
 
 static int compare_pairs_by_area(const void *left, const void *right)
@@ -256,7 +285,7 @@ void tl_project_update_spaces(TlProject *project)
     FloorCutters cutters = floor_cutters(project);
     ComponentList components = {0};
     for (size_t o = 0; o < project->outlines.count; o++)
-        collect_components_of_house(project->outlines.items[o], &cutters, &components);
+        collect_components_of_house(project, project->outlines.items[o], &cutters, &components);
     free_floor_cutters(&cutters);
 
     TlSpaceList old = project->spaces;

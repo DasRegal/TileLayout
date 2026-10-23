@@ -181,6 +181,7 @@ void app_command_add_opening(AppDocument *document, const TlBand *band, double a
     app_document_checkpoint(document, "");
     TlOpening *opening = tl_opening_new(tl_band_point(band, along, tl_band_middle(band)), width);
     tl_project_add_opening(document->project, opening);
+    opening->threshold = tl_project_default_threshold(document->project, opening);
     document->selection = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening};
     app_document_commit_rooms(document);
     app_document_notify(document, APP_CHANGED_SELECTION);

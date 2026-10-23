@@ -60,7 +60,7 @@ struct AppPanel {
 
     AppSection opening_section;
     GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
-    GtkWidget *threshold_box, *threshold_depth_caption, *threshold_depth;
+    GtkWidget *threshold_box, *threshold_title, *threshold_depth_caption, *threshold_depth;
     GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap;
 
     AppSection tile_section, glue_section, clip_section;
@@ -577,11 +577,13 @@ static void on_opening_to_end(GtkSpinButton *spin, AppPanel *panel)
 
 /* ---- стык комнат в проёме ----------------------------------------------------- */
 
-/* Комнаты по обе стороны проёма: справа (у стыка 0) и слева (у стыка 1). */
+/* Комнаты по обе стороны проёма: у грани 0 сечения (справа) и у грани 1
+   (слева; за наружной стеной комнаты нет — outside). */
 typedef struct DoorwaySides {
     TlVec2 right, left;
     double depth;
     const char *right_room, *left_room;
+    bool outside;
 } DoorwaySides;
 
 #define ROOM_PROBE_MM 5.0 /* насколько за бок перегородки искать комнату */
@@ -597,6 +599,7 @@ static bool doorway_sides(TlProject *project, const TlOpening *opening, DoorwayS
     TlSpace *left = tl_project_space_at(project, tl_vec2_add(sides->left, step));
     sides->right_room = right ? right->name : "комната";
     sides->left_room = left ? left->name : "комната";
+    sides->outside = tl_project_opening_outside(project, opening);
     return sides->depth > 0;
 }
 
@@ -928,21 +931,22 @@ static void build_ruler(AppPanel *panel, GtkWidget *box)
                                        G_CALLBACK(on_delete_all_rulers), panel));
 }
 
-/* Стык комнат — только у проёма в перегородке: под ним пол обеих комнат. */
+/* Стык и пол под проёмом: в перегородке и в стене между домами — пол обеих
+   комнат, в наружной стене — пол комнаты до стыка. */
 static void build_threshold(AppPanel *panel, AppSection *section)
 {
     static const double ALL_TO_LEFT = 0, HALVES = 0.5, ALL_TO_RIGHT = 1;
     AppSection threshold = {gtk_box_new(GTK_ORIENTATION_VERTICAL, 4), gtk_grid_new(), 0};
     gtk_grid_set_row_spacing(GTK_GRID(threshold.grid), 4);
     gtk_grid_set_column_spacing(GTK_GRID(threshold.grid), 8);
-    GtkWidget *title = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(title), "<b>Стык комнат</b> — пол под дверью");
-    gtk_label_set_xalign(GTK_LABEL(title), 0);
-    gtk_box_pack_start(GTK_BOX(threshold.frame), title, FALSE, FALSE, 0);
+    panel->threshold_title = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(panel->threshold_title), 0);
+    gtk_box_pack_start(GTK_BOX(threshold.frame), panel->threshold_title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(threshold.frame), threshold.grid, FALSE, FALSE, 0);
     panel->threshold_depth = spin_with(panel, 0, 2000, 1, 0, "мм", G_CALLBACK(on_threshold_depth));
     gtk_widget_set_tooltip_text(panel->threshold_depth, "Сколько глубины проёма — пол этой комнаты; остальное — "
-                                                        "соседней. Стык можно и потянуть мышью на плане");
+                                                        "соседней (у наружной стены — улица).\nСтык можно и "
+                                                        "потянуть мышью на плане");
     panel->threshold_depth_caption = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(panel->threshold_depth_caption), 0);
     gtk_label_set_ellipsize(GTK_LABEL(panel->threshold_depth_caption), PANGO_ELLIPSIZE_END);
@@ -989,13 +993,21 @@ static void refresh_threshold(AppPanel *panel, TlOpening *opening)
     gtk_widget_set_visible(panel->threshold_box, doorway);
     if (!doorway)
         return;
+    gtk_label_set_markup(GTK_LABEL(panel->threshold_title),
+                         sides.outside ? "<b>Пол под дверью</b> — до стыка, дальше улица"
+                                       : "<b>Стык комнат</b> — пол под дверью");
     char *caption = g_strdup_printf("У «%s»", sides.right_room);
     gtk_label_set_text(GTK_LABEL(panel->threshold_depth_caption), caption);
     g_free(caption);
     gtk_spin_button_set_range(GTK_SPIN_BUTTON(panel->threshold_depth), 0, sides.depth);
     set_spin(panel->threshold_depth, opening->threshold * sides.depth);
     set_spin(panel->threshold_gap, opening->threshold_gap);
-    label_threshold_button(panel->threshold_to_left, sides.left_room); /* стык у правого бока */
+    if (sides.outside) { /* стык у внутренней грани — пола под проёмом нет */
+        gtk_button_set_label(GTK_BUTTON(panel->threshold_to_left), "Без пола");
+        gtk_widget_set_tooltip_text(panel->threshold_to_left, "Пола под проёмом нет: плитка — до стены");
+    } else {
+        label_threshold_button(panel->threshold_to_left, sides.left_room); /* стык у грани 0 */
+    }
     label_threshold_button(panel->threshold_to_right, sides.right_room);
     GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_gap, panel->threshold_to_left,
                              panel->threshold_middle, panel->threshold_to_right};

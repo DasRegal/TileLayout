@@ -158,14 +158,28 @@ bool tl_project_opening_host(TlProject *project, const TlOpening *opening, TlBan
  * наружной стены — на всю толщину вместе с примыкающей стеной соседнего дома. */
 TlPolygon tl_project_opening_shape(TlProject *project, const TlBand *band, double along, double width);
 bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPolygon *cut);
-/* Пол проёма в перегородке — часть её тела между косяками (false — проём не
- * в перегородке: в наружной стене пола нет, за ней не комната). */
+/* Пол под проёмом. Поперёк проёма — сечение от грани 0 до грани 1: у
+ * перегородки — от правого бока к левому; у основной стены — от внутренней
+ * грани её дома к дальней (у стены между домами — к внутренней грани соседнего
+ * дома). Стык делит сечение на доле threshold; пол комнаты по каждую сторону —
+ * до стыка. За наружной стеной улица: там пол только от внутренней грани до
+ * стыка, а стык на грани 0 — пола под проёмом нет. */
+
+/* Пол под проёмом между косяками — обеих сторон вместе (false — пола нет). */
 bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, TlPolygon *doorway);
-/* Стык комнат в проёме перегородки — от косяка до косяка, на доле threshold
- * толщины от правого бока к левому. */
+/* Часть пола под проёмом основной стены, которая принадлежит дому house (с
+ * небольшим заходом в пол дома, чтобы сомкнуться с ним). Не стена дома и не
+ * соседняя с ней — false; у перегородки — тоже false: её проём внутри дома. */
+bool tl_project_opening_wall_floor(TlProject *project, const TlOpening *opening, const TlOutline *house,
+                                   TlPolygon *floor);
+/* Линия стыка — от косяка до косяка, на доле threshold сечения. */
 bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, TlVec2 *from, TlVec2 *to);
-/* Сечение проёма перегородки посередине: от правого бока (стык 0) к левому (1). */
+/* Сечение посередине проёма: от грани 0 (*right) к грани 1 (*left). */
 bool tl_project_opening_section(TlProject *project, const TlOpening *opening, TlVec2 *right, TlVec2 *left);
+/* Проём в наружной стене: за гранью 1 — улица. */
+bool tl_project_opening_outside(TlProject *project, const TlOpening *opening);
+/* Стык нового проёма: в наружной стене — на грани 0 (пола нет), иначе посередине. */
+double tl_project_default_threshold(TlProject *project, const TlOpening *opening);
 void tl_project_remove_orphan_openings(TlProject *project);
 /* Самый длинный участок стены или перегородки, не закрытый проёмами (и
  * проёмами соседнего дома, проходящими сквозь неё): вдоль от *from до *to. */
