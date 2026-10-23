@@ -25,7 +25,7 @@
 |---|---|---|
 | Windows 10 и 11, 64 бита | [TileLayout-win64.zip](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-win64.zip) | распаковать архив в любую папку и запустить `tilelayout.exe` — установка не нужна |
 | Windows, 32 бита | [TileLayout-win32.zip](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-win32.zip) | так же |
-| Ubuntu 22.04+, Linux Mint 21+, Debian 12+ | [TileLayout-linux-amd64.deb](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-linux-amd64.deb) | открыть файл двойным щелчком или `sudo apt install ./TileLayout-linux-amd64.deb`; программа появится в меню |
+| Ubuntu 20.04+, Linux Mint 20+, Debian 11+ | [TileLayout-linux-amd64.deb](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-linux-amd64.deb) | открыть файл двойным щелчком или `sudo apt install ./TileLayout-linux-amd64.deb`; программа появится в меню |
 
 Все версии — на странице [Releases](https://github.com/DasRegal/TileLayout/releases), что изменилось — в [CHANGELOG.md](CHANGELOG.md). Для других систем программу можно [собрать из исходников](#сборка).
 
@@ -110,7 +110,12 @@ cmake --build build
 ./build/tilelayout.exe
 ```
 
-Для 32-битной Windows — то же в оболочке «MSYS2 MINGW32», с пакетами `mingw-w64-i686-…` вместо `mingw-w64-x86_64-…`.
+Для 32-битной Windows — то же в оболочке «MSYS2 MINGW32», с пакетами `mingw-w64-i686-…` вместо `mingw-w64-x86_64-…`, но без `gtk3`. GTK для 32-битной Windows из каталога MSYS2 убран, его ставит скрипт из архива репозитория MSYS2:
+
+```sh
+pacman -S --needed git mingw-w64-i686-toolchain mingw-w64-i686-cmake mingw-w64-i686-ninja
+packaging/windows/install-mingw32-gtk.sh
+```
 
 ### Переносная сборка для Windows
 

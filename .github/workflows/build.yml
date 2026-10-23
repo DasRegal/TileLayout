@@ -1,5 +1,5 @@
 # Сборка и спецификации на Linux и Windows; пакеты: .deb для Linux,
-# переносные zip для Windows x64 и x86.
+# переносные zip для Windows x64 и x86. Релиз выходит, только если собрались все три.
 # Тег vX.Y (совпадающий с версией в CMakeLists.txt и с разделом в CHANGELOG.md) —
 # релиз на GitHub. Имена файлов релиза постоянные (без версии): на них ведут
 # ссылки «скачать последнюю версию» в README.
@@ -18,13 +18,19 @@ permissions:
 jobs:
   linux:
     name: Linux (.deb)
-    # Пакет, собранный на Ubuntu 22.04, ставится на Ubuntu 22.04+, Linux Mint 21+, Debian 12+.
-    runs-on: ubuntu-22.04
+    # Пакет требует glibc не новее той, с которой собран, поэтому собирается в самой
+    # старой из поддерживаемых систем — Ubuntu 20.04 (glibc 2.31). Он ставится на
+    # Ubuntu 20.04+, Linux Mint 20+, Debian 11+. Своих машин с 20.04 у GitHub больше нет —
+    # отсюда контейнер.
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
       - uses: actions/checkout@v4
-      # Те же команды, что в README.
+      # Те же пакеты, что в README; file нужен CPack, чтобы найти зависимости программы.
       - name: Зависимости
-        run: sudo apt-get update && sudo apt-get install -y build-essential cmake pkg-config libgtk-3-dev
+        run: apt-get update && apt-get install -y build-essential cmake pkg-config file libgtk-3-dev
       - name: Сборка
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -52,14 +58,13 @@ jobs:
           - msystem: MINGW64
             title: x64
             artifact: TileLayout-win64
-            optional: false
-          # MSYS2 постепенно сворачивает 32-битное окружение: если нужных пакетов не
-          # станет, эта сборка упадёт, а релиз выйдет без неё.
+            gtk: gtk3:p librsvg:p
+          # В каталоге MSYS2 для 32-битного окружения GTK больше нет — его ставит
+          # packaging/windows/install-mingw32-gtk.sh из архива репозитория.
           - msystem: MINGW32
             title: x86
             artifact: TileLayout-win32
-            optional: true
-    continue-on-error: ${{ matrix.optional }}
+            gtk: ''
     defaults:
       run:
         shell: msys2 {0}
@@ -71,7 +76,10 @@ jobs:
           update: true
           install: zip
           pacboy: >-
-            toolchain:p cmake:p ninja:p gtk3:p librsvg:p
+            toolchain:p cmake:p ninja:p ${{ matrix.gtk }}
+      - name: GTK из архива MSYS2
+        if: matrix.msystem == 'MINGW32'
+        run: packaging/windows/install-mingw32-gtk.sh
       - name: Версия
         id: version
         run: |
