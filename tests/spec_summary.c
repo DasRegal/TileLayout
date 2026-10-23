@@ -27,6 +27,26 @@ static const TlTileTypeSummary *type_with_width(const TlSummary *summary, double
     return NULL;
 }
 
+/* Отдельная комната (свой дом) шириной width и высотой height, левый нижний угол в (x, 0). */
+static TlSpace *add_room(TlProject *project, double x, double width, double height, const char *name)
+{
+    const TlVec2 corners[] = {{x, 0}, {x + width, 0}, {x + width, height}, {x, height}};
+    tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
+    tl_project_update_spaces(project);
+    TlSpace *space = tl_project_space_at(project, tl_vec2(x + width / 2, height / 2));
+    tl_space_set_name(space, name);
+    return space;
+}
+
+/* Две отдельные комнаты с плиткой 600×300: в одной подрезка 400×300, в другой 190×300. */
+static TlProject *two_rooms_with_strips(void)
+{
+    TlProject *project = tl_project_new();
+    add_room(project, 0, 400, 300, "Кухня");
+    add_room(project, 3000, 190, 300, "Кладовая");
+    return project;
+}
+
 void spec_summary(void)
 {
     DESCRIBE("Сводный расчёт")
@@ -88,6 +108,58 @@ void spec_summary(void)
         }
     }
 
+    DESCRIBE("Обрезки и запас по всем комнатам")
+    {
+        IT("остаток подрезки одной комнаты идёт в подрезку другой с той же плиткой")
+        {
+            TlProject *project = two_rooms_with_strips();
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 1);
+            EXPECT_INT(summary.types.items[0].count, 1); /* 400 + 190 + рез 3 ≤ 600 */
+            EXPECT_INT(summary.types.items[0].offcut_saving, 1);
+            EXPECT_INT(summary.offcut_pairs.count, 1);
+            if (summary.offcut_pairs.count == 1)
+                EXPECT(summary.offcut_pairs.items[0].first.space != summary.offcut_pairs.items[0].second.space);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("плитка 300×600 в другой комнате — та же плитка: подрезки подбираются с поворотом")
+        {
+            TlProject *project = tl_project_new();
+            add_room(project, 0, 400, 300, "Кухня");
+            TlSpace *pantry = add_room(project, 3000, 300, 190, "Кладовая");
+            pantry->tile.tile_width = 300;
+            pantry->tile.tile_height = 600; /* кусок 300×190 — это полоса 190 поперёк плитки */
+            tl_project_update_spaces(project);
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 1);
+            EXPECT_INT(summary.types.items[0].count, 1);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("комната без «использовать обрезки» своих подрезок не отдаёт и чужих не берёт")
+        {
+            TlProject *project = two_rooms_with_strips();
+            tl_project_space_at(project, tl_vec2(3095, 150))->tile.reuse_offcuts = false;
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.items[0].count, 2);
+            EXPECT_INT(summary.types.items[0].offcut_saving, 0);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("запас округляется один раз на вид плитки, а не в каждой комнате")
+        {
+            TlProject *project = tl_project_new();
+            add_room(project, 0, 600, 300, "Тамбур");   /* по одной целой плитке */
+            add_room(project, 3000, 600, 300, "Ниша");
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.items[0].count, 2);
+            EXPECT_INT(summary.types.items[0].to_buy, 3); /* 2 × 1,1 = 2,2 → 3, а не 2 + 2 */
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+    }
+
     DESCRIBE("Нумерация плиток")
     {
         IT("сквозная: плитка на стыке комнат с общим полом имеет один номер")
@@ -131,6 +203,33 @@ void spec_summary(void)
             }
             EXPECT_INT(shared_cards, 6);
             EXPECT_INT(pair_cards, 10);
+            tl_cut_card_list_free_all(&cards);
+            tl_project_free(project);
+        }
+    }
+
+    DESCRIBE("Чертежи подрезок из разных комнат")
+    {
+        IT("пара обрезков из двух комнат — одна карточка с обеими комнатами")
+        {
+            TlProject *project = tl_project_new();
+            add_room(project, 0, 400, 300, "Кухня");
+            TlSpace *pantry = add_room(project, 3000, 300, 190, "Кладовая");
+            pantry->tile.tile_width = 300;
+            pantry->tile.tile_height = 600;
+            tl_project_update_spaces(project);
+            TlCutCardList cards = tl_report_cut_cards(project);
+            EXPECT_INT(cards.count, 1);
+            if (cards.count == 1) {
+                const TlCutCard *card = &cards.items[0];
+                EXPECT_INT(card->kind, TL_CARD_OFFCUT_PAIR);
+                EXPECT(strstr(card->title, "Кухня") && strstr(card->title, "Кладовая"));
+                EXPECT_INT(card->parts.count, 2);
+                double widths = 0; /* куски в осях плитки 600×300: 400 и повёрнутый 190 */
+                for (size_t p = 0; p < card->parts.count; p++)
+                    widths += tl_rect_width(tl_polygon_bounds(&card->parts.items[p].shapes.items[0]));
+                EXPECT_NEAR(widths, 590, 1e-6);
+            }
             tl_cut_card_list_free_all(&cards);
             tl_project_free(project);
         }

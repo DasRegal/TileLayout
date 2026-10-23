@@ -1089,7 +1089,8 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "Мин. ширина подрезки", min_cut);
     GtkWidget *reuse = gtk_check_button_new_with_label("Использовать остатки подрезок");
     gtk_widget_set_tooltip_text(reuse, "Остаток подрезанной плитки идёт в другую подрезку — в этой\n"
-                                       "или другой комнате с общей раскладкой (учитывается в итоге)");
+                                       "или любой другой комнате с той же плиткой, где тоже включено\n"
+                                       "(учитывается в итоге)");
     bind_tile(panel, "reuse", reuse);
     app_section_wide(s, reuse);
     app_section_row(s, "Запас на рез", tile_spin(panel, "cut_allow", 0, 20, 0.5, 1, "мм"));

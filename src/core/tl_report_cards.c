@@ -1,7 +1,7 @@
 /*
  * Карточки для чертежей подрезок. Плитка, разрезанная стеной между
- * комнатами с общей раскладкой, и две подрезки из одной плитки — на одной
- * карточке; остальные подрезки — по одной.
+ * комнатами с общей раскладкой, и две подрезки из одной плитки (хоть из
+ * разных комнат) — на одной карточке; остальные подрезки — по одной.
  */
 #include "tl_report_groups.h"
 
@@ -61,6 +61,8 @@ static void add_strip_parts(TlCutCard *card, const TlTileSettings *tile, const c
         tl_cut_part_list_push(&card->parts, strip_part(second_room, second->number, (TlRect){0, h - second->piece_height, w, h}));
     }
 }
+
+static bool lies_lengthwise(const TlTileSettings *tile) { return tile->tile_width >= tile->tile_height; }
 
 static const TlOffcutPair *partner_of(const TlSummary *summary, const TlSpace *space, TlCell cell,
                                       TlPieceRef *mate)
@@ -151,6 +153,13 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
                 const TlTile *mate_tile = tl_layout_tile_at(tl_space_layout(mate.space), mate.cell);
                 if (!mate_tile)
                     continue;
+                /* В другой комнате та же плитка может лежать повёрнутой: 300×600 вместо 600×300. */
+                TlTile turned = *mate_tile;
+                if (lies_lengthwise(settings) != lies_lengthwise(tl_space_effective_tile(mate.space))) {
+                    turned.piece_width = mate_tile->piece_height;
+                    turned.piece_height = mate_tile->piece_width;
+                    mate_tile = &turned;
+                }
                 TlCutCard card = {.kind = TL_CARD_OFFCUT_PAIR, .tile = settings,
                                   .number = tile->number < mate_tile->number ? tile->number : mate_tile->number,
                                   .narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW};

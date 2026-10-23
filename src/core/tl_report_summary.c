@@ -45,9 +45,9 @@ static int compare_strips(const void *left, const void *right)
 
 static void pair_strips(StripList *strips, double full_length, double allowance, TlOffcutPairList *pairs)
 {
-    qsort(strips->items, strips->count, sizeof(Strip), compare_strips);
     if (strips->count < 2)
         return;
+    qsort(strips->items, strips->count, sizeof(Strip), compare_strips);
     size_t narrowest = 0, widest = strips->count - 1;
     while (narrowest < widest) {
         if (strips->items[narrowest].size + strips->items[widest].size + allowance <= full_length + 1e-6) {
@@ -59,31 +59,38 @@ static void pair_strips(StripList *strips, double full_length, double allowance,
     }
 }
 
-TlOffcutPairList tl_report_offcut_pairs(const TlTileSettings *tile, const TlPieceList *pieces)
+static TlOffcutPairList pair_pieces(const TlPieceList *pieces, double tile_width, double tile_height,
+                                    double allowance, bool square)
 {
     TlOffcutPairList pairs = {0};
-    if (!tile->reuse_offcuts)
-        return pairs;
     StripList across_width = {0}, across_height = {0};
     for (size_t i = 0; i < pieces->count; i++) {
         const TlPiece *piece = &pieces->items[i];
-        bool full_height = piece->height >= tile->tile_height - 0.5;
-        bool full_width = piece->width >= tile->tile_width - 0.5;
+        bool full_height = piece->height >= tile_height - 0.5;
+        bool full_width = piece->width >= tile_width - 0.5;
         if (full_height && !full_width)        /* полоса на всю высоту плитки */
             strip_list_push(&across_width, (Strip){piece->width, piece->ref});
         else if (full_width && !full_height)   /* полоса на всю ширину */
             strip_list_push(&across_height, (Strip){piece->height, piece->ref});
     }
-    if (tl_tile_settings_is_square(tile)) {    /* у квадрата полосы взаимозаменяемы */
+    if (square) {                              /* у квадрата полосы взаимозаменяемы */
         for (size_t i = 0; i < across_height.count; i++)
             strip_list_push(&across_width, across_height.items[i]);
         across_height.count = 0;
     }
-    pair_strips(&across_width, tile->tile_width, tile->cut_allowance, &pairs);
-    pair_strips(&across_height, tile->tile_height, tile->cut_allowance, &pairs);
+    pair_strips(&across_width, tile_width, allowance, &pairs);
+    pair_strips(&across_height, tile_height, allowance, &pairs);
     strip_list_free(&across_width);
     strip_list_free(&across_height);
     return pairs;
+}
+
+TlOffcutPairList tl_report_offcut_pairs(const TlTileSettings *tile, const TlPieceList *pieces)
+{
+    if (!tile->reuse_offcuts)
+        return (TlOffcutPairList){0};
+    return pair_pieces(pieces, tile->tile_width, tile->tile_height, tile->cut_allowance,
+                       tl_tile_settings_is_square(tile));
 }
 
 /* ---- сводка ---------------------------------------------------------------- */
@@ -149,13 +156,21 @@ static int compare_types_by_area(const void *left, const void *right)
     return a->area > b->area ? -1 : a->area < b->area;
 }
 
-static void summarize_group(TlSummary *summary, const TlLayoutGroup *group)
+/* Что копится по виду плитки, пока обходятся группы: куски для пар обрезков
+ * из всех комнат с этим видом и плитки с весом запаса каждой комнаты. */
+typedef struct TypeTally {
+    TlPieceList pieces;          /* в осях плитки вида (type->tile) */
+    double allowance;            /* запас на рез — наибольший из комнат */
+    double reserved;             /* Σ плиток × (1 + запас) */
+} TypeTally;
+
+TL_ARRAY_DEFINE(TypeTallyList, TypeTally, type_tally_list)
+
+static bool lies_lengthwise(const TlTileSettings *tile) { return tile->tile_width >= tile->tile_height; }
+
+static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group)
 {
     const TlTileSettings *tile = &group->source->tile;
-    TlPieceList pieces = tl_group_unshared_pieces(group);
-    TlOffcutPairList pairs = tl_report_offcut_pairs(tile, &pieces);
-    tl_piece_list_free(&pieces);
-
     int unique = (int)tl_group_unique_cells(group);
     int naive = 0, whole = 0;
     double area = 0.0;
@@ -170,18 +185,33 @@ static void summarize_group(TlSummary *summary, const TlLayoutGroup *group)
     }
 
     TlTileTypeSummary *type = type_for(&summary->types, tile);
-    int count = unique - (int)pairs.count;
+    size_t index = (size_t)(type - summary->types.items);
+    while (tallies->count <= index)
+        type_tally_list_push(tallies, (TypeTally){0});
+    TypeTally *tally = &tallies->items[index];
     for (size_t i = 0; i < group->members.count; i++)
         tl_space_list_push(&type->spaces, group->members.items[i]);
-    type->count += count;
+    type->count += unique;
     type->whole += whole;
-    type->to_buy += (int)ceil(count * (1 + tile->reserve_percent / 100.0) - 1e-9);
     type->area += area;
     type->shared_saving += naive - unique;
-    type->offcut_saving += (int)pairs.count;
-    for (size_t i = 0; i < pairs.count; i++)
-        tl_offcut_pair_list_push(&summary->offcut_pairs, pairs.items[i]);
-    tl_offcut_pair_list_free(&pairs);
+    tally->reserved += unique * (1 + tile->reserve_percent / 100.0);
+
+    /* Остатки подрезок идут в подрезки любой комнаты с той же плиткой. Плитка
+     * 600×300 в одной комнате и 300×600 в другой — одна: куски поворачиваются. */
+    if (tile->reuse_offcuts) {
+        bool turned = lies_lengthwise(tile) != lies_lengthwise(type->tile);
+        TlPieceList pieces = tl_group_unshared_pieces(group);
+        for (size_t i = 0; i < pieces.count; i++) {
+            TlPiece piece = pieces.items[i];
+            if (turned)
+                piece = (TlPiece){piece.ref, piece.height, piece.width};
+            tl_piece_list_push(&tally->pieces, piece);
+        }
+        tl_piece_list_free(&pieces);
+        if (tile->cut_allowance > tally->allowance)
+            tally->allowance = tile->cut_allowance;
+    }
 
     for (size_t m = 0; m < group->members.count; m++) {
         TlRoomSummary *room = (TlRoomSummary *)tl_summary_room(summary, group->members.items[m]);
@@ -190,6 +220,23 @@ static void summarize_group(TlSummary *summary, const TlLayoutGroup *group)
             if (tl_group_cell_owners(group, layout->tiles.items[t].cell, NULL) > 1)
                 room->shared_tiles++;
     }
+}
+
+/* Пары обрезков и запас — по виду плитки целиком: запас округляется один раз,
+ * а не в каждой комнате. */
+static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *tally)
+{
+    const TlTileSettings *tile = type->tile;
+    TlOffcutPairList pairs = pair_pieces(&tally->pieces, tile->tile_width, tile->tile_height, tally->allowance,
+                                         tl_tile_settings_is_square(tile));
+    double reserve = type->count > 0 ? tally->reserved / type->count : 1.0;
+    type->offcut_saving = (int)pairs.count;
+    type->count -= (int)pairs.count;
+    type->to_buy = (int)ceil(type->count * reserve - 1e-9);
+    for (size_t i = 0; i < pairs.count; i++)
+        tl_offcut_pair_list_push(&summary->offcut_pairs, pairs.items[i]);
+    tl_offcut_pair_list_free(&pairs);
+    tl_piece_list_free(&tally->pieces);
 }
 
 TlSummary tl_report_summarize(TlProject *project)
@@ -217,8 +264,12 @@ TlSummary tl_report_summarize(TlProject *project)
     finish_pack_lines(&summary.clips);
 
     TlLayoutGroupList groups = tl_report_build_groups(project, NULL, NULL);
+    TypeTallyList tallies = {0};
     for (size_t g = 0; g < groups.count; g++)
-        summarize_group(&summary, &groups.items[g]);
+        summarize_group(&summary, &tallies, &groups.items[g]);
+    for (size_t i = 0; i < summary.types.count; i++)
+        finish_type(&summary, &summary.types.items[i], &tallies.items[i]);
+    type_tally_list_free(&tallies);
     tl_report_free_groups(&groups);
     qsort(summary.types.items, summary.types.count, sizeof(TlTileTypeSummary), compare_types_by_area);
     return summary;
