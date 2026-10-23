@@ -1,11 +1,19 @@
-# TileLayout
+<p align="center">
+  <img src="packaging/linux/tilelayout.svg" width="112" alt="Значок TileLayout">
+</p>
 
-[![Сборка](https://github.com/DasRegal/TileLayout/actions/workflows/build.yml/badge.svg)](https://github.com/DasRegal/TileLayout/actions/workflows/build.yml)
-[![Версия](https://img.shields.io/github/v/release/DasRegal/TileLayout?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/DasRegal/TileLayout/releases/latest)
-[![Скачиваний](https://img.shields.io/github/downloads/DasRegal/TileLayout/total?label=%D1%81%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9)](https://github.com/DasRegal/TileLayout/releases)
-![Windows | Linux](https://img.shields.io/badge/%D0%BF%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D1%8B-Windows%20%7C%20Linux-informational)
-![C99 + GTK 3](https://img.shields.io/badge/C99%20%2B%20GTK%203-blue)
-[![Лицензия MIT](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-green)](LICENSE)
+<h1 align="center">TileLayout</h1>
+
+<p align="center">Раскладка плитки: план дома, расчёт плитки, клея и СВП</p>
+
+<p align="center">
+  <a href="https://github.com/DasRegal/TileLayout/actions/workflows/build.yml"><img src="https://github.com/DasRegal/TileLayout/actions/workflows/build.yml/badge.svg" alt="Сборка"></a>
+  <a href="https://github.com/DasRegal/TileLayout/releases/latest"><img src="https://img.shields.io/github/v/release/DasRegal/TileLayout?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F" alt="Версия"></a>
+  <a href="https://github.com/DasRegal/TileLayout/releases"><img src="https://img.shields.io/github/downloads/DasRegal/TileLayout/total?label=%D1%81%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9" alt="Скачиваний"></a>
+  <img src="https://img.shields.io/badge/%D0%BF%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D1%8B-Windows%20%7C%20Linux-informational" alt="Windows | Linux">
+  <img src="https://img.shields.io/badge/C99%20%2B%20GTK%203-blue" alt="C99 + GTK 3">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-green" alt="Лицензия MIT"></a>
+</p>
 
 Программа для раскладки плитки на C99 + GTK 3:
 - план дома: стены, перегородки, проёмы;
