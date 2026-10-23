@@ -44,10 +44,19 @@ pixbuf_version_dir="lib/gdk-pixbuf-2.0/2.10.0"
 
 step() { echo "==> $*"; }
 
-# DLL из $prefix/bin, от которых зависят файлы, — рекурсивно (ldd показывает всё дерево).
+# DLL из $prefix/bin, от которых зависят файлы, — рекурсивно, по таблицам импорта.
+# Не ldd: 64-битный ldd из MSYS2 не видит зависимостей 32-битных программ.
 copy_dependencies() {
-    ldd "$@" | awk '{ print $3 }' | { grep -i "^$prefix/bin/" || true; } | sort -u | while read -r library; do
-        cp -n "$library" "$package_dir/"
+    local pending=("$@") file library
+    while ((${#pending[@]})); do
+        file=${pending[0]}
+        pending=("${pending[@]:1}")
+        while read -r library; do
+            if [[ -f "$prefix/bin/$library" && ! -f "$package_dir/$library" ]]; then
+                cp "$prefix/bin/$library" "$package_dir/"
+                pending+=("$prefix/bin/$library")
+            fi
+        done < <(objdump -p "$file" | sed -n 's/^[[:space:]]*DLL Name: //p' | tr -d '\r')
     done
 }
 
