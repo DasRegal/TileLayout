@@ -19,6 +19,7 @@ typedef struct HalfEdge {
     double angle;
     int position;  /* индекс в списке исходящих рёбер вершины from */
     bool visited;
+    int cycle;     /* какой цикл (грань или внешний контур) обходит полуребро */
 } HalfEdge;
 
 TL_ARRAY_DEFINE(SegmentArray, Segment, segment_array)
@@ -157,12 +158,10 @@ static int find_root(int *parent, int v)
     return v;
 }
 
-static Graph build_graph(const TlPolygon *polygons, size_t polygon_count)
+static Graph build_graph_from_segments(const SegmentArray *segments)
 {
     Graph graph = {0};
-    SegmentArray segments = collect_segments(polygons, polygon_count);
-    EdgeKeyArray edges = split_into_edges(&segments, &graph.vertices);
-    segment_array_free(&segments);
+    EdgeKeyArray edges = split_into_edges(segments, &graph.vertices);
 
     size_t vertex_count = graph.vertices.count;
     graph.outgoing = tl_calloc(vertex_count ? vertex_count : 1, sizeof(TlIntArray));
@@ -174,7 +173,7 @@ static Graph build_graph(const TlPolygon *polygons, size_t polygon_count)
         int ends[2] = {edges.items[k].low, edges.items[k].high};
         for (int side = 0; side < 2; side++) {
             TlVec2 from = graph.vertices.items[ends[side]], to = graph.vertices.items[ends[1 - side]];
-            HalfEdge half = {ends[side], ends[1 - side], atan2(to.y - from.y, to.x - from.x), 0, false};
+            HalfEdge half = {ends[side], ends[1 - side], atan2(to.y - from.y, to.x - from.x), 0, false, -1};
             half_edge_array_push(&graph.half_edges, half);
             tl_int_array_push(&graph.outgoing[ends[side]], (int)graph.half_edges.count - 1);
         }
@@ -192,6 +191,14 @@ static Graph build_graph(const TlPolygon *polygons, size_t polygon_count)
     }
     for (size_t v = 0; v < vertex_count; v++)
         graph.component[v] = find_root(graph.component, (int)v);
+    return graph;
+}
+
+static Graph build_graph(const TlPolygon *polygons, size_t polygon_count)
+{
+    SegmentArray segments = collect_segments(polygons, polygon_count);
+    Graph graph = build_graph_from_segments(&segments);
+    segment_array_free(&segments);
     return graph;
 }
 
@@ -226,6 +233,7 @@ static CycleArray trace_cycles(Graph *graph)
         int half = (int)start;
         while (!graph->half_edges.items[half].visited) {
             graph->half_edges.items[half].visited = true;
+            graph->half_edges.items[half].cycle = (int)cycles.count;
             tl_polygon_push(&cycle.points, graph->vertices.items[graph->half_edges.items[half].from]);
             half = next_half_edge(graph, half);
         }
@@ -267,43 +275,117 @@ static long containing_face(const CycleArray *cycles, const Cycle *hole)
     return best;
 }
 
+/* Решение предиката для каждой грани; у внешних контуров — false. */
+static bool *keep_faces(const CycleArray *cycles, const TlPolygon *polygons, size_t polygon_count,
+                        TlRegionPredicate keep, void *context)
+{
+    bool *kept = tl_calloc(cycles->count ? cycles->count : 1, sizeof(bool));
+    bool *inside = tl_malloc((polygon_count ? polygon_count : 1) * sizeof(bool));
+    for (size_t i = 0; i < cycles->count; i++) {
+        if (!is_face(&cycles->items[i]))
+            continue;
+        TlVec2 probe = probe_point(&cycles->items[i].points);
+        for (size_t p = 0; p < polygon_count; p++)
+            inside[p] = tl_polygon_contains(&polygons[p], probe);
+        kept[i] = keep(inside, polygon_count, context);
+    }
+    free(inside);
+    return kept;
+}
+
+/* Оставленные грани — области; внешние контуры других компонент — их дыры. */
+static TlRegionList collect_regions(const CycleArray *cycles, const bool *kept)
+{
+    TlRegionList regions = {0};
+    long *region_of_cycle = tl_malloc((cycles->count ? cycles->count : 1) * sizeof(long));
+    for (size_t i = 0; i < cycles->count; i++) {
+        region_of_cycle[i] = -1;
+        if (!kept[i])
+            continue;
+        TlRegion region = {tl_polygon_copy(&cycles->items[i].points), {0}};
+        tl_region_list_push(&regions, region);
+        region_of_cycle[i] = (long)regions.count - 1;
+    }
+    for (size_t i = 0; i < cycles->count; i++) {
+        if (is_face(&cycles->items[i]) || cycles->items[i].points.count < 3)
+            continue;
+        long face = containing_face(cycles, &cycles->items[i]);
+        if (face >= 0 && region_of_cycle[face] >= 0)
+            tl_polygon_list_push(&regions.items[region_of_cycle[face]].holes,
+                                 tl_polygon_copy(&cycles->items[i].points));
+    }
+    free(region_of_cycle);
+    return regions;
+}
+
+static void free_cycles(CycleArray *cycles)
+{
+    for (size_t i = 0; i < cycles->count; i++)
+        tl_polygon_free(&cycles->items[i].points);
+    cycle_array_free(cycles);
+}
+
+static TlRegionList regions_of_graph(Graph *graph, const TlPolygon *polygons, size_t polygon_count,
+                                     TlRegionPredicate keep, void *context)
+{
+    CycleArray cycles = trace_cycles(graph);
+    bool *kept = keep_faces(&cycles, polygons, polygon_count, keep, context);
+    TlRegionList regions = collect_regions(&cycles, kept);
+    free(kept);
+    free_cycles(&cycles);
+    return regions;
+}
+
 TlRegionList tl_regions_build(const TlPolygon *polygons, size_t polygon_count,
                               TlRegionPredicate keep, void *context)
 {
-    TlRegionList regions = {0};
+    Graph graph = build_graph(polygons, polygon_count);
+    TlRegionList regions = regions_of_graph(&graph, polygons, polygon_count, keep, context);
+    free_graph(&graph);
+    return regions;
+}
+
+/* Оставлено ли то, что по эту сторону цикла: грань — по предикату; внешний
+   контур компоненты — по грани, в которой он лежит (снаружи всего — нет). */
+static bool *kept_sides(const CycleArray *cycles, const bool *kept)
+{
+    bool *sides = tl_calloc(cycles->count ? cycles->count : 1, sizeof(bool));
+    for (size_t i = 0; i < cycles->count; i++) {
+        if (is_face(&cycles->items[i])) {
+            sides[i] = kept[i];
+            continue;
+        }
+        long outer = containing_face(cycles, &cycles->items[i]);
+        sides[i] = outer >= 0 && kept[outer];
+    }
+    return sides;
+}
+
+/* Рёбра между оставленной и выброшенной частью: внутренние рёбра оставленных
+   областей пропадают — соседние грани сливаются. */
+TlRegionList tl_regions_build_merged(const TlPolygon *polygons, size_t polygon_count,
+                                     TlRegionPredicate keep, void *context)
+{
     Graph graph = build_graph(polygons, polygon_count);
     CycleArray cycles = trace_cycles(&graph);
-    long *region_of_cycle = tl_malloc((cycles.count ? cycles.count : 1) * sizeof(long));
-    bool *inside = tl_malloc((polygon_count ? polygon_count : 1) * sizeof(bool));
-
-    for (size_t i = 0; i < cycles.count; i++) {
-        region_of_cycle[i] = -1;
-        if (!is_face(&cycles.items[i]))
-            continue;
-        TlVec2 probe = probe_point(&cycles.items[i].points);
-        for (size_t p = 0; p < polygon_count; p++)
-            inside[p] = tl_polygon_contains(&polygons[p], probe);
-        if (keep(inside, polygon_count, context)) {
-            TlRegion region = {tl_polygon_copy(&cycles.items[i].points), {0}};
-            tl_region_list_push(&regions, region);
-            region_of_cycle[i] = (long)regions.count - 1;
-        }
+    bool *kept = keep_faces(&cycles, polygons, polygon_count, keep, context);
+    bool *sides = kept_sides(&cycles, kept);
+    SegmentArray boundary = {0};
+    for (size_t h = 0; h + 1 < graph.half_edges.count; h += 2) {
+        const HalfEdge *half = &graph.half_edges.items[h], *twin = &graph.half_edges.items[h + 1];
+        if (sides[half->cycle] != sides[twin->cycle])
+            segment_array_push(&boundary,
+                               (Segment){graph.vertices.items[half->from], graph.vertices.items[half->to]});
     }
-    for (size_t i = 0; i < cycles.count; i++) {
-        if (is_face(&cycles.items[i]) || cycles.items[i].points.count < 3)
-            continue;
-        long face = containing_face(&cycles, &cycles.items[i]);
-        if (face >= 0 && region_of_cycle[face] >= 0)
-            tl_polygon_list_push(&regions.items[region_of_cycle[face]].holes,
-                                 tl_polygon_copy(&cycles.items[i].points));
-    }
-
-    for (size_t i = 0; i < cycles.count; i++)
-        tl_polygon_free(&cycles.items[i].points);
-    cycle_array_free(&cycles);
-    free(region_of_cycle);
-    free(inside);
+    free(sides);
+    free(kept);
+    free_cycles(&cycles);
     free_graph(&graph);
+
+    Graph merged = build_graph_from_segments(&boundary);
+    segment_array_free(&boundary);
+    TlRegionList regions = regions_of_graph(&merged, polygons, polygon_count, keep, context);
+    free_graph(&merged);
     return regions;
 }
 

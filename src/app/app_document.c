@@ -160,6 +160,12 @@ void app_document_commit(AppDocument *document)
     app_document_notify(document, changes);
 }
 
+void app_document_commit_rooms(AppDocument *document)
+{
+    tl_project_update_spaces(document->project);
+    app_document_commit(document);
+}
+
 TlEditToken *app_document_begin_geometry(AppDocument *document, const char *merge_key,
                                          TlOutline *moving_outline)
 {

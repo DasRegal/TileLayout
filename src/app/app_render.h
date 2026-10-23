@@ -35,6 +35,11 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
 /* Линейка: тонкая линия с засечками на концах и длиной посередине. */
 void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px);
 
+/* Косяки проёма в перегородке: сечения у краёв проёма, от правого бока к левому. */
+bool app_render_doorway_jambs(TlProject *project, const TlOpening *opening, TlVec2 from_jamb[2], TlVec2 to_jamb[2]);
+/* Стык комнат в проёме перегородки: заметный пунктир (виден и на краю двери). */
+void app_render_threshold(cairo_t *cr, const AppView *view, TlVec2 from, TlVec2 to, AppColor color, double width_px);
+
 /* Деформационный шов: полоса шириной в зазор (не уже нескольких пикселей) с
    пунктиром посередине; color — контур и пунктир. */
 void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpansionJoint *joint, AppColor color);

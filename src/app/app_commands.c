@@ -182,7 +182,7 @@ void app_command_add_opening(AppDocument *document, const TlBand *band, double a
     TlOpening *opening = tl_opening_new(tl_band_point(band, along, tl_band_middle(band)), width);
     tl_project_add_opening(document->project, opening);
     document->selection = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening};
-    app_document_commit(document);
+    app_document_commit_rooms(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
@@ -260,6 +260,7 @@ void app_command_delete_selection(AppDocument *document)
     case APP_SELECT_OPENING:
         app_document_checkpoint(document, "");
         tl_project_delete_opening(project, s.opening);
+        tl_project_update_spaces(project); /* пол проёма уходит из комнат */
         break;
     case APP_SELECT_PARTITION:
         app_document_checkpoint(document, "");
@@ -347,6 +348,7 @@ void app_command_nudge(AppDocument *document, double dx, double dy, bool move_ti
     } else if (s.kind == APP_SELECT_OPENING) {
         app_document_checkpoint(document, "nudge");
         nudge_opening(project, s.opening, offset);
+        tl_project_update_spaces(project);
     } else if (s.kind == APP_SELECT_SPACE) {
         TlOutline *house = s.space->house;
         TlEditToken *token = app_document_begin_geometry(document, "nudge", house);

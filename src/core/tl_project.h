@@ -158,6 +158,14 @@ bool tl_project_opening_host(TlProject *project, const TlOpening *opening, TlBan
  * наружной стены — на всю толщину вместе с примыкающей стеной соседнего дома. */
 TlPolygon tl_project_opening_shape(TlProject *project, const TlBand *band, double along, double width);
 bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPolygon *cut);
+/* Пол проёма в перегородке — часть её тела между косяками (false — проём не
+ * в перегородке: в наружной стене пола нет, за ней не комната). */
+bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, TlPolygon *doorway);
+/* Стык комнат в проёме перегородки — от косяка до косяка, на доле threshold
+ * толщины от правого бока к левому. */
+bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, TlVec2 *from, TlVec2 *to);
+/* Сечение проёма перегородки посередине: от правого бока (стык 0) к левому (1). */
+bool tl_project_opening_section(TlProject *project, const TlOpening *opening, TlVec2 *right, TlVec2 *left);
 void tl_project_remove_orphan_openings(TlProject *project);
 /* Самый длинный участок стены или перегородки, не закрытый проёмами (и
  * проёмами соседнего дома, проходящими сквозь неё): вдоль от *from до *to. */

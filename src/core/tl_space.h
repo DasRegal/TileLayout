@@ -17,7 +17,8 @@ typedef struct TlSpace {
     TlTileSettings tile;
     int source_id;                 /* id комнаты с общей раскладкой, 0 — своя */
 
-    TlPolygon outline;             /* контур пола */
+    TlPolygon outline;             /* контур пола, с полом дверных проёмов */
+    TlPolygon room_outline;        /* контур без проёмов: от него строится сетка плитки */
     TlPolygonList holes;           /* отдельно стоящие перегородки */
     TlPolygonList joint_strips;    /* полосы деформационных швов, задевающих пол (мир) */
     TlOutline *house;              /* дом, в котором комната */
@@ -37,6 +38,8 @@ double tl_space_perimeter(const TlSpace *space);
 bool tl_space_contains(const TlSpace *space, TlVec2 point);
 TlVec2 tl_space_label_point(const TlSpace *space);
 
+/* Контур комнаты без пола дверных проёмов (пока не вычислен — весь контур). */
+const TlPolygon *tl_space_room_outline(const TlSpace *space);
 /* Настройки и контур, по которым строится сетка (у общего пола — источника). */
 TlTileSettings *tl_space_effective_tile(TlSpace *space);
 const TlPolygon *tl_space_frame(const TlSpace *space);

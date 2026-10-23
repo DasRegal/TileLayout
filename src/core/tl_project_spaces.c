@@ -1,7 +1,9 @@
 /*
- * Вычисление комнат: пол каждого дома минус тела перегородок. Новые
- * области сопоставляются с прежними комнатами по площади перекрытия, чтобы
- * названия и настройки плитки сохранялись при правках.
+ * Вычисление комнат: пол каждого дома минус тела перегородок, но с полом
+ * дверных проёмов в них. Проём делит стык — тончайшая щель, — поэтому
+ * комнаты через дверь не сливаются, а каждая получает свою часть проёма.
+ * Новые области сопоставляются с прежними комнатами по площади перекрытия,
+ * чтобы названия и настройки плитки сохранялись при правках.
  */
 #include "tl_project.h"
 
@@ -12,9 +14,17 @@
 
 #define BODY_EXTENSION 0.05      /* удлинение тел, чтобы стыки надёжно смыкались */
 #define CLEAN_TOLERANCE 0.2
+#define THRESHOLD_GAP 0.1        /* мм — ширина стыка в проёме: разделяет комнаты */
+#define THRESHOLD_OVERRUN 1.0    /* мм — стык заходит за косяки, в тело перегородки */
+
+/* Что вырезает пол комнат: тела перегородок, их проёмы (возвращают пол) и стыки. */
+typedef struct FloorCutters {
+    TlPolygonList bodies, doorways, thresholds;
+} FloorCutters;
 
 typedef struct Component {
     TlPolygon outline;
+    TlPolygon room_outline; /* без пола проёмов */
     TlPolygonList holes;
     TlOutline *house;
 } Component;
@@ -28,26 +38,110 @@ typedef struct OverlapPair {
 TL_ARRAY_DEFINE(ComponentList, Component, component_list)
 TL_ARRAY_DEFINE(OverlapPairList, OverlapPair, overlap_pair_list)
 
-static void collect_components_of_house(TlOutline *house, const TlPolygonList *bodies,
-                                        ComponentList *components)
+/* Стык — полоска шириной THRESHOLD_GAP по линии стыка. */
+static TlPolygon threshold_strip(TlVec2 from, TlVec2 to)
+{
+    TlVec2 direction = tl_vec2_normalized(tl_vec2_sub(to, from));
+    TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(direction), THRESHOLD_GAP / 2);
+    TlVec2 a = tl_vec2_sub(from, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
+    TlVec2 b = tl_vec2_add(to, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
+    const TlVec2 corners[] = {tl_vec2_add(a, half), tl_vec2_add(b, half), tl_vec2_sub(b, half), tl_vec2_sub(a, half)};
+    return tl_polygon_from_points(corners, 4);
+}
+
+static FloorCutters floor_cutters(TlProject *project)
+{
+    FloorCutters cutters = {tl_project_partition_bodies(project, BODY_EXTENSION), {0}, {0}};
+    for (size_t i = 0; i < project->openings.count; i++) {
+        const TlOpening *opening = project->openings.items[i];
+        TlPolygon doorway;
+        TlVec2 from, to;
+        if (!tl_project_opening_doorway(project, opening, &doorway))
+            continue;
+        tl_polygon_list_push(&cutters.doorways, doorway);
+        if (tl_project_opening_threshold(project, opening, &from, &to))
+            tl_polygon_list_push(&cutters.thresholds, threshold_strip(from, to));
+    }
+    return cutters;
+}
+
+static void free_floor_cutters(FloorCutters *cutters)
+{
+    tl_polygon_list_free_all(&cutters->bodies);
+    tl_polygon_list_free_all(&cutters->doorways);
+    tl_polygon_list_free_all(&cutters->thresholds);
+}
+
+/* Многоугольники для разбиения: [0] — пол дома, затем тела, проёмы, стыки. */
+typedef struct FloorLayout {
+    size_t body_count, doorway_count;
+} FloorLayout;
+
+static bool any_inside(const bool *inside, size_t from, size_t count)
+{
+    for (size_t i = from; i < from + count; i++)
+        if (inside[i])
+            return true;
+    return false;
+}
+
+static bool keep_floor(const bool *inside, size_t polygon_count, void *context)
+{
+    const FloorLayout *layout = context;
+    size_t doorways = 1 + layout->body_count, thresholds = doorways + layout->doorway_count;
+    bool in_body = any_inside(inside, 1, layout->body_count);
+    bool in_doorway = any_inside(inside, doorways, layout->doorway_count);
+    bool on_threshold = any_inside(inside, thresholds, polygon_count - thresholds);
+    return inside[0] && (!in_body || in_doorway) && !on_threshold;
+}
+
+static void push_near(TlPolygonList *polygons, const TlPolygonList *candidates, TlRect bounds, size_t *count)
+{
+    *count = 0;
+    for (size_t i = 0; i < candidates->count; i++)
+        if (tl_rect_intersects(bounds, tl_polygon_bounds(&candidates->items[i]))) {
+            tl_polygon_list_push(polygons, candidates->items[i]);
+            (*count)++;
+        }
+}
+
+/* Комната без пола проёмов — самая большая часть контура вне проёмов. */
+static TlPolygon room_part(const TlPolygon *outline, const TlPolygonList *doorways)
+{
+    TlRegionList parts = tl_regions_difference(outline, doorways->items, doorways->count);
+    size_t largest = 0;
+    for (size_t i = 1; i < parts.count; i++)
+        if (tl_region_area(&parts.items[i]) > tl_region_area(&parts.items[largest]))
+            largest = i;
+    TlPolygon room = parts.count ? tl_polygon_copy(&parts.items[largest].outline) : tl_polygon_copy(outline);
+    tl_polygon_clean(&room, CLEAN_TOLERANCE);
+    tl_region_list_free_all(&parts);
+    return room;
+}
+
+static void collect_components_of_house(TlOutline *house, const FloorCutters *cutters, ComponentList *components)
 {
     if (house->inner.count < 3 || tl_outline_area(house) < 1)
         return;
     TlRect house_bounds = tl_polygon_bounds(&house->inner);
-    TlPolygonList cutters = {0}; /* неглубокие копии: принадлежат bodies */
-    for (size_t i = 0; i < bodies->count; i++)
-        if (tl_rect_intersects(house_bounds, tl_polygon_bounds(&bodies->items[i])))
-            tl_polygon_list_push(&cutters, bodies->items[i]);
+    TlPolygonList polygons = {0}; /* неглубокие копии: принадлежат cutters и дому */
+    tl_polygon_list_push(&polygons, house->inner);
+    FloorLayout layout;
+    size_t threshold_count;
+    push_near(&polygons, &cutters->bodies, house_bounds, &layout.body_count);
+    push_near(&polygons, &cutters->doorways, house_bounds, &layout.doorway_count);
+    push_near(&polygons, &cutters->thresholds, house_bounds, &threshold_count);
 
-    TlRegionList regions = tl_regions_difference(&house->inner, cutters.items, cutters.count);
-    tl_polygon_list_free(&cutters);
+    TlRegionList regions = tl_regions_build_merged(polygons.items, polygons.count, keep_floor, &layout);
+    tl_polygon_list_free(&polygons);
     for (size_t r = 0; r < regions.count; r++) {
         TlRegion *region = &regions.items[r];
         tl_polygon_clean(&region->outline, CLEAN_TOLERANCE);
         if (region->outline.count >= 3 && tl_polygon_area(&region->outline) >= TL_MIN_SPACE_AREA) {
             for (size_t h = 0; h < region->holes.count; h++)
                 tl_polygon_clean(&region->holes.items[h], CLEAN_TOLERANCE);
-            Component component = {region->outline, region->holes, house};
+            Component component = {region->outline, room_part(&region->outline, &cutters->doorways),
+                                    region->holes, house};
             component_list_push(components, component);
         } else {
             tl_region_free(region);
@@ -130,11 +224,11 @@ static void assign_joint_strips(TlProject *project)
 
 void tl_project_update_spaces(TlProject *project)
 {
-    TlPolygonList bodies = tl_project_partition_bodies(project, BODY_EXTENSION);
+    FloorCutters cutters = floor_cutters(project);
     ComponentList components = {0};
     for (size_t o = 0; o < project->outlines.count; o++)
-        collect_components_of_house(project->outlines.items[o], &bodies, &components);
-    tl_polygon_list_free_all(&bodies);
+        collect_components_of_house(project->outlines.items[o], &cutters, &components);
+    free_floor_cutters(&cutters);
 
     TlSpaceList old = project->spaces;
     OverlapPairList pairs = {0};
@@ -184,8 +278,10 @@ void tl_project_update_spaces(TlProject *project)
             sort_key = (long)old.count + space->id;
         }
         tl_polygon_free(&space->outline);
+        tl_polygon_free(&space->room_outline);
         tl_polygon_list_free_all(&space->holes);
         space->outline = components.items[c].outline;
+        space->room_outline = components.items[c].room_outline;
         space->holes = components.items[c].holes;
         space->house = components.items[c].house;
         ordered[c] = (OrderedSpace){sort_key, space};

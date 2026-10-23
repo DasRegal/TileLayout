@@ -56,7 +56,8 @@ typedef enum AppDragKind {
     APP_DRAG_OPENING,
     APP_DRAG_TILES,
     APP_DRAG_RULER,
-    APP_DRAG_EXPANSION_JOINT
+    APP_DRAG_EXPANSION_JOINT,
+    APP_DRAG_THRESHOLD
 } AppDragKind;
 
 /* Перетаскивание в инструменте «Выбор». */

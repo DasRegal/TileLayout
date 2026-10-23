@@ -28,7 +28,7 @@ void spec_project(void)
 {
     DESCRIBE("Проект: комнаты образуются стенами и перегородками")
     {
-        IT("в демо-проекте две комнаты: Гостиная 17,63 м² и Ванная 4,87 м²")
+        IT("в демо-проекте две комнаты: Гостиная 17,67 м² и Ванная 4,91 м² — каждой половина пола двери")
         {
             TlProject *project = tl_project_demo();
             EXPECT_INT(project->spaces.count, 2);
@@ -36,8 +36,9 @@ void spec_project(void)
             TlSpace *bath = space_named(project, "Ванная");
             EXPECT(living != NULL && bath != NULL);
             if (living && bath) {
-                EXPECT_NEAR(area_m2(living), 17.628, 0.001);
-                EXPECT_NEAR(area_m2(bath), 4.867, 0.001);
+                /* без проёма 17,628 и 4,867; дверь 700 в перегородке 120 — по 0,042 м² каждой */
+                EXPECT_NEAR(area_m2(living), 17.670, 0.001);
+                EXPECT_NEAR(area_m2(bath), 4.909, 0.001);
             }
             tl_project_free(project);
         }

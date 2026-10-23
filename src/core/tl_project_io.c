@@ -183,6 +183,7 @@ static TlJson *opening_to_json(const TlOpening *opening)
     tl_json_object_set(object, "x", tl_json_number(opening->center.x));
     tl_json_object_set(object, "y", tl_json_number(opening->center.y));
     tl_json_object_set(object, "width", tl_json_number(opening->width));
+    tl_json_object_set(object, "threshold", tl_json_number(opening->threshold));
     tl_json_object_set(object, "locked", tl_json_bool(opening->locked));
     return object;
 }
@@ -192,6 +193,7 @@ static TlOpening *opening_from_json(const TlJson *object)
     TlOpening *opening = tl_opening_new(tl_vec2(tl_json_number_or(tl_json_get(object, "x"), 0),
                                                 tl_json_number_or(tl_json_get(object, "y"), 0)),
                                         tl_json_number_or(tl_json_get(object, "width"), 800));
+    opening->threshold = tl_json_number_or(tl_json_get(object, "threshold"), TL_OPENING_DEFAULT_THRESHOLD);
     opening->locked = tl_json_bool_or(tl_json_get(object, "locked"), false);
     return opening;
 }

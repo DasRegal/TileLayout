@@ -270,6 +270,10 @@ static void draw_hover(AppCanvas *canvas, cairo_t *cr)
         tl_polygon_free(&body);
     } else if (hover->kind == APP_SELECT_RULER) {
         app_render_ruler(cr, &canvas->view, hover->ruler, app_color_hex(APP_BLUE), 1);
+    } else if (hover->kind == APP_SELECT_OPENING && hover->index == APP_OPENING_THRESHOLD) {
+        TlVec2 from, to;
+        if (tl_project_opening_threshold(canvas->document->project, hover->opening, &from, &to))
+            app_render_threshold(cr, &canvas->view, from, to, app_color_rgba(80, 160, 255, 1), 3);
     } else if (hover->kind == APP_SELECT_EXPANSION_JOINT) {
         app_render_expansion_joint(cr, &canvas->view, hover->expansion_joint, app_color_rgba(80, 160, 255, 1));
     }
@@ -335,6 +339,14 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         draw_handle(cr, app_view_to_screen(view, s->partition->start), s->index == 1 ? 6 : 4.5, s->index == 1, APP_BLUE);
         draw_handle(cr, app_view_to_screen(view, s->partition->end), s->index == 2 ? 6 : 4.5, s->index == 2, APP_BLUE);
         app_canvas_draw_dimension(canvas, cr, s->partition->start, s->partition->end, false, APP_BLUE);
+        return;
+    }
+    TlVec2 threshold_from, threshold_to;
+    if (s->kind == APP_SELECT_OPENING && s->index == APP_OPENING_THRESHOLD &&
+        tl_project_opening_threshold(canvas->document->project, s->opening, &threshold_from, &threshold_to)) {
+        app_render_threshold(cr, view, threshold_from, threshold_to, app_color_hex(APP_BLUE), 3);
+        draw_handle(cr, app_view_to_screen(view, threshold_from), 3.5, true, APP_BLUE);
+        draw_handle(cr, app_view_to_screen(view, threshold_to), 3.5, true, APP_BLUE);
         return;
     }
     if (s->kind == APP_SELECT_OPENING) {

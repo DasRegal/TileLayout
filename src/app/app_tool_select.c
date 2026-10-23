@@ -6,7 +6,8 @@
  *   перегородка за тело — только поперёк себя; за конец — вдоль своей оси,
  *     а если увести в сторону — поворачивается (с выравниванием по 0°/90°);
  *     за угол тела (у выделенной) — угол сдвигается поперёк оси, меняя форму;
- *   проём — вдоль своей стены; Ctrl — сетка плитки комнаты;
+ *   проём — вдоль своей стены; стык комнат в нём — поперёк стены;
+ *   Ctrl — сетка плитки комнаты;
  *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием.
  * Двойной клик по стене дома добавляет угол.
  */
@@ -97,6 +98,11 @@ static void begin_drag(AppCanvas *canvas, const AppPointer *pointer, AppSelectio
         drag->original_end = hit.expansion_joint->end;
         break;
     case APP_SELECT_OPENING:
+        if (hit.index == APP_OPENING_THRESHOLD) {
+            drag->kind = APP_DRAG_THRESHOLD;
+            drag->opening = hit.opening;
+            break;
+        }
         if (!tl_project_opening_host(project, hit.opening, &drag->band))
             return;
         drag->kind = APP_DRAG_OPENING;
@@ -164,6 +170,36 @@ static void drag_opening(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
         along = app_snap_along(along, drag->opening->width, drag->band.length,
                                canvas->document->preferences.snap_step);
     drag->opening->center = tl_band_point(&drag->band, along, tl_band_middle(&drag->band));
+    tl_project_update_spaces(canvas->document->project); /* пол проёма переходит с ним */
+}
+
+/* Стык комнат — поперёк перегородки: доля её толщины. Притягивается к бокам
+   и середине, иначе ставится на целые мм; Shift — точно за мышью. */
+static void drag_threshold(AppCanvas *canvas, AppDrag *drag, TlVec2 world, bool free)
+{
+    static const double STOPS[] = {0, 0.5, 1};
+    TlProject *project = canvas->document->project;
+    TlVec2 right, left;
+    if (!tl_project_opening_section(project, drag->opening, &right, &left))
+        return;
+    TlVec2 across = tl_vec2_sub(left, right);
+    double depth = tl_vec2_length(across);
+    if (depth <= 0)
+        return;
+    double share = fmin(1, fmax(0, tl_vec2_dot(tl_vec2_sub(world, right), across) / (depth * depth)));
+    if (!free) {
+        double tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX) / depth;
+        bool stopped = false;
+        for (size_t i = 0; i < G_N_ELEMENTS(STOPS) && !stopped; i++)
+            if (fabs(share - STOPS[i]) < tolerance) {
+                share = STOPS[i];
+                stopped = true;
+            }
+        if (!stopped)
+            share = round(share * depth) / depth;
+    }
+    drag->opening->threshold = share;
+    tl_project_update_spaces(project);
 }
 
 /* Отрезок — линейка или шов: за середину — целиком, за конец — с притягиванием
@@ -305,7 +341,7 @@ static void update_hover(AppCanvas *canvas, const AppPointer *pointer)
     else if (hover.kind == APP_SELECT_WALL || hover.kind == APP_SELECT_PARTITION || segment)
         cursor = "move";
     else if (hover.kind == APP_SELECT_OPENING)
-        cursor = "ew-resize";
+        cursor = hover.index == APP_OPENING_THRESHOLD ? "move" : "ew-resize";
     else if (hover.kind == APP_SELECT_SPACE)
         cursor = "grab";
     app_canvas_set_cursor(canvas, cursor);
@@ -329,6 +365,7 @@ void app_select_motion(AppCanvas *canvas, const AppPointer *pointer)
     switch (drag->kind) {
     case APP_DRAG_TILES: drag_tiles(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_OPENING: drag_opening(canvas, drag, delta, pointer->shift); break;
+    case APP_DRAG_THRESHOLD: drag_threshold(canvas, drag, pointer->world, pointer->shift); break;
     case APP_DRAG_PARTITION: drag_partition(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_RULER:
         drag_segment(canvas, drag, &drag->ruler->start, &drag->ruler->end, TL_SNAP_TO_ALL, delta, pointer->shift);

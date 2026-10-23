@@ -25,7 +25,7 @@ typedef enum AppSelectionKind {
     APP_SELECT_SPACE,      /* комната */
     APP_SELECT_PARTITION,  /* перегородка: index 0 — тело, 1 — начало, 2 — конец,
                               APP_PARTITION_FIRST_CORNER + TlPartitionCorner — угол тела */
-    APP_SELECT_OPENING,
+    APP_SELECT_OPENING,    /* проём: index 0 — сам проём, APP_OPENING_THRESHOLD — стык комнат в нём */
     APP_SELECT_RULER,      /* линейка: index 0 — вся, 1 — начало, 2 — конец */
     APP_SELECT_EXPANSION_JOINT /* деформационный шов: index 0 — весь, 1 — начало, 2 — конец */
 } AppSelectionKind;
@@ -93,6 +93,8 @@ void app_document_status(AppDocument *document, const char *format, ...) G_GNUC_
 
 void app_document_checkpoint(AppDocument *document, const char *merge_key);
 void app_document_commit(AppDocument *document);
+/* Правка, меняющая пол комнат (проёмы, швы): комнаты пересчитываются, затем commit. */
+void app_document_commit_rooms(AppDocument *document);
 /* Правка геометрии с привязками перегородок и проёмов. */
 TlEditToken *app_document_begin_geometry(AppDocument *document, const char *merge_key,
                                          TlOutline *moving_outline);
@@ -109,6 +111,7 @@ TlOutline *app_selection_outline(const AppSelection *selection);
 bool app_selection_equal(const AppSelection *a, const AppSelection *b);
 
 #define APP_PARTITION_FIRST_CORNER 3
+#define APP_OPENING_THRESHOLD 1
 
 /* Выделен угол тела перегородки (тогда *corner — какой). */
 bool app_selection_partition_corner(const AppSelection *selection, TlPartitionCorner *corner);

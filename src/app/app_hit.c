@@ -115,6 +115,26 @@ static bool near_polygon(const TlPolygon *polygon, TlVec2 world, double toleranc
     return tl_polygon_contains(polygon, world) || tl_polygon_on_boundary(polygon, world, tolerance);
 }
 
+/* Стык комнат в проёме — узкой полосой у своей линии (не больше трети глубины
+   проёма): щелчок по остальному проёму выделяет дверь, даже если стык лежит
+   на её краю. */
+static bool hit_threshold(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
+{
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlOpening *opening = project->openings.items[i];
+        TlVec2 from, to, right, left;
+        if (!tl_project_opening_threshold(project, opening, &from, &to) ||
+            !tl_project_opening_section(project, opening, &right, &left))
+            continue;
+        double band = fmin(tolerance, tl_distance(right, left) / 3);
+        if (tl_point_segment_distance(world, from, to, NULL) < band) {
+            *hit = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening, .index = APP_OPENING_THRESHOLD};
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool hit_opening(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
 {
     for (size_t i = 0; i < project->openings.count; i++) {
@@ -187,6 +207,7 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
                  hit_selected_partition_handle(project, current, world, vertex_tolerance, &hit) ||
                  hit_vertex(outlines, outline_count, world, vertex_tolerance, &hit) ||
                  hit_partition_end(project, world, vertex_tolerance, &hit) ||
+                 hit_threshold(project, world, app_view_pixels_to_mm(view, APP_THRESHOLD_TOLERANCE_PX), &hit) ||
                  hit_opening(project, world, app_view_pixels_to_mm(view, 3), &hit) ||
                  hit_partition_body(project, world, wall_tolerance, &hit) ||
                  hit_wall(outlines, outline_count, world, wall_tolerance, &hit);

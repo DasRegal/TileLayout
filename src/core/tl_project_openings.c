@@ -56,11 +56,13 @@ static TlPolygon clip_along(const TlBand *band, const TlPolygon *polygon, double
     return clipped;
 }
 
-/* Перегородка: тело с запасом CUT_MARGIN, чтобы вырез закрыл и обводку боков. */
-static TlPolygon partition_opening_shape(TlProject *project, const TlBand *band, double from, double to)
+/* Перегородка: тело между краями проёма, расширенное на margin (у выреза —
+   чтобы он закрыл и обводку боков). */
+static TlPolygon partition_opening_shape(TlProject *project, const TlBand *band, double from, double to,
+                                         double margin)
 {
     TlPolygon body = tl_project_partition_body(project, band->host.partition, 0);
-    TlPolygon widened = tl_polygon_offset_uniform(&body, CUT_MARGIN);
+    TlPolygon widened = margin > 0 ? tl_polygon_offset_uniform(&body, margin) : tl_polygon_copy(&body);
     TlPolygon shape = clip_along(band, &widened, from, to);
     tl_polygon_free(&widened);
     tl_polygon_free(&body);
@@ -71,7 +73,7 @@ TlPolygon tl_project_opening_shape(TlProject *project, const TlBand *band, doubl
 {
     double from = along - width / 2, to = along + width / 2;
     return band->host.kind == TL_HOST_WALL ? wall_opening_shape(project, band, from, to)
-                                           : partition_opening_shape(project, band, from, to);
+                                           : partition_opening_shape(project, band, from, to, CUT_MARGIN);
 }
 
 bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPolygon *cut)
@@ -82,6 +84,63 @@ bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPoly
     double along;
     tl_band_local(&band, opening->center, &along, NULL);
     *cut = tl_project_opening_shape(project, &band, along, opening->width);
+    return true;
+}
+
+/* Проём в перегородке: её полоса и края проёма вдоль неё. */
+static bool partition_opening_span(TlProject *project, const TlOpening *opening, TlBand *band, double *from,
+                                   double *to)
+{
+    if (!tl_project_opening_host(project, opening, band) || band->host.kind != TL_HOST_PARTITION)
+        return false;
+    double along;
+    tl_band_local(band, opening->center, &along, NULL);
+    *from = along - opening->width / 2;
+    *to = along + opening->width / 2;
+    return true;
+}
+
+bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, TlPolygon *doorway)
+{
+    TlBand band;
+    double from, to;
+    if (!partition_opening_span(project, opening, &band, &from, &to))
+        return false;
+    *doorway = partition_opening_shape(project, &band, from, to, 0);
+    return true;
+}
+
+/* Точка стыка на расстоянии along от начала перегородки: между её боками. */
+static TlVec2 threshold_point(const TlPartition *partition, double along, double threshold)
+{
+    TlPolygon body = tl_partition_body(partition, 0);
+    double t = along / tl_partition_length(partition);
+    TlVec2 right = tl_vec2_lerp(body.items[TL_PARTITION_START_RIGHT], body.items[TL_PARTITION_END_RIGHT], t);
+    TlVec2 left = tl_vec2_lerp(body.items[TL_PARTITION_START_LEFT], body.items[TL_PARTITION_END_LEFT], t);
+    tl_polygon_free(&body);
+    return tl_vec2_lerp(right, left, threshold);
+}
+
+bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, TlVec2 *from, TlVec2 *to)
+{
+    TlBand band;
+    double from_along, to_along;
+    if (!partition_opening_span(project, opening, &band, &from_along, &to_along))
+        return false;
+    *from = threshold_point(band.host.partition, from_along, opening->threshold);
+    *to = threshold_point(band.host.partition, to_along, opening->threshold);
+    return true;
+}
+
+bool tl_project_opening_section(TlProject *project, const TlOpening *opening, TlVec2 *right, TlVec2 *left)
+{
+    TlBand band;
+    double from_along, to_along;
+    if (!partition_opening_span(project, opening, &band, &from_along, &to_along))
+        return false;
+    double middle = (from_along + to_along) / 2;
+    *right = threshold_point(band.host.partition, middle, 0);
+    *left = threshold_point(band.host.partition, middle, 1);
     return true;
 }
 

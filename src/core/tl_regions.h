@@ -7,8 +7,9 @@
  * оставить ли её. Так строятся и пол комнат (контур дома минус перегородки),
  * и площадь перекрытия двух многоугольников.
  *
- * Соседние оставленные грани не сливаются: для разности и пересечения это
- * не нужно — у таких граней не бывает общей стороны.
+ * В tl_regions_build соседние оставленные грани не сливаются: для разности
+ * и пересечения это не нужно — у таких граней не бывает общей стороны.
+ * Где нужно, — tl_regions_build_merged.
  */
 #ifndef TL_REGIONS_H
 #define TL_REGIONS_H
@@ -27,6 +28,12 @@ typedef bool (*TlRegionPredicate)(const bool *inside, size_t polygon_count, void
 
 TlRegionList tl_regions_build(const TlPolygon *polygons, size_t polygon_count,
                               TlRegionPredicate keep, void *context);
+
+/* То же, но соседние оставленные грани сливаются в одну область — общие
+ * стороны пропадают. Так комната и прилегающая к ней часть дверного проёма
+ * становятся одной комнатой. */
+TlRegionList tl_regions_build_merged(const TlPolygon *polygons, size_t polygon_count,
+                                     TlRegionPredicate keep, void *context);
 
 /* Части base, не покрытые ни одним из cutters. */
 TlRegionList tl_regions_difference(const TlPolygon *base, const TlPolygon *cutters,

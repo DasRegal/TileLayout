@@ -18,6 +18,7 @@ void tl_space_free(TlSpace *space)
         return;
     free(space->name);
     tl_polygon_free(&space->outline);
+    tl_polygon_free(&space->room_outline);
     tl_polygon_list_free_all(&space->holes);
     tl_polygon_list_free_all(&space->joint_strips);
     tl_layout_cache_free(space->layout_cache);
@@ -55,6 +56,11 @@ TlVec2 tl_space_label_point(const TlSpace *space) { return tl_polygon_label_poin
 
 TlTileSettings *tl_space_effective_tile(TlSpace *space) { return &space->layout_source->tile; }
 
-const TlPolygon *tl_space_frame(const TlSpace *space) { return &space->layout_source->outline; }
+const TlPolygon *tl_space_room_outline(const TlSpace *space)
+{
+    return space->room_outline.count >= 3 ? &space->room_outline : &space->outline;
+}
+
+const TlPolygon *tl_space_frame(const TlSpace *space) { return tl_space_room_outline(space->layout_source); }
 
 bool tl_space_has_shared_floor(const TlSpace *space) { return space->layout_source != space; }

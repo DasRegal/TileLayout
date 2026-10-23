@@ -23,6 +23,7 @@
 #define COLOR_INNER_DIM "#1f4e9c"
 #define COLOR_OUTER_DIM "#8a5a00"
 #define COLOR_OPENING_DIM "#6b3fa0"
+#define COLOR_THRESHOLD "#a0522d"
 #define COLOR_RULER "#5f6b7a"
 #define COLOR_EXPANSION_JOINT "#37414d"
 #define COLOR_EXPANSION_JOINT_GAP "#fbfaf6"
@@ -234,11 +235,31 @@ static void render_outline_walls(cairo_t *cr, const AppView *view, const AppRend
     tl_polygon_free(&outer);
 }
 
+/* Всё, кроме пола дверных проёмов в перегородках: тело перегородки его не закрывает. */
+static void clip_out_doorways(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    const double everywhere = 1e7;
+    cairo_new_path(cr);
+    cairo_rectangle(cr, -everywhere, -everywhere, 2 * everywhere, 2 * everywhere);
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon doorway;
+        if (!tl_project_opening_doorway(project, project->openings.items[i], &doorway))
+            continue;
+        app_path_polygon(cr, view, &doorway);
+        tl_polygon_free(&doorway);
+    }
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    cairo_clip(cr);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
+}
+
 /* Тела перегородок одним силуэтом: сначала обводка вдвое толще, затем заливка
  * поверх — внутренние стыки тел скрываются. */
 static void render_partitions(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
                               TlProject *project)
 {
+    cairo_save(cr);
+    clip_out_doorways(cr, view, project);
     TlPolygonList bodies = tl_project_partition_bodies(project, 0);
     for (size_t i = 0; i < bodies.count; i++)
         app_path_polygon(cr, view, &bodies.items[i]);
@@ -252,15 +273,64 @@ static void render_partitions(cairo_t *cr, const AppView *view, const AppRenderO
     fill_hatch(cr, options);
     cairo_new_path(cr);
     tl_polygon_list_free_all(&bodies);
+    cairo_restore(cr);
 }
 
 /* ---- проёмы ----------------------------------------------------------------- */
+
+bool app_render_doorway_jambs(TlProject *project, const TlOpening *opening, TlVec2 from_jamb[2], TlVec2 to_jamb[2])
+{
+    TlOpening right_side = *opening, left_side = *opening;
+    right_side.threshold = 0;
+    left_side.threshold = 1;
+    return tl_project_opening_threshold(project, &right_side, &from_jamb[0], &to_jamb[0]) &&
+           tl_project_opening_threshold(project, &left_side, &from_jamb[1], &to_jamb[1]);
+}
+
+void app_render_threshold(cairo_t *cr, const AppView *view, TlVec2 from, TlVec2 to, AppColor color, double width_px)
+{
+    app_path_line(cr, view, from, to);
+    app_stroke_dashed(cr, color, width_px, 5);
+}
+
+static void render_opening_width(cairo_t *cr, const AppView *view, const TlOpening *opening, TlVec2 from, TlVec2 to)
+{
+    TlVec2 a = app_view_to_screen(view, from), b = app_view_to_screen(view, to);
+    if (tl_distance(a, b) <= 22)
+        return;
+    char text[32];
+    snprintf(text, sizeof text, "%.0f", opening->width);
+    app_render_dimension_text(cr, a, b, 0, text, COLOR_OPENING_DIM, true);
+}
+
+/* Дверь в перегородке: под ней пол с плиткой; видны косяки и стык комнат. */
+static void render_doorway(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlProject *project,
+                           const TlOpening *opening)
+{
+    TlVec2 from_jamb[2], to_jamb[2], threshold_from, threshold_to;
+    if (!app_render_doorway_jambs(project, opening, from_jamb, to_jamb) ||
+        !tl_project_opening_threshold(project, opening, &threshold_from, &threshold_to))
+        return;
+    app_path_line(cr, view, from_jamb[0], from_jamb[1]);
+    app_path_line(cr, view, to_jamb[0], to_jamb[1]);
+    app_stroke(cr, app_color_hex(COLOR_WALL_EDGE), 1.4);
+    app_render_threshold(cr, view, threshold_from, threshold_to, app_color_hex(COLOR_THRESHOLD), 2);
+    if (options->show_dims)
+        render_opening_width(cr, view, opening, tl_vec2_midpoint(from_jamb[0], from_jamb[1]),
+                             tl_vec2_midpoint(to_jamb[0], to_jamb[1]));
+}
 
 static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
                             TlProject *project)
 {
     for (size_t i = 0; i < project->openings.count; i++) {
         const TlOpening *opening = project->openings.items[i];
+        TlPolygon doorway;
+        if (tl_project_opening_doorway(project, opening, &doorway)) {
+            tl_polygon_free(&doorway);
+            render_doorway(cr, view, options, project, opening);
+            continue;
+        }
         TlPolygon cut;
         if (!tl_project_opening_cut(project, opening, &cut)) {
             if (!options->printing) {
@@ -279,15 +349,9 @@ static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOpt
         app_path_line(cr, view, cut.items[0], cut.items[1]);   /* линии порога */
         app_path_line(cr, view, cut.items[3], cut.items[2]);
         app_stroke_dashed(cr, app_color_hex(COLOR_OPENING_EDGE), 1, 4);
-        if (options->show_dims) {
-            TlVec2 a = app_view_to_screen(view, tl_vec2_midpoint(cut.items[0], cut.items[3]));
-            TlVec2 b = app_view_to_screen(view, tl_vec2_midpoint(cut.items[1], cut.items[2]));
-            if (tl_distance(a, b) > 22) {
-                char text[32];
-                snprintf(text, sizeof text, "%.0f", opening->width);
-                app_render_dimension_text(cr, a, b, 0, text, COLOR_OPENING_DIM, true);
-            }
-        }
+        if (options->show_dims)
+            render_opening_width(cr, view, opening, tl_vec2_midpoint(cut.items[0], cut.items[3]),
+                                 tl_vec2_midpoint(cut.items[1], cut.items[2]));
         tl_polygon_free(&cut);
     }
 }
@@ -429,15 +493,16 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
                                TlSpace *space)
 {
     if (options->show_dims) {
-        for (size_t i = 0; i < space->outline.count; i++) {
-            TlVec2 a = app_view_to_screen(view, tl_polygon_edge_start(&space->outline, i));
-            TlVec2 b = app_view_to_screen(view, tl_polygon_edge_end(&space->outline, i));
+        const TlPolygon *room = tl_space_room_outline(space); /* длины стен — без сторон дверных проёмов */
+        for (size_t i = 0; i < room->count; i++) {
+            TlVec2 a = app_view_to_screen(view, tl_polygon_edge_start(room, i));
+            TlVec2 b = app_view_to_screen(view, tl_polygon_edge_end(room, i));
             if (tl_distance(a, b) < 28)
                 continue;
             TlVec2 normal;
-            tl_polygon_edge_frame(&space->outline, i, NULL, &normal);
+            tl_polygon_edge_frame(room, i, NULL, &normal);
             char text[32];
-            snprintf(text, sizeof text, "%.0f", tl_polygon_edge_length(&space->outline, i));
+            snprintf(text, sizeof text, "%.0f", tl_polygon_edge_length(room, i));
             AppTextStyle style = {11.3, false, app_color_hex(COLOR_INNER_DIM), app_color_rgba(255, 255, 255, 0.84)};
             app_text_along(cr, text, &style, a, b, tl_vec2_scale(normal, -1), 11);
         }

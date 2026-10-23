@@ -60,6 +60,8 @@ struct AppPanel {
 
     AppSection opening_section;
     GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
+    GtkWidget *threshold_box, *threshold_depth_caption, *threshold_depth;
+    GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right;
 
     AppSection tile_section, glue_section, clip_section;
     GtkWidget *shared_note, *row_shift, *color_button;
@@ -548,7 +550,7 @@ static void on_opening_width(GtkSpinButton *spin, AppPanel *panel)
         return;
     app_document_checkpoint(panel->document, "owidth");
     opening->width = gtk_spin_button_get_value(spin);
-    app_document_commit(panel->document);
+    app_document_commit_rooms(panel->document);
 }
 
 static void place_opening(AppPanel *panel, double distance, bool from_end)
@@ -560,7 +562,7 @@ static void place_opening(AppPanel *panel, double distance, bool from_end)
     app_document_checkpoint(panel->document, "opos");
     double along = from_end ? band.length - distance - opening->width / 2 : distance + opening->width / 2;
     opening->center = tl_band_point(&band, along, tl_band_middle(&band));
-    app_document_commit(panel->document);
+    app_document_commit_rooms(panel->document);
 }
 
 static void on_opening_from_start(GtkSpinButton *spin, AppPanel *panel)
@@ -571,6 +573,62 @@ static void on_opening_from_start(GtkSpinButton *spin, AppPanel *panel)
 static void on_opening_to_end(GtkSpinButton *spin, AppPanel *panel)
 {
     place_opening(panel, gtk_spin_button_get_value(spin), true);
+}
+
+/* ---- стык комнат в проёме ----------------------------------------------------- */
+
+/* Комнаты по обе стороны проёма: справа (у стыка 0) и слева (у стыка 1). */
+typedef struct DoorwaySides {
+    TlVec2 right, left;
+    double depth;
+    const char *right_room, *left_room;
+} DoorwaySides;
+
+#define ROOM_PROBE_MM 5.0 /* насколько за бок перегородки искать комнату */
+
+static bool doorway_sides(TlProject *project, const TlOpening *opening, DoorwaySides *sides)
+{
+    if (!tl_project_opening_section(project, opening, &sides->right, &sides->left))
+        return false;
+    TlVec2 across = tl_vec2_sub(sides->left, sides->right);
+    sides->depth = tl_vec2_length(across);
+    TlVec2 step = tl_vec2_scale(tl_vec2_normalized(across), ROOM_PROBE_MM);
+    TlSpace *right = tl_project_space_at(project, tl_vec2_sub(sides->right, step));
+    TlSpace *left = tl_project_space_at(project, tl_vec2_add(sides->left, step));
+    sides->right_room = right ? right->name : "комната";
+    sides->left_room = left ? left->name : "комната";
+    return sides->depth > 0;
+}
+
+static void set_threshold(AppPanel *panel, double share)
+{
+    TlOpening *opening = selected_opening(panel);
+    if (!opening)
+        return;
+    app_document_checkpoint(panel->document, "threshold");
+    opening->threshold = fmin(1, fmax(0, share));
+    app_document_commit_rooms(panel->document);
+}
+
+/* Глубина проёма, отданная комнате справа, — в мм. */
+static void on_threshold_depth(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlOpening *opening = selected_opening(panel);
+    DoorwaySides sides;
+    if (opening && doorway_sides(panel->document->project, opening, &sides))
+        set_threshold(panel, gtk_spin_button_get_value(spin) / sides.depth);
+}
+
+static void on_threshold_preset(GtkButton *button, AppPanel *panel)
+{
+    set_threshold(panel, *(const double *)g_object_get_data(G_OBJECT(button), "share"));
+}
+
+static GtkWidget *threshold_button(AppPanel *panel, const double *share)
+{
+    GtkWidget *button = gtk_button_new();
+    g_object_set_data(G_OBJECT(button), "share", (gpointer)share);
+    return connect_button(button, G_CALLBACK(on_threshold_preset), panel);
 }
 
 static void on_opening_lock(GtkToggleButton *check, AppPanel *panel)
@@ -860,6 +918,72 @@ static void build_ruler(AppPanel *panel, GtkWidget *box)
                                        G_CALLBACK(on_delete_all_rulers), panel));
 }
 
+/* Стык комнат — только у проёма в перегородке: под ним пол обеих комнат. */
+static void build_threshold(AppPanel *panel, AppSection *section)
+{
+    static const double ALL_TO_LEFT = 0, HALVES = 0.5, ALL_TO_RIGHT = 1;
+    AppSection threshold = {gtk_box_new(GTK_ORIENTATION_VERTICAL, 4), gtk_grid_new(), 0};
+    gtk_grid_set_row_spacing(GTK_GRID(threshold.grid), 4);
+    gtk_grid_set_column_spacing(GTK_GRID(threshold.grid), 8);
+    GtkWidget *title = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(title), "<b>Стык комнат</b> — пол под дверью");
+    gtk_label_set_xalign(GTK_LABEL(title), 0);
+    gtk_box_pack_start(GTK_BOX(threshold.frame), title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(threshold.frame), threshold.grid, FALSE, FALSE, 0);
+    panel->threshold_depth = spin_with(panel, 0, 2000, 1, 0, "мм", G_CALLBACK(on_threshold_depth));
+    gtk_widget_set_tooltip_text(panel->threshold_depth, "Сколько глубины проёма — пол этой комнаты; остальное — "
+                                                        "соседней. Стык можно и потянуть мышью на плане");
+    panel->threshold_depth_caption = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(panel->threshold_depth_caption), 0);
+    gtk_label_set_ellipsize(GTK_LABEL(panel->threshold_depth_caption), PANGO_ELLIPSIZE_END);
+    gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_depth_caption, 0, 0, 1, 1);
+    gtk_widget_set_hexpand(panel->threshold_depth, TRUE);
+    gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_depth, 1, 0, 1, 1);
+    GtkWidget *presets = app_hbox(4);
+    panel->threshold_to_left = threshold_button(panel, &ALL_TO_LEFT);
+    panel->threshold_middle = threshold_button(panel, &HALVES);
+    panel->threshold_to_right = threshold_button(panel, &ALL_TO_RIGHT);
+    gtk_button_set_label(GTK_BUTTON(panel->threshold_middle), "Пополам");
+    GtkWidget *buttons[] = {panel->threshold_to_left, panel->threshold_middle, panel->threshold_to_right};
+    for (size_t i = 0; i < G_N_ELEMENTS(buttons); i++)
+        gtk_box_pack_start(GTK_BOX(presets), buttons[i], TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(threshold.frame), presets, FALSE, FALSE, 0);
+    panel->threshold_box = threshold.frame;
+    app_section_wide(section, threshold.frame);
+}
+
+/* Кнопка «весь проём — комнате»: на ней имя комнаты. */
+static void label_threshold_button(GtkWidget *button, const char *room)
+{
+    char *text = g_strdup_printf("Весь — «%s»", room);
+    gtk_button_set_label(GTK_BUTTON(button), text);
+    gtk_widget_set_tooltip_text(button, text);
+    GtkWidget *label = gtk_bin_get_child(GTK_BIN(button));
+    if (GTK_IS_LABEL(label))
+        gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    g_free(text);
+}
+
+static void refresh_threshold(AppPanel *panel, TlOpening *opening)
+{
+    DoorwaySides sides;
+    bool doorway = doorway_sides(panel->document->project, opening, &sides);
+    gtk_widget_set_visible(panel->threshold_box, doorway);
+    if (!doorway)
+        return;
+    char *caption = g_strdup_printf("У «%s»", sides.right_room);
+    gtk_label_set_text(GTK_LABEL(panel->threshold_depth_caption), caption);
+    g_free(caption);
+    gtk_spin_button_set_range(GTK_SPIN_BUTTON(panel->threshold_depth), 0, sides.depth);
+    set_spin(panel->threshold_depth, opening->threshold * sides.depth);
+    label_threshold_button(panel->threshold_to_left, sides.left_room); /* стык у правого бока */
+    label_threshold_button(panel->threshold_to_right, sides.right_room);
+    GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_to_left, panel->threshold_middle,
+                             panel->threshold_to_right};
+    for (size_t i = 0; i < G_N_ELEMENTS(controls); i++)
+        gtk_widget_set_sensitive(controls[i], !opening->locked);
+}
+
 static void build_opening(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->opening_section;
@@ -871,6 +995,7 @@ static void build_opening(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "От начала стены", panel->opening_from_start);
     panel->opening_to_end = spin_with(panel, 0, 200000, 10, 1, "мм", G_CALLBACK(on_opening_to_end));
     app_section_row(s, "До конца стены", panel->opening_to_end);
+    build_threshold(panel, s);
     panel->opening_lock = lock_check();
     g_signal_connect(panel->opening_lock, "toggled", G_CALLBACK(on_opening_lock), panel);
     app_section_wide(s, panel->opening_lock);
@@ -1136,6 +1261,7 @@ static void refresh_opening(AppPanel *panel, TlOpening *opening)
     }
     gtk_widget_set_sensitive(panel->opening_from_start, hosted && !opening->locked);
     gtk_widget_set_sensitive(panel->opening_to_end, hosted && !opening->locked);
+    refresh_threshold(panel, opening);
 }
 
 static void refresh(AppPanel *panel)

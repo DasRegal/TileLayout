@@ -13,5 +13,6 @@ void spec_ruler(void);
 void spec_alignment(void);
 void spec_partition_shape(void);
 void spec_expansion_joint(void);
+void spec_doorway(void);
 
 #endif

@@ -16,6 +16,14 @@ static double total_area(const TlRegionList *regions)
     return sum;
 }
 
+/* Пол: внутри комнаты (0), вне тела стены (1) — или в проёме (2). */
+static bool keep_floor_with_doorway(const bool *inside, size_t polygon_count, void *context)
+{
+    (void)polygon_count;
+    (void)context;
+    return inside[0] && (!inside[1] || inside[2]);
+}
+
 void spec_regions(void)
 {
     DESCRIBE("Области: пол комнаты минус перегородки")
@@ -79,6 +87,33 @@ void spec_regions(void)
             tl_region_list_free_all(&regions);
             tl_polygon_free(&room);
             tl_polygon_free(&wall);
+        }
+    }
+
+    DESCRIBE("Области со слиянием соседних граней")
+    {
+        IT("комната и примыкающая к ней часть проёма — одна область, без общей стороны")
+        {
+            /* комната 0…400 и стена 400…500 с проёмом 200…400 по высоте — проём открыт в комнату */
+            const TlPolygon polygons[] = {rect_polygon(0, 0, 1000, 600), rect_polygon(400, 0, 500, 600),
+                                          rect_polygon(400, 200, 500, 400)};
+            TlRegionList regions = tl_regions_build_merged(polygons, 3, keep_floor_with_doorway, NULL);
+            EXPECT_INT(regions.count, 1); /* обе комнаты соединились через проём */
+            EXPECT_NEAR(total_area(&regions), 1000 * 600 - 100 * 400, 1e-6);
+            EXPECT(regions.count == 1 && regions.items[0].holes.count == 0);
+            tl_region_list_free_all(&regions);
+            for (int i = 0; i < 3; i++)
+                tl_polygon_free((TlPolygon *)&polygons[i]);
+        }
+        IT("без слияния те же грани остаются отдельными областями")
+        {
+            const TlPolygon polygons[] = {rect_polygon(0, 0, 1000, 600), rect_polygon(400, 0, 500, 600),
+                                          rect_polygon(400, 200, 500, 400)};
+            TlRegionList regions = tl_regions_build(polygons, 3, keep_floor_with_doorway, NULL);
+            EXPECT(regions.count > 1);
+            tl_region_list_free_all(&regions);
+            for (int i = 0; i < 3; i++)
+                tl_polygon_free((TlPolygon *)&polygons[i]);
         }
     }
 

@@ -449,8 +449,9 @@ TlVec2 tl_layout_local_corner(TlSpace *space, TlLayoutCorner corner)
     double sign_x, sign_y;
     corner_signs(corner, &sign_x, &sign_y);
     TlVec2 best = {0, 0};
-    for (size_t i = 0; i < space->outline.count; i++) {
-        TlVec2 local = tl_affine_apply(&to_local, space->outline.items[i]);
+    const TlPolygon *room = tl_space_room_outline(space);
+    for (size_t i = 0; i < room->count; i++) {
+        TlVec2 local = tl_affine_apply(&to_local, room->items[i]);
         if (i == 0 || sign_x * local.x + sign_y * local.y < sign_x * best.x + sign_y * best.y)
             best = local;
     }
@@ -471,7 +472,7 @@ void tl_layout_center_offsets(TlSpace *space, bool on_joint, double *offset_x, d
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
     TlAffine to_local = world_to_local(space);
-    TlPolygon local = tl_affine_apply_polygon(&to_local, &space->outline);
+    TlPolygon local = tl_affine_apply_polygon(&to_local, tl_space_room_outline(space));
     TlVec2 center = tl_rect_center(tl_polygon_bounds(&local));
     tl_polygon_free(&local);
     if (on_joint) {

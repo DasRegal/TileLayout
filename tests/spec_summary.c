@@ -31,7 +31,9 @@ void spec_summary(void)
 {
     DESCRIBE("Сводный расчёт")
     {
-        IT("совпадает с Python-версией: 100 плиток 600×300 (−6 на стыке, −10 из обрезков), ванная 56")
+        /* Python-версия без пола под дверью давала 100 плиток, ванную 56, клей 125,51 кг и 461 СВП;
+           пол дверного проёма добавляет 1 плитку 600×300, 2 полоски в ванной и 5 СВП. */
+        IT("расчёт демо-плана: 101 плитка 600×300 (−6 на стыке, −9 из обрезков), ванная 58")
         {
             TlProject *project = demo_with_bedroom();
             TlSummary summary = tl_report_summarize(project);
@@ -40,18 +42,18 @@ void spec_summary(void)
             const TlTileTypeSummary *bath_tile = type_with_width(&summary, 300);
             EXPECT(main_tile && bath_tile);
             if (main_tile && bath_tile) {
-                EXPECT_INT(main_tile->count, 100);
+                EXPECT_INT(main_tile->count, 101);
                 EXPECT_INT(main_tile->shared_saving, 6);
-                EXPECT_INT(main_tile->offcut_saving, 10);
-                EXPECT_INT(main_tile->to_buy, 110);
+                EXPECT_INT(main_tile->offcut_saving, 9);
+                EXPECT_INT(main_tile->to_buy, 112);
                 EXPECT_INT(main_tile->spaces.count, 2);
-                EXPECT_INT(bath_tile->count, 56);
-                EXPECT_INT(bath_tile->to_buy, 62);
+                EXPECT_INT(bath_tile->count, 58);
+                EXPECT_INT(bath_tile->to_buy, 64);
             }
-            EXPECT_NEAR(summary.glue_total_kg, 125.51, 0.01);
+            EXPECT_NEAR(summary.glue_total_kg, 125.95, 0.01);
             EXPECT_INT(summary.glue.count, 1);
             EXPECT_INT(summary.glue.items[0].units, 6);
-            EXPECT_INT(summary.clip_total, 461);
+            EXPECT_INT(summary.clip_total, 466);
             tl_summary_free(&summary);
             tl_project_free(project);
         }
@@ -60,8 +62,8 @@ void spec_summary(void)
             TlProject *project = tl_project_demo();
             project->spaces.items[1]->tile.enabled = false;
             TlSummary summary = tl_report_summarize(project);
-            EXPECT_NEAR(summary.floor_area / 1e6, 22.495, 0.01);
-            EXPECT_NEAR(summary.tiled_area / 1e6, 17.628, 0.01);
+            EXPECT_NEAR(summary.floor_area / 1e6, 22.579, 0.01);
+            EXPECT_NEAR(summary.tiled_area / 1e6, 17.670, 0.01);
             EXPECT_INT(summary.types.count, 1);
             tl_summary_free(&summary);
             tl_project_free(project);
@@ -145,7 +147,7 @@ void spec_summary(void)
             TlTileCountResult result;
             EXPECT(tl_report_optimize_count(project, living, &result));
             EXPECT(result.after.tiles < result.before.tiles);
-            EXPECT_INT(result.after.tiles, 100);
+            EXPECT_INT(result.after.tiles, 101);
             tl_project_free(project);
         }
     }
