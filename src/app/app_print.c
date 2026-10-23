@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 #include "app_draw.h"
+#include "app_labels.h"
 #include "app_render.h"
 #include "app_sheet.h"
 #include "tl_report.h"
@@ -203,24 +204,24 @@ static void render_plan_page(AppPrintJob *job, cairo_t *cr, int index, bool numb
 
 /* ---- карточки подрезок ----------------------------------------------------------- */
 
-static void piece_edges(cairo_t *cr, const TlPolygon *shape, const TlTileSettings *tile, double scale,
-                        double ox, double oy, bool mono)
+static TlVec2 on_card(TlVec2 p, double scale, double ox, double oy)
 {
-    bool rectangle = shape->count == 4;
-    for (size_t i = 0; i < shape->count && rectangle; i++) {
-        TlVec2 a = shape->items[i], b = shape->items[(i + 1) % 4];
-        rectangle = fabs(a.x - b.x) < 0.5 || fabs(a.y - b.y) < 0.5;
-    }
-    bool dimensioned_horizontal = false, dimensioned_vertical = false;
+    return tl_vec2(ox + p.x * scale, oy + p.y * scale);
+}
+
+/* Контур куска: заводская кромка — тонко, линия реза — толсто. Линии — препятствия для подписей. */
+static void piece_lines(cairo_t *cr, AppLabels *labels, const TlPolygon *shape, const TlTileSettings *tile,
+                        double scale, double ox, double oy, bool mono)
+{
     for (size_t i = 0; i < shape->count; i++) {
         TlVec2 a = shape->items[i], b = shape->items[(i + 1) % shape->count];
         bool horizontal = fabs(a.y - b.y) < 0.5, vertical = fabs(a.x - b.x) < 0.5;
         bool on_tile_edge = (horizontal && (fabs(a.y) < 0.5 || fabs(a.y - tile->tile_height) < 0.5)) ||
                             (vertical && (fabs(a.x) < 0.5 || fabs(a.x - tile->tile_width) < 0.5));
-        TlVec2 sa = tl_vec2(ox + a.x * scale, oy + a.y * scale), sb = tl_vec2(ox + b.x * scale, oy + b.y * scale);
+        TlVec2 sa = on_card(a, scale, ox, oy), sb = on_card(b, scale, ox, oy);
         cairo_move_to(cr, sa.x, sa.y);
         cairo_line_to(cr, sb.x, sb.y);
-        if (on_tile_edge) { /* заводская кромка — тонко, линия реза — толсто */
+        if (on_tile_edge) {
             cairo_set_source_rgb(cr, 0, 0, 0);
             cairo_set_line_width(cr, 0.9);
         } else {
@@ -231,11 +232,26 @@ static void piece_edges(cairo_t *cr, const TlPolygon *shape, const TlTileSetting
             cairo_set_line_width(cr, 2.2);
         }
         cairo_stroke(cr);
+        app_labels_avoid_segment(labels, sa, sb);
+    }
+}
+
+static void piece_dimensions(cairo_t *cr, AppLabels *labels, const TlPolygon *shape, double scale, double ox,
+                             double oy)
+{
+    bool rectangle = shape->count == 4;
+    for (size_t i = 0; i < shape->count && rectangle; i++) {
+        TlVec2 a = shape->items[i], b = shape->items[(i + 1) % 4];
+        rectangle = fabs(a.x - b.x) < 0.5 || fabs(a.y - b.y) < 0.5;
+    }
+    bool dimensioned_horizontal = false, dimensioned_vertical = false;
+    for (size_t i = 0; i < shape->count; i++) {
+        TlVec2 a = shape->items[i], b = shape->items[(i + 1) % shape->count];
         double length = tl_distance(a, b);
         if (length < 0.5)
             continue;
         if (rectangle) { /* у прямоугольника — одна ширина и одна высота */
-            bool *done = horizontal ? &dimensioned_horizontal : &dimensioned_vertical;
+            bool *done = fabs(a.y - b.y) < 0.5 ? &dimensioned_horizontal : &dimensioned_vertical;
             if (*done)
                 continue;
             *done = true;
@@ -245,7 +261,8 @@ static void piece_edges(cairo_t *cr, const TlPolygon *shape, const TlTileSetting
         char text[16];
         g_snprintf(text, sizeof text, "%.0f", length);
         AppTextStyle style = {9, false, {0, 0, 0, 1}, {1, 1, 1, 1}};
-        app_text_along(cr, text, &style, sa, sb, normal, 8);
+        app_labels_place_along(labels, cr, text, &style, on_card(a, scale, ox, oy), on_card(b, scale, ox, oy),
+                               normal, true);
     }
 }
 
@@ -279,7 +296,7 @@ static bool free_strip_between_parts(const TlCutCard *card, TlRect *rest)
 }
 
 static void hatch_rest(cairo_t *cr, const TlCutCard *card, double scale, double ox, double oy, TlRect tile_rect,
-                       const char *label, bool mono)
+                       bool mono)
 {
     cairo_save(cr);
     cairo_rectangle(cr, tile_rect.left, tile_rect.top, tl_rect_width(tile_rect), tl_rect_height(tile_rect));
@@ -304,7 +321,12 @@ static void hatch_rest(cairo_t *cr, const TlCutCard *card, double scale, double 
     cairo_set_line_width(cr, 0.5);
     cairo_stroke(cr);
     cairo_restore(cr);
+}
 
+/* Надпись «стена» или «отход» поперёк свободной полосы — только если там есть место. */
+static void rest_label(cairo_t *cr, AppLabels *labels, const TlCutCard *card, double scale, double ox, double oy,
+                       const char *label)
+{
     TlRect rest;
     if (!free_strip_between_parts(card, &rest))
         return;
@@ -315,8 +337,44 @@ static void hatch_rest(cairo_t *cr, const TlCutCard *card, double scale, double 
     bool tall = tl_rect_height(screen) > tl_rect_width(screen);
     double along = tall ? tl_rect_height(screen) : tl_rect_width(screen);
     double across = tall ? tl_rect_width(screen) : tl_rect_height(screen);
-    if (along > text_width + 4 && across > 9)
-        app_text_centered(cr, label, &style, tl_rect_center(screen), tall ? -90 : 0);
+    if (along > text_width + 4 && across > 9) {
+        TlVec2 center = tl_rect_center(screen);
+        app_labels_place(labels, cr, label, &style, tall ? -90 : 0, center, &center, 1, false);
+    }
+}
+
+/* Подпись части: в её середине, рядом или за краем плитки. Не влезает
+ * «Комната №N» — только «№N» (комнаты есть в заголовке карточки). */
+static void part_label(cairo_t *cr, AppLabels *labels, const TlCutPart *part, double scale, double ox, double oy,
+                       TlRect tile_rect)
+{
+    if (!part->shapes.count)
+        return;
+    TlRect bounds = tl_polygon_bounds(&part->shapes.items[0]);
+    TlVec2 center = on_card(tl_rect_center(bounds), scale, ox, oy);
+    const TlVec2 inside[] = {
+        center, {center.x, center.y - 12}, {center.x, center.y + 12}, {center.x, center.y - 24}, {center.x, center.y + 24},
+    };
+    const TlVec2 outside[] = {{center.x, tile_rect.top - 22}, {center.x, tile_rect.bottom + 22}};
+    const size_t inside_count = sizeof inside / sizeof inside[0], outside_count = sizeof outside / sizeof outside[0];
+    AppTextStyle style = {8, true, {0, 0, 0, 1}, {1, 1, 1, 1}};
+    char full[160], short_text[32];
+    g_strlcpy(full, part->room, sizeof full);
+    g_strlcpy(short_text, part->room, sizeof short_text);
+    if (part->number) {
+        g_snprintf(full, sizeof full, "%s №%d", part->room, part->number);
+        g_snprintf(short_text, sizeof short_text, "№%d", part->number);
+    }
+    if (app_labels_place(labels, cr, full, &style, 0, center, inside, inside_count, false) ||
+        (part->number && app_labels_place(labels, cr, short_text, &style, 0, center, inside, inside_count, false)))
+        return;
+    /* за краем плитки — с выноской от середины части */
+    TlVec2 places[1 + sizeof outside / sizeof outside[0]] = {center};
+    for (size_t i = 0; i < outside_count; i++)
+        places[1 + i] = outside[i];
+    if (app_labels_place(labels, cr, short_text, &style, 0, center, places + 1, outside_count, false))
+        return;
+    app_labels_place(labels, cr, short_text, &style, 0, center, places, 1 + outside_count, true);
 }
 
 static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, double x, double y, double w, double h)
@@ -349,10 +407,8 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     double oy = area_y + (area_h - tile->tile_height * scale) / 2;
     TlRect tile_rect = {ox, oy, ox + tile->tile_width * scale, oy + tile->tile_height * scale};
 
-    if (card->kind != TL_CARD_SINGLE) {
-        const char *label = card->kind == TL_CARD_SHARED_TILE ? "стена" : "отход";
-        hatch_rest(cr, card, scale, ox, oy, tile_rect, label, mono);
-    }
+    if (card->kind != TL_CARD_SINGLE)
+        hatch_rest(cr, card, scale, ox, oy, tile_rect, mono);
     cairo_rectangle(cr, tile_rect.left, tile_rect.top, tl_rect_width(tile_rect), tl_rect_height(tile_rect));
     double dashes[2] = {3, 3};
     cairo_set_dash(cr, dashes, 2, 0);
@@ -374,24 +430,23 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
         cairo_set_source_rgba(cr, fill.red, fill.green, fill.blue, 1);
         cairo_fill(cr);
     }
+
+    /* Сначала вся геометрия, потом подписи — каждая на свободном месте:
+       размеры, затем подписи частей, затем «стена»/«отход». Пунктир целой
+       плитки подписям не мешает. */
+    AppLabels *labels = app_labels_new((TlRect){x + 2, y + 26, x + w - 2, y + h - 2});
     for (size_t p = 0; p < card->parts.count; p++)
         for (size_t s = 0; s < card->parts.items[p].shapes.count; s++)
-            piece_edges(cr, &card->parts.items[p].shapes.items[s], tile, scale, ox, oy, mono);
+            piece_lines(cr, labels, &card->parts.items[p].shapes.items[s], tile, scale, ox, oy, mono);
+    for (size_t p = 0; p < card->parts.count; p++)
+        for (size_t s = 0; s < card->parts.items[p].shapes.count; s++)
+            piece_dimensions(cr, labels, &card->parts.items[p].shapes.items[s], scale, ox, oy);
     if (card->parts.count > 1) /* подписи частей: комната и номер */
-        for (size_t p = 0; p < card->parts.count; p++) {
-            const TlCutPart *part = &card->parts.items[p];
-            if (!part->shapes.count)
-                continue;
-            TlRect bounds = tl_polygon_bounds(&part->shapes.items[0]);
-            char text[160];
-            if (part->number)
-                g_snprintf(text, sizeof text, "%s №%d", part->room, part->number);
-            else
-                g_strlcpy(text, part->room, sizeof text);
-            AppTextStyle label = {8, true, {0, 0, 0, 1}, {1, 1, 1, 1}};
-            app_text_centered(cr, text, &label,
-                              tl_vec2(ox + (bounds.left + bounds.right) / 2 * scale, oy + (bounds.top + bounds.bottom) / 2 * scale), 0);
-        }
+        for (size_t p = 0; p < card->parts.count; p++)
+            part_label(cr, labels, &card->parts.items[p], scale, ox, oy, tile_rect);
+    if (card->kind != TL_CARD_SINGLE)
+        rest_label(cr, labels, card, scale, ox, oy, card->kind == TL_CARD_SHARED_TILE ? "стена" : "отход");
+    app_labels_free(labels);
 }
 
 static void render_cards_page(AppPrintJob *job, cairo_t *cr, int index)
