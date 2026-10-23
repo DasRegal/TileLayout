@@ -62,6 +62,10 @@ if(TL_BUILD_APP)
     endif()
     if(GTK3_FOUND)
         file(GLOB TL_APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/app/*.c)
+        if(WIN32)
+            enable_language(RC)
+            list(APPEND TL_APP_SOURCES ${CMAKE_SOURCE_DIR}/packaging/windows/tilelayout.rc)
+        endif()
         add_executable(tilelayout WIN32 ${TL_APP_SOURCES})
         target_link_libraries(tilelayout PRIVATE tlcore PkgConfig::GTK3)
         target_compile_definitions(tilelayout PRIVATE TL_VERSION="${PROJECT_VERSION}")
@@ -71,4 +75,28 @@ if(TL_BUILD_APP)
                         "Установите пакет разработки GTK 3 (в Ubuntu и Mint — libgtk-3-dev, см. README). "
                         "Если он не ставится, запустите tools/fetch-gtk-dev.sh и повторите cmake.")
     endif()
+endif()
+
+# ---- пакет .deb: cpack -G DEB в папке сборки -------------------------------
+if(TARGET tilelayout AND UNIX AND NOT APPLE)
+    install(FILES packaging/linux/tilelayout.desktop DESTINATION share/applications)
+    install(FILES packaging/linux/tilelayout.svg DESTINATION share/icons/hicolor/scalable/apps)
+    install(FILES CHANGELOG.md README.md packaging/linux/copyright DESTINATION share/doc/tilelayout)
+
+    set(CPACK_GENERATOR DEB)
+    set(CPACK_PACKAGE_NAME tilelayout)
+    set(CPACK_PACKAGE_VENDOR DasRegal)
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "раскладка плитки: план дома, расчёт плитки, клея и СВП")
+    set(CPACK_PACKAGE_DESCRIPTION "Редактор плана: стены, перегородки любой формы, проёмы, деформационные швы.\n\
+Раскладка по комнатам, чертежи подрезок, печать и PDF на листах A4.")
+    set(CPACK_STRIP_FILES ON)
+    set(CMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
+                                                    WORLD_READ WORLD_EXECUTE)
+    set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "DasRegal <DasRegal@users.noreply.github.com>")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE https://github.com/DasRegal/TileLayout)
+    set(CPACK_DEBIAN_PACKAGE_SECTION graphics)
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON) # зависимости — по библиотекам, с которыми собрана программа
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT) # tilelayout_<версия>_<архитектура>.deb
+    include(CPack)
 endif()

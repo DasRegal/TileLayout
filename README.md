@@ -1,14 +1,33 @@
 # TileLayout
 
+[![Сборка](https://github.com/DasRegal/TileLayout/actions/workflows/build.yml/badge.svg)](https://github.com/DasRegal/TileLayout/actions/workflows/build.yml)
+[![Версия](https://img.shields.io/github/v/release/DasRegal/TileLayout?label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F)](https://github.com/DasRegal/TileLayout/releases/latest)
+[![Скачиваний](https://img.shields.io/github/downloads/DasRegal/TileLayout/total?label=%D1%81%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9)](https://github.com/DasRegal/TileLayout/releases)
+![Windows | Linux](https://img.shields.io/badge/%D0%BF%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D1%8B-Windows%20%7C%20Linux-informational)
+![C99 + GTK 3](https://img.shields.io/badge/C99%20%2B%20GTK%203-blue)
+[![Лицензия MIT](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-green)](LICENSE)
+
 Программа для раскладки плитки на C99 + GTK 3:
 - план дома: стены, перегородки, проёмы;
 - точная форма перегородок для раскроя: каждый угол тела задаётся отдельно, торцы срезаются точно по стене или боку другой перегородки;
-- комнаты появляются из замкнутых областей;
+- комнаты появляются из замкнутых областей; пол под дверью делится между комнатами стыком, который можно сдвигать;
 - раскладка плитки, расчёт плитки, клея и СВП;
 - деформационные швы: режут плитку с заданным зазором, куски видны на плане с номерами и в чертежах подрезок;
 - линейки для измерений: концы притягиваются к углам, серединам, краям и осям стен и к швам плитки;
 - автовыравнивание по горизонтали и вертикали и по углам других стен — с пунктирными вспомогательными линиями;
 - печать и PDF с чертежами подрезок.
+
+## Скачать
+
+Последняя версия — ссылки ниже всегда ведут на неё:
+
+| Система | Скачать | Как запустить |
+|---|---|---|
+| Windows 10 и 11, 64 бита | [TileLayout-win64.zip](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-win64.zip) | распаковать архив в любую папку и запустить `tilelayout.exe` — установка не нужна |
+| Windows, 32 бита | [TileLayout-win32.zip](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-win32.zip) | так же |
+| Ubuntu 22.04+, Linux Mint 21+, Debian 12+ | [TileLayout-linux-amd64.deb](https://github.com/DasRegal/TileLayout/releases/latest/download/TileLayout-linux-amd64.deb) | открыть файл двойным щелчком или `sudo apt install ./TileLayout-linux-amd64.deb`; программа появится в меню |
+
+Все версии — на странице [Releases](https://github.com/DasRegal/TileLayout/releases), что изменилось — в [CHANGELOG.md](CHANGELOG.md). Для других систем программу можно [собрать из исходников](#сборка).
 
 Файлы проектов — `*.tilelayout.json`. Открываются и файлы прежней Python-версии программы.
 
@@ -72,6 +91,15 @@ tools/fetch-gtk-dev.sh
 
 Если потом поставите `libgtk-3-dev` обычным способом, CMake возьмёт системный. Папку можно удалить: `rm -rf ~/.cache/tilelayout`.
 
+#### Пакет .deb
+
+После сборки командами выше:
+
+```sh
+(cd build && cpack -G DEB)
+# результат: build/tilelayout_<версия>_amd64.deb — с ярлыком в меню и значком
+```
+
 ### Windows (MSYS2, оболочка «MSYS2 MINGW64»)
 
 ```sh
@@ -82,14 +110,16 @@ cmake --build build
 ./build/tilelayout.exe
 ```
 
-### Переносная сборка для Windows x64
+Для 32-битной Windows — то же в оболочке «MSYS2 MINGW32», с пакетами `mingw-w64-i686-…` вместо `mingw-w64-x86_64-…`.
 
-Папка и zip, которые запускаются без установки и без MSYS2. Собираются там же, в оболочке MINGW64:
+### Переносная сборка для Windows
+
+Папка и zip, которые запускаются без установки и без MSYS2. Собираются там же, в оболочке MINGW64 (x64) или MINGW32 (x86):
 
 ```sh
 pacman -S zip mingw-w64-x86_64-librsvg
-packaging/windows/make-portable.sh build 1.0
-# результат: dist/TileLayout-1.0-win64/ и dist/TileLayout-1.0-win64.zip
+packaging/windows/make-portable.sh build 1.2
+# результат: папка dist/TileLayout-1.2-win64/ и архив dist/TileLayout-win64.zip
 ```
 
 Скрипт сам находит нужные DLL. Кроме них он кладёт в папку:
@@ -128,8 +158,8 @@ cmake --build build && (cd build && ctest --output-on-failure)
 ## Релизы на GitHub
 
 Сборку делает GitHub Actions: `.github/workflows/build.yml` в корне репозитория.
-- **Каждый push в `main`**: сборка и спецификации на Linux и Windows. Переносной zip для Windows прикладывается к запуску (вкладка Actions → запуск → Artifacts).
-- **Тег `vX.Y`**: то же самое, а zip публикуется в Releases. Текст релиза — раздел этой версии из [CHANGELOG.md](CHANGELOG.md).
+- **Каждый push в `main`**: сборка и спецификации на Linux и Windows. Пакеты — zip для Windows x64 и x86, .deb для Linux — прикладываются к запуску (вкладка Actions → запуск → Artifacts).
+- **Тег `vX.Y`**: то же самое, а файлы публикуются в Releases: `TileLayout-win64.zip`, `TileLayout-win32.zip`, `TileLayout-linux-amd64.deb`. Имена постоянные — на них ведут ссылки из раздела «Скачать». Текст релиза — раздел этой версии из [CHANGELOG.md](CHANGELOG.md).
 
 Как выпустить версию:
 1. Поднимите версию в `project(TileLayout VERSION X.Y ...)` в `CMakeLists.txt`.
@@ -202,3 +232,11 @@ docs/       скриншоты
 Настройки хранятся в `tilelayout.ini`:
 - Linux: `~/.config/TileLayout/`;
 - Windows: `%LOCALAPPDATA%\TileLayout\`.
+
+## Лицензия
+
+[MIT](LICENSE): программу можно свободно использовать, изменять и распространять, сохраняя уведомление об авторстве.
+
+Переносная сборка для Windows содержит библиотеки GTK и другие — под их собственными лицензиями (LGPL и другие); их тексты лежат в папке `licenses` внутри архива.
+
+Код написан с помощью Claude (Anthropic).

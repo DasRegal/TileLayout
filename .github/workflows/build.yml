@@ -1,5 +1,8 @@
-# Сборка и спецификации на Linux и Windows; переносная сборка для Windows x64.
-# Тег vX.Y (совпадающий с версией в CMakeLists.txt) — релиз на GitHub с zip.
+# Сборка и спецификации на Linux и Windows; пакеты: .deb для Linux,
+# переносные zip для Windows x64 и x86.
+# Тег vX.Y (совпадающий с версией в CMakeLists.txt и с разделом в CHANGELOG.md) —
+# релиз на GitHub. Имена файлов релиза постоянные (без версии): на них ведут
+# ссылки «скачать последнюю версию» в README.
 name: Сборка
 
 on:
@@ -14,8 +17,9 @@ permissions:
 
 jobs:
   linux:
-    name: Linux
-    runs-on: ubuntu-24.04
+    name: Linux (.deb)
+    # Пакет, собранный на Ubuntu 22.04, ставится на Ubuntu 22.04+, Linux Mint 21+, Debian 12+.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       # Те же команды, что в README.
@@ -27,12 +31,35 @@ jobs:
           cmake --build build -j
       - name: Спецификации
         run: (cd build && ctest --output-on-failure)
+      - name: Пакет .deb
+        run: |
+          (cd build && cpack -G DEB)
+          mkdir -p dist
+          cp build/tilelayout_*_amd64.deb dist/TileLayout-linux-amd64.deb
+          dpkg-deb --info dist/TileLayout-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TileLayout-linux-amd64
+          path: dist/*.deb
 
   windows:
-    name: Windows x64
+    name: Windows ${{ matrix.title }}
     runs-on: windows-latest
-    permissions:
-      contents: write   # для публикации релиза
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - msystem: MINGW64
+            title: x64
+            artifact: TileLayout-win64
+            optional: false
+          # MSYS2 постепенно сворачивает 32-битное окружение: если нужных пакетов не
+          # станет, эта сборка упадёт, а релиз выйдет без неё.
+          - msystem: MINGW32
+            title: x86
+            artifact: TileLayout-win32
+            optional: true
+    continue-on-error: ${{ matrix.optional }}
     defaults:
       run:
         shell: msys2 {0}
@@ -40,7 +67,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           update: true
           install: zip
           pacboy: >-
@@ -49,12 +76,7 @@ jobs:
         id: version
         run: |
           version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
-              echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в CMakeLists.txt"
-              exit 1
-            fi
-          else
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
             version="$version-dev.${GITHUB_SHA::7}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -68,12 +90,25 @@ jobs:
         run: packaging/windows/make-portable.sh build "${{ steps.version.outputs.version }}" dist
       - uses: actions/upload-artifact@v4
         with:
-          name: TileLayout-${{ steps.version.outputs.version }}-win64
+          name: ${{ matrix.artifact }}
           path: dist/*.zip
-      - name: Описание релиза из CHANGELOG.md
-        if: github.ref_type == 'tag'
+
+  release:
+    name: Релиз
+    if: github.ref_type == 'tag'
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Версия и описание релиза из CHANGELOG.md
         run: |
-          version="${{ steps.version.outputs.version }}"
+          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в CMakeLists.txt"
+            exit 1
+          fi
           awk -v heading="## [$version]" '
             index($0, heading) == 1 { inside = 1; next }
             inside && /^## \[/ { exit }
@@ -83,9 +118,13 @@ jobs:
             echo "::error::В CHANGELOG.md нет раздела ## [$version]"
             exit 1
           fi
-      - name: Релиз
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          files: dist/*.zip
+          path: dist
+          merge-multiple: true
+      - name: Файлы релиза
+        run: ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
           body_path: release-notes.md

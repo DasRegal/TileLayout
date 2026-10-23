@@ -467,7 +467,7 @@ static void on_about(GtkMenuItem *item, AppWindow *self)
                                     PROJECT_EXTENSION, gtk_get_major_version(), gtk_get_minor_version(),
                                     gtk_get_micro_version());
     gtk_show_about_dialog(GTK_WINDOW(self->window), "program-name", APP_NAME, "version", TL_VERSION, "comments",
-                          runtime, "logo", app_icon_pixbuf("covering", 64), "title", "О программе", NULL);
+                          runtime, "logo", app_icon_pixbuf("app", 64), "title", "О программе", NULL);
     g_free(runtime);
 }
 
@@ -700,7 +700,11 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     self->document = app_document_new();
     app_config_read_document(config, self->document);
     self->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_icon(GTK_WINDOW(self->window), app_icon_pixbuf("covering", 64));
+    GList *icons = NULL;
+    for (int size = 16; size <= 128; size *= 2)
+        icons = g_list_append(icons, app_icon_pixbuf("app", size));
+    gtk_window_set_icon_list(GTK_WINDOW(self->window), icons);
+    g_list_free(icons);
     int width, height;
     bool maximized;
     app_config_read_window(config, &width, &height, &maximized);

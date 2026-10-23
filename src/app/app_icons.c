@@ -346,6 +346,24 @@ typedef struct IconEntry {
     void (*draw)(cairo_t *cr);
 } IconEntry;
 
+/* Значок программы: буквы TL из квадратной плитки на сетке 7×5 (как packaging/linux/tilelayout.svg). */
+static void draw_app(cairo_t *cr)
+{
+    static const char *const GLYPHS[5] = {"###.#..", ".#..#..", ".#..#..", ".#..#..", ".#..###"};
+    fill_hex(cr, "#1f5f6b");
+    app_rounded_rect(cr, 1, 1, 30, 30, 5);
+    cairo_fill(cr);
+    for (int row = 0; row < 5; row++)
+        for (int column = 0; column < 7; column++) {
+            if (GLYPHS[row][column] == '#')
+                fill_hex(cr, (row + column) % 2 ? "#f6f1e6" : "#e6dbc2");
+            else
+                cairo_set_source_rgba(cr, 1, 1, 1, 0.12);
+            app_rounded_rect(cr, 3.575 + column * 3.575, 7.3 + row * 3.575, 3.15, 3.15, 0.4);
+            cairo_fill(cr);
+        }
+}
+
 static void draw_undo_icon(cairo_t *cr) { draw_undo(cr, false); }
 static void draw_redo_icon(cairo_t *cr) { draw_undo(cr, true); }
 static void draw_covering(cairo_t *cr) { tiles_grid(cr, 3, 3, 3, 8, 1.5); }
@@ -353,7 +371,7 @@ static void draw_lock_closed(cairo_t *cr) { draw_lock(cr, true); }
 static void draw_lock_open(cairo_t *cr) { draw_lock(cr, false); }
 
 static const IconEntry ICONS[] = {
-    {"undo", draw_undo_icon}, {"redo", draw_redo_icon}, {"select", draw_select},
+    {"app", draw_app}, {"undo", draw_undo_icon}, {"redo", draw_redo_icon}, {"select", draw_select},
     {"rect", draw_rect}, {"contour", draw_contour}, {"partition", draw_partition},
     {"opening", draw_opening}, {"tile_move", draw_tile_move}, {"fit", draw_fit},
     {"covering", draw_covering}, {"svp", draw_svp}, {"numbers", draw_numbers},
