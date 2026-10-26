@@ -250,6 +250,14 @@
    "color": "#bb9f7b"
   },
   {
+   "id": "chevron-light",
+   "name": "Керамогранит 60×120 «ёлочка» Chevron Light",
+   "width": 1200,
+   "height": 600,
+   "image": "chevron-light 1200x600.jpg",
+   "color": "#c19c73"
+  },
+  {
    "id": "floor-33x33-grey",
    "name": "Плитка напольная 33×33 серая",
    "width": 330,

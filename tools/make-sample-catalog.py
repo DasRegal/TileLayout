@@ -5,8 +5,7 @@
     python3 tools/make-sample-catalog.py [папка]   # по умолчанию data/catalogs
 
 samples — образцы разных материалов и ходовые форматы и виды плитки в магазинах
-          РФ; во вложенной папке Test — плитки без catalog.json, только картинки
-          с размером в имени (номинальные размеры; калибр у производителей отличается на несколько
+          РФ (номинальные размеры; калибр у производителей отличается на несколько
           мм — например, 40,2×40,2 или 29,8×59,8, — его можно поправить в программе).
 
 Нужны Pillow и numpy. Рисунки одинаковы при каждом запуске (фиксированные зёрна).
@@ -230,6 +229,8 @@ RU_MARKET = [
     ("wood-20x60-walnut", "Керамогранит 20×60 орех", 600, 200, lambda w, h: wood(w, h, 123, (110, 76, 52))),
     ("wood-15x60-oak-white", "Керамогранит 15×60 дуб беленый", 600, 150, lambda w, h: wood(w, h, 124, (214, 204, 188))),
     ("wood-20x80-ash", "Керамогранит 20×80 ясень", 800, 200, lambda w, h: wood(w, h, 125, (188, 160, 124))),
+    ("chevron-light", "Керамогранит 60×120 «ёлочка» Chevron Light", 1200, 600,
+     lambda w, h: chevron(w, h, 126, (196, 158, 116), 8)),
     # Напольная керамическая плитка
     ("floor-33x33-grey", "Плитка напольная 33×33 серая", 330, 330, lambda w, h: salt_pepper(w, h, 130, (150, 150, 150))),
     ("floor-40x40-beige", "Плитка напольная 40×40 бежевая", 400, 400, lambda w, h: travertine(w, h, 131, (206, 186, 152))),
@@ -261,15 +262,8 @@ RU_MARKET = [
     ("mosaic-30x30-grey", "Мозаика 30×30 серый микс (чип 5 см)", 300, 300, lambda w, h: mosaic(w, h, 172, (150, 150, 150), 50, 300, 30)),
 ]
 
-# Вложенная папка без catalog.json: плитки — картинки с размером в имени
-# («Chevron Light 1200x600.jpg»), название — имя файла без размера.
-TEST = [
-    ("Chevron Light", 1200, 600, lambda w, h: chevron(w, h, 126, (196, 158, 116), 8)),
-]
-
-# Каталог: папка, название, плитки с описанием в catalog.json, вложенные папки.
 CATALOGS = [
-    ("samples", "Образцы TileLayout", SAMPLES + RU_MARKET, {"Test": TEST}),
+    ("samples", "Образцы TileLayout", SAMPLES + RU_MARKET),
 ]
 
 
@@ -291,7 +285,7 @@ def clear_images(folder):
             os.remove(os.path.join(folder, file))
 
 
-def make_catalog(folder, title, entries, subfolders):
+def make_catalog(folder, title, entries):
     os.makedirs(folder, exist_ok=True)
     clear_images(folder)
     tiles = []
@@ -304,19 +298,12 @@ def make_catalog(folder, title, entries, subfolders):
         json.dump({"name": title, "tiles": tiles}, out, ensure_ascii=False, indent=1)
         out.write("\n")
     print(f"{len(tiles)} плиток в {folder}")
-    for subfolder, files in subfolders.items():
-        path = os.path.join(folder, subfolder)
-        os.makedirs(path, exist_ok=True)
-        clear_images(path)
-        for stem, width_mm, height_mm, paint in files:
-            paint_tile(path, stem, width_mm, height_mm, paint)
-        print(f"{len(files)} плиток в {path}")
 
 
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.join("data", "catalogs")
-    for folder, title, entries, subfolders in CATALOGS:
-        make_catalog(os.path.join(root, folder), title, entries, subfolders)
+    for folder, title, entries in CATALOGS:
+        make_catalog(os.path.join(root, folder), title, entries)
 
 
 if __name__ == "__main__":
