@@ -58,6 +58,7 @@ TlSnapContext app_canvas_snap_context(AppCanvas *canvas)
 {
     return (TlSnapContext){.project = canvas->document->project,
                            .tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX),
+                           .magnet = canvas->document->preferences.measure_magnet,
                             .grid_step = canvas->document->preferences.snap_step, .skip_vertex = -1,
                             .align = canvas->document->preferences.auto_align};
 }
@@ -70,45 +71,22 @@ void app_canvas_show_guides(AppCanvas *canvas, const TlGuides *guides, TlVec2 to
 
 void app_canvas_clear_guides(AppCanvas *canvas) { canvas->guides.count = 0; }
 
-/* Выпрямление по горизонтали/вертикали от anchor. Если конец притянут к
-   линии — точка на пересечении этой линии с горизонталью/вертикалью. */
-static TlVec2 align_ruler_end(AppCanvas *canvas, TlVec2 point, TlVec2 anchor, double radius)
-{
-    static const TlVec2 AXES[] = {{1, 0}, {0, 1}};
-    TlVec2 aligned;
-    size_t which;
-    if (!tl_align_direction(anchor, point, AXES, 2, radius, &aligned, &which))
-        return point;
-    TlSnapPoint *snap = &canvas->measure_snap;
-    TlVec2 crossing;
-    bool on_line = snap->kind != TL_SNAP_NONE &&
-                   tl_line_intersection(anchor, AXES[which], snap->point, snap->direction, &crossing) &&
-                   tl_distance(crossing, point) < radius;
-    if (on_line)
-        aligned = crossing;
-    else
-        snap->kind = TL_SNAP_NONE;
-    TlGuides guides = {0};
-    tl_guides_add(&guides, anchor, which == 1);
-    app_canvas_show_guides(canvas, &guides, aligned);
-    return aligned;
-}
-
 TlVec2 app_canvas_measure_point(AppCanvas *canvas, TlVec2 world, const TlVec2 *anchor, TlSnapTargets targets,
                                 bool free)
 {
     const AppEditPreferences *preferences = &canvas->document->preferences;
-    canvas->measure_snap = (TlSnapPoint){world, TL_SNAP_NONE, {0, 0}};
     app_canvas_clear_guides(canvas);
-    if (free)
+    if (free) {
+        canvas->measure_snap = (TlSnapPoint){world, TL_SNAP_NONE, {0, 0}};
         return world;
-    double radius = app_view_pixels_to_mm(&canvas->view, RULER_SNAP_RADIUS_PX);
-    if (preferences->measure_magnet)
-        tl_measure_snap(canvas->document->project, world, radius, targets, &canvas->measure_snap);
-    TlVec2 point = canvas->measure_snap.point;
-    bool on_point = canvas->measure_snap.kind != TL_SNAP_NONE && !tl_snap_kind_is_line(canvas->measure_snap.kind);
-    if (preferences->auto_align && anchor && !on_point)
-        point = align_ruler_end(canvas, point, *anchor, radius);
+    }
+    TlGuides guides = {0};
+    TlVec2 point = tl_measure_point(canvas->document->project, world, anchor,
+                                    app_view_pixels_to_mm(&canvas->view, RULER_SNAP_RADIUS_PX), targets,
+                                    preferences->measure_magnet, preferences->auto_align, &canvas->measure_snap,
+                                    &guides);
+    if (guides.count)
+        app_canvas_show_guides(canvas, &guides, point);
     return point;
 }
 

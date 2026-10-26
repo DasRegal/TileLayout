@@ -254,6 +254,9 @@ bool tl_project_opening_wall_floor(TlProject *project, const TlOpening *opening,
                                    TlPolygon *floor);
 /* Линия стыка — от косяка до косяка, на доле threshold сечения. */
 bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, TlVec2 *from, TlVec2 *to);
+/* Косяки проёма в перегородке: края по обе стороны стыка (from[i]—to[i] поперёк;
+   i = 0 — у начала стыка, 1 — у конца). false — проём не в стене. */
+bool tl_project_opening_jambs(TlProject *project, const TlOpening *opening, TlVec2 from[2], TlVec2 to[2]);
 /* Сечение посередине проёма: от грани 0 (*right) к грани 1 (*left). */
 bool tl_project_opening_section(TlProject *project, const TlOpening *opening, TlVec2 *right, TlVec2 *left);
 /* Проём в наружной стене: за гранью 1 — улица. */

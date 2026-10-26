@@ -333,11 +333,7 @@ static void render_walls(cairo_t *cr, const AppView *view, const AppRenderOption
 
 bool app_render_doorway_jambs(TlProject *project, const TlOpening *opening, TlVec2 from_jamb[2], TlVec2 to_jamb[2])
 {
-    TlOpening right_side = *opening, left_side = *opening;
-    tl_opening_set_threshold(&right_side, 0);
-    tl_opening_set_threshold(&left_side, 1);
-    return tl_project_opening_threshold(project, &right_side, &from_jamb[0], &to_jamb[0]) &&
-           tl_project_opening_threshold(project, &left_side, &from_jamb[1], &to_jamb[1]);
+    return tl_project_opening_jambs(project, opening, from_jamb, to_jamb);
 }
 
 void app_render_threshold(cairo_t *cr, const AppView *view, TlVec2 from, TlVec2 to, AppColor color, double width_px)

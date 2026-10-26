@@ -16,6 +16,7 @@
 typedef struct TlSnapContext {
     TlProject *project;
     double tolerance;               /* мм: ближе — прилипает (у программы — 10 px экрана) */
+    bool magnet;                    /* концы линеек и швов притягиваются к стенам (tl_measure_point) */
     double grid_step;               /* 0 — без сетки */
     const TlOutline *skip_outline;  /* угол skip_vertex этого дома не учитывать */
     int skip_vertex;

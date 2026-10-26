@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "tl_align.h"
+#include "tl_layout.h"
 
 TlVec2 tl_node_point(const TlNode *node, int index)
 {
@@ -11,6 +12,25 @@ TlVec2 tl_node_point(const TlNode *node, int index)
     TlNodeCorner corners[TL_NODE_MAX];
     tl_node_corners(node, corners);
     return corners[index - 1].first;
+}
+
+/* Доля глубины проёма под точкой: у косяка в начале, в конце или посередине
+   (стык целиком). depth — глубина проёма там, мм. */
+static double threshold_share_at(TlProject *project, const TlOpening *opening, int part, TlVec2 world,
+                                 double *depth)
+{
+    TlVec2 from_jamb[2], to_jamb[2];
+    if (!tl_project_opening_jambs(project, opening, from_jamb, to_jamb))
+        return 0;
+    TlVec2 right = part == TL_DRAG_THRESHOLD_FROM ? from_jamb[0]
+                   : part == TL_DRAG_THRESHOLD_TO ? to_jamb[0] : tl_vec2_midpoint(from_jamb[0], to_jamb[0]);
+    TlVec2 left = part == TL_DRAG_THRESHOLD_FROM ? from_jamb[1]
+                  : part == TL_DRAG_THRESHOLD_TO ? to_jamb[1] : tl_vec2_midpoint(from_jamb[1], to_jamb[1]);
+    TlVec2 across = tl_vec2_sub(left, right);
+    double length = tl_vec2_length(across);
+    if (depth)
+        *depth = length;
+    return length > 0 ? fmin(1, fmax(0, tl_vec2_dot(tl_vec2_sub(world, right), across) / (length * length))) : 0;
 }
 
 /* ---- блокировки ------------------------------------------------------------- */
@@ -109,12 +129,110 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
             return false;
         tl_band_local(&drag->band, target.opening->center, &drag->original_along, NULL);
         return true;
+    case TL_DRAG_THRESHOLD:
+        if (target.opening->locked)
+            return false;
+        drag->original_shares[0] = target.opening->threshold;
+        drag->original_shares[1] = target.opening->threshold_end;
+        drag->original_share = threshold_share_at(project, target.opening, TL_DRAG_THRESHOLD_LINE, start, NULL);
+        return true;
+    case TL_DRAG_TILES: {
+        const TlTileSettings *tile = tl_space_effective_tile(target.space);
+        drag->original_offset_x = tile->offset_x;
+        drag->original_offset_y = tile->offset_y;
+        return true;
+    }
+    case TL_DRAG_RULER:
+        drag->original_start = target.ruler->start;
+        drag->original_end = target.ruler->end;
+        return true;
+    case TL_DRAG_JOINT:
+        drag->original_start = target.joint->start;
+        drag->original_end = target.joint->end;
+        return true;
     default:
         return false;
     }
 }
 
 /* ---- перетаскивание ------------------------------------------------------- */
+
+/* Сетка плитки: сдвиг мыши — в осях раскладки, целыми мм; к одному шагу сетки. */
+static void drag_tiles(TlDrag *drag, TlVec2 delta, bool free)
+{
+    TlTileSettings *tile = tl_space_effective_tile(drag->target.space);
+    double radians = tile->rotation_degrees * TL_PI / 180;
+    double along = delta.x * cos(radians) + delta.y * sin(radians);
+    double across = -delta.x * sin(radians) + delta.y * cos(radians);
+    double x = drag->original_offset_x + along, y = drag->original_offset_y + across;
+    if (!free) {
+        x = round(x);
+        y = round(y);
+    }
+    tl_layout_normalize_offsets(tile, &x, &y);
+    tile->offset_x = x;
+    tile->offset_y = y;
+}
+
+/* Притягивание доли к граням и середине, иначе — к целым мм; free — точно. */
+static double snap_share(double share, double depth, double tolerance, bool free)
+{
+    static const double STOPS[] = {0, 0.5, 1};
+    if (free || depth <= 0)
+        return share;
+    for (size_t i = 0; i < sizeof STOPS / sizeof STOPS[0]; i++)
+        if (fabs(share - STOPS[i]) < tolerance / depth)
+            return STOPS[i];
+    return round(share * depth) / depth;
+}
+
+/* Стык — поперёк стены или перегородки: доля глубины проёма. За линию — целиком,
+   с прежним наклоном; за конец у косяка — только этот конец (стык наискосок). */
+static void drag_threshold(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapContext *snap, bool free)
+{
+    TlOpening *opening = drag->target.opening;
+    int part = drag->target.index;
+    double depth;
+    double share = threshold_share_at(project, opening, part, world, &depth);
+    if (depth <= 0)
+        return;
+    if (part == TL_DRAG_THRESHOLD_FROM) {
+        opening->threshold = snap_share(share, depth, snap->tolerance, free);
+    } else if (part == TL_DRAG_THRESHOLD_TO) {
+        opening->threshold_end = snap_share(share, depth, snap->tolerance, free);
+    } else {
+        double middle = (drag->original_shares[0] + drag->original_shares[1]) / 2;
+        double shift = snap_share(middle + share - drag->original_share, depth, snap->tolerance, free) - middle;
+        /* наклон сохраняется: сдвиг не выводит ни один конец за грани */
+        double low = fmin(drag->original_shares[0], drag->original_shares[1]);
+        double high = fmax(drag->original_shares[0], drag->original_shares[1]);
+        shift = fmax(-low, fmin(1 - high, shift));
+        opening->threshold = drag->original_shares[0] + shift;
+        opening->threshold_end = drag->original_shares[1] + shift;
+    }
+    tl_project_update_spaces(project);
+}
+
+/* Отрезок — линейка или шов: за линию — целиком, за конец — с притягиванием
+   и выравниванием от другого конца. */
+static void drag_segment(TlDrag *drag, TlProject *project, TlVec2 *start, TlVec2 *end, TlSnapTargets targets,
+                         TlVec2 delta, const TlSnapContext *snap, bool free, TlGuides *guides)
+{
+    *start = drag->original_start;
+    *end = drag->original_end;
+    drag->measure = (TlSnapPoint){{0, 0}, TL_SNAP_NONE, {0, 0}};
+    if (drag->target.index == 0) {
+        *start = tl_vec2_add(*start, delta);
+        *end = tl_vec2_add(*end, delta);
+        return;
+    }
+    TlVec2 *moving = drag->target.index == 1 ? start : end;
+    const TlVec2 *other = drag->target.index == 1 ? end : start;
+    TlVec2 target = tl_vec2_add(*moving, delta);
+    *moving = free ? target
+                   : tl_measure_point(project, target, other, snap->tolerance, targets, snap->magnet, snap->align,
+                                      &drag->measure, guides);
+}
 
 static void restore_outline(TlOutline *outline, const TlPolygon *corners)
 {
@@ -278,6 +396,17 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
     TlVec2 delta = tl_vec2_sub(world, drag->start);
     switch (drag->target.kind) {
     case TL_DRAG_OPENING: drag_opening(drag, project, delta, snap, free); return;
+    case TL_DRAG_THRESHOLD: drag_threshold(drag, project, world, snap, free); return;
+    case TL_DRAG_TILES: drag_tiles(drag, delta, free); return;
+    case TL_DRAG_RULER:
+        drag_segment(drag, project, &drag->target.ruler->start, &drag->target.ruler->end, TL_SNAP_TO_ALL, delta, snap,
+                     free, guides);
+        return;
+    case TL_DRAG_JOINT:
+        drag_segment(drag, project, &drag->target.joint->start, &drag->target.joint->end, TL_SNAP_TO_WALL_SURFACES,
+                     delta, snap, free, guides);
+        tl_project_update_spaces(project); /* шов режет плитку — раскладка меняется */
+        return;
     case TL_DRAG_PARTITION: drag_partition(drag, project, delta, snap, free, guides); break;
     case TL_DRAG_NODE: drag_node(drag, project, delta, snap, free); break;
     case TL_DRAG_TEE: drag_tee(drag, project, delta, snap, free); break;

@@ -8,7 +8,11 @@
  *     угол тела — угол сдвигается поперёк оси, меняя форму;
  *   узел перегородок за середину — целиком, за угол — углы тел у узла;
  *   примыкание — вдоль бока перегородки, а за грань — становится узлом;
- *   проём — вдоль своей стены.
+ *   проём — вдоль своей стены; стык полов в нём — поперёк стены, за конец у
+ *     косяка — только этот конец (стык наискосок);
+ *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием
+ *     к стенам и выравниванием по другому концу;
+ *   сетка плитки комнаты — сдвиг раскладки (целыми мм).
  *
  * Вызывающий решает, когда начинается перетаскивание (порог в пикселях) и
  * запоминает проект для отмены до первого tl_drag_move.
@@ -16,6 +20,7 @@
 #ifndef TL_DRAG_H
 #define TL_DRAG_H
 
+#include "tl_measure_snap.h"
 #include "tl_snap.h"
 
 typedef enum TlDragKind {
@@ -26,7 +31,11 @@ typedef enum TlDragKind {
     TL_DRAG_PARTITION, /* partition, index — см. TL_DRAG_PARTITION_* */
     TL_DRAG_NODE,      /* partition, end — конец в узле; index 0 — середина, 1… — угол узла */
     TL_DRAG_TEE,       /* partition, end — конец на боку другой перегородки */
-    TL_DRAG_OPENING    /* opening */
+    TL_DRAG_OPENING,   /* opening */
+    TL_DRAG_THRESHOLD, /* opening, index — см. TL_DRAG_THRESHOLD_* */
+    TL_DRAG_RULER,     /* ruler, index — 0 линия, 1 начало, 2 конец */
+    TL_DRAG_JOINT,     /* joint (деформационный шов), index — как у линейки */
+    TL_DRAG_TILES      /* space — сетка плитки (у общего пола — комнаты-источника) */
 } TlDragKind;
 
 #define TL_DRAG_PARTITION_BODY 0
@@ -34,12 +43,19 @@ typedef enum TlDragKind {
 #define TL_DRAG_PARTITION_END 2
 #define TL_DRAG_PARTITION_FIRST_CORNER 3 /* + TlPartitionCorner — угол тела */
 
+#define TL_DRAG_THRESHOLD_LINE 1 /* стык целиком */
+#define TL_DRAG_THRESHOLD_FROM 2 /* конец у косяка в начале проёма */
+#define TL_DRAG_THRESHOLD_TO 3   /* у косяка в конце */
+
 typedef struct TlDragTarget {
     TlDragKind kind;
     TlOutline *outline;
     TlPartition *partition;
     TlPartitionEnd end;
     TlOpening *opening;
+    TlRuler *ruler;
+    TlExpansionJoint *joint;
+    TlSpace *space;
     int index;
     bool link_walls;
 } TlDragTarget;
@@ -56,6 +72,10 @@ typedef struct TlDrag {
     TlPartition *frozen;           /* узел из примыкания: эта перегородка не возвращается на бок */
     TlBand band;                   /* проём */
     double original_along;
+    double original_shares[2];     /* стык: доли у косяков в начале и в конце проёма */
+    double original_share;         /* стык: доля под курсором, когда взяли */
+    TlSnapPoint measure;           /* линейка и шов: к чему притянулся конец */
+    double original_offset_x, original_offset_y; /* сетка плитки */
     bool geometry_changed;
     TlEditToken *token;
 } TlDrag;

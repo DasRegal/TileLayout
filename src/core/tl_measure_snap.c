@@ -1,5 +1,8 @@
 #include "tl_measure_snap.h"
 
+#include "tl_align.h"
+#include "tl_snap.h"
+
 #include <math.h>
 
 #include "tl_layout.h"
@@ -163,4 +166,41 @@ bool tl_measure_snap(TlProject *project, TlVec2 probe, double radius, TlSnapTarg
         offer_tiles(&search, project);
     *result = search.best;
     return search.best.kind != TL_SNAP_NONE;
+}
+
+/* ---- конец линейки или шва ------------------------------------------------------- */
+
+/* Выпрямление по горизонтали/вертикали от anchor. Если конец притянут к
+   линии — точка на пересечении этой линии с горизонталью/вертикалью. */
+static TlVec2 align_end(TlVec2 point, TlVec2 anchor, double radius, TlSnapPoint *snap, TlGuides *guides)
+{
+    static const TlVec2 AXES[] = {{1, 0}, {0, 1}};
+    TlVec2 aligned;
+    size_t which;
+    if (!tl_align_direction(anchor, point, AXES, 2, radius, &aligned, &which))
+        return point;
+    TlVec2 crossing;
+    bool on_line = snap->kind != TL_SNAP_NONE &&
+                   tl_line_intersection(anchor, AXES[which], snap->point, snap->direction, &crossing) &&
+                   tl_distance(crossing, point) < radius;
+    if (on_line)
+        aligned = crossing;
+    else
+        snap->kind = TL_SNAP_NONE;
+    if (guides)
+        tl_guides_add(guides, anchor, which == 1);
+    return aligned;
+}
+
+TlVec2 tl_measure_point(TlProject *project, TlVec2 world, const TlVec2 *anchor, double radius,
+                        TlSnapTargets targets, bool magnet, bool align, TlSnapPoint *snap, TlGuides *guides)
+{
+    *snap = (TlSnapPoint){world, TL_SNAP_NONE, {0, 0}};
+    if (magnet)
+        tl_measure_snap(project, world, radius, targets, snap);
+    TlVec2 point = snap->point;
+    bool on_point = snap->kind != TL_SNAP_NONE && !tl_snap_kind_is_line(snap->kind);
+    if (align && anchor && !on_point)
+        point = align_end(point, *anchor, radius, snap, guides);
+    return point;
 }

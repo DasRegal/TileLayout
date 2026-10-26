@@ -36,6 +36,11 @@ typedef struct CarriedPartition {
     TlVec2 start, end;
 } CarriedPartition;
 
+typedef struct CarriedJoint { /* деформационный шов внутри переносимого дома */
+    TlExpansionJoint *joint;
+    TlVec2 start, end;
+} CarriedJoint;
+
 typedef struct PartitionDirection {
     TlPartition *partition;
     TlVec2 direction;
@@ -44,6 +49,7 @@ typedef struct PartitionDirection {
 TL_ARRAY_DEFINE(AttachmentList, Attachment, attachment_list)
 TL_ARRAY_DEFINE(OpeningAnchorList, OpeningAnchor, opening_anchor_list)
 TL_ARRAY_DEFINE(CarriedPartitionList, CarriedPartition, carried_partition_list)
+TL_ARRAY_DEFINE(CarriedJointList, CarriedJoint, carried_joint_list)
 TL_ARRAY_DEFINE(PartitionDirectionList, PartitionDirection, partition_direction_list)
 
 struct TlEditToken {
@@ -51,6 +57,7 @@ struct TlEditToken {
     TlNodeList nodes;
     OpeningAnchorList anchors;
     CarriedPartitionList carried;
+    CarriedJointList carried_joints;
     PartitionDirectionList directions;
 };
 
@@ -107,6 +114,14 @@ static void remember_carried(TlProject *project, TlOutline *moving_outline, TlEd
             carried_partition_list_push(&token->carried, carried);
         }
     }
+    for (size_t i = 0; i < project->expansion_joints.count; i++) { /* швы режут плитку дома — едут с ним */
+        TlExpansionJoint *joint = project->expansion_joints.items[i];
+        if (tl_outline_contains_or_touches(moving_outline, joint->start) &&
+            tl_outline_contains_or_touches(moving_outline, joint->end)) {
+            CarriedJoint carried = {joint, joint->start, joint->end};
+            carried_joint_list_push(&token->carried_joints, carried);
+        }
+    }
 }
 
 TlEditToken *tl_project_begin_edit(TlProject *project, TlOutline *moving_outline)
@@ -132,6 +147,7 @@ void tl_edit_token_free(TlEditToken *token)
     tl_node_list_free(&token->nodes);
     opening_anchor_list_free(&token->anchors);
     carried_partition_list_free(&token->carried);
+    carried_joint_list_free(&token->carried_joints);
     partition_direction_list_free(&token->directions);
     free(token);
 }
@@ -167,6 +183,11 @@ static void carry_partitions(TlEditToken *token, TlVec2 offset)
         CarriedPartition *carried = &token->carried.items[i];
         carried->partition->start = tl_vec2_add(carried->start, offset);
         carried->partition->end = tl_vec2_add(carried->end, offset);
+    }
+    for (size_t i = 0; i < token->carried_joints.count; i++) {
+        CarriedJoint *carried = &token->carried_joints.items[i];
+        carried->joint->start = tl_vec2_add(carried->start, offset);
+        carried->joint->end = tl_vec2_add(carried->end, offset);
     }
 }
 

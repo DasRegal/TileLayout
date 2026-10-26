@@ -42,4 +42,14 @@ typedef enum TlSnapTargets {
 bool tl_measure_snap(TlProject *project, TlVec2 probe, double radius, TlSnapTargets targets,
                      TlSnapPoint *result);
 
+struct TlGuides;
+
+/* Конец линейки или шва: притягивание (magnet) и выравнивание по
+   горизонтали/вертикали от другого конца anchor (align; если конец притянут
+   к линии — на пересечении). snap — к чему притянулось (TL_SNAP_NONE — ни к
+   чему), guides — линия выравнивания (может быть NULL). */
+TlVec2 tl_measure_point(TlProject *project, TlVec2 world, const TlVec2 *anchor, double radius,
+                        TlSnapTargets targets, bool magnet, bool align, TlSnapPoint *snap,
+                        struct TlGuides *guides);
+
 #endif

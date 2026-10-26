@@ -50,11 +50,7 @@ extern const AppTool APP_EXPANSION_JOINT_TOOL;
 
 typedef enum AppDragKind {
     APP_DRAG_NONE,
-    APP_DRAG_GEOMETRY, /* дом, стена, угол, перегородка, узел, примыкание, проём — tl_drag */
-    APP_DRAG_TILES,
-    APP_DRAG_RULER,
-    APP_DRAG_EXPANSION_JOINT,
-    APP_DRAG_THRESHOLD
+    APP_DRAG_GEOMETRY /* предмет плана или сетка плитки — tl_drag */
 } AppDragKind;
 
 /* Перетаскивание в инструменте «Выбор». */
@@ -62,16 +58,7 @@ typedef struct AppDrag {
     AppDragKind kind;
     bool moved;
     TlVec2 start;                   /* мир, где нажали */
-    int index;
-    TlDrag geometry;                /* APP_DRAG_GEOMETRY */
-    TlVec2 original_start, original_end; /* линейка или шов */
-    TlRuler *ruler;
-    TlExpansionJoint *expansion_joint;
-    TlOpening *opening;             /* стык */
-    double original_shares[2];      /* стык: доли у косяков в начале и в конце проёма */
-    double original_share;          /* стык: доля под курсором при нажатии */
-    TlSpace *space;                 /* сетка плитки */
-    double original_offset_x, original_offset_y;
+    TlDrag geometry;
 } AppDrag;
 
 struct AppCanvas {

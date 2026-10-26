@@ -329,3 +329,12 @@ void tl_project_solid_stretch(TlProject *project, const TlBand *band, double *fr
     }
     free(covered);
 }
+
+bool tl_project_opening_jambs(TlProject *project, const TlOpening *opening, TlVec2 from[2], TlVec2 to[2])
+{
+    TlOpening right_side = *opening, left_side = *opening;
+    tl_opening_set_threshold(&right_side, 0);
+    tl_opening_set_threshold(&left_side, 1);
+    return tl_project_opening_threshold(project, &right_side, &from[0], &to[0]) &&
+           tl_project_opening_threshold(project, &left_side, &from[1], &to[1]);
+}

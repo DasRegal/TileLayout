@@ -50,8 +50,14 @@ void spec_drag(void)
             EXPECT_NEAR(house->inner.items[1].y, -300, 1e-6);
             TlPartition *partition = project->partitions.items[0];
             EXPECT_NEAR(partition->start.y, -300, 1e-6); /* перегородка следует за стеной */
+            TlExpansionJoint *joint = tl_expansion_joint_new(tl_vec2(1000, -300), tl_vec2(1000, 4000), 5);
+            tl_project_add_expansion_joint(project, joint);
+            TlRuler *ruler = tl_ruler_new(tl_vec2(100, 100), tl_vec2(900, 100));
+            tl_project_add_ruler(project, ruler);
             EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_HOUSE, .outline = house}, tl_vec2(1000, 1000),
                         tl_vec2(2000, 1000), false));
+            EXPECT_NEAR(joint->start.x, 2000, 1e-6); /* шов режет плитку дома — едет с ним */
+            EXPECT_NEAR(ruler->start.x, 100, 1e-6);  /* линейка — измерение, остаётся */
             EXPECT_NEAR(house->inner.items[0].x, 1000, 1e-6);
             EXPECT_NEAR(project->partitions.items[0]->start.x, 4000, 1e-6);
             EXPECT_INT((int)project->spaces.count, 2);
@@ -136,6 +142,62 @@ void spec_drag(void)
                 moved = moved || (fabs(nodes.items[i].point.x - 2400) < 1 && fabs(nodes.items[i].point.y - 2100) < 1);
             EXPECT(moved);
             tl_node_list_free(&nodes);
+            tl_project_free(project);
+        }
+        IT("стык в проёме: целиком — поперёк стены, за конец — наискосок; линейка и шов — целиком и за конец")
+        {
+            TlProject *project = house_with_partition();
+            TlBand band;
+            tl_project_find_band(project, tl_vec2(3000, 2000), 10, &band);
+            double along;
+            tl_band_local(&band, tl_vec2(3000, 2000), &along, NULL);
+            TlOpening *door = tl_project_place_opening(project, &band, along, 800);
+            TlVec2 from[2], to[2];
+            EXPECT(tl_project_opening_jambs(project, door, from, to));
+            TlVec2 middle = tl_vec2_midpoint(tl_vec2_midpoint(from[0], from[1]), tl_vec2_midpoint(to[0], to[1]));
+            double before = door->threshold;
+            EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_THRESHOLD, .opening = door, .index = TL_DRAG_THRESHOLD_LINE},
+                        middle, tl_vec2_add(middle, tl_vec2(-100, 0)), true)); /* к одной из граней */
+            EXPECT(fabs(door->threshold - before) > 0.4);
+            EXPECT_NEAR(door->threshold, door->threshold_end, 1e-9); /* целиком — без наклона */
+            TlVec2 other_side = door->threshold_end > 0.5 ? to[0] : to[1]; /* конец — к противоположной грани */
+            EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_THRESHOLD, .opening = door, .index = TL_DRAG_THRESHOLD_TO},
+                        tl_vec2_midpoint(to[0], to[1]), other_side, true));
+            EXPECT(fabs(door->threshold - door->threshold_end) > 0.5); /* наискосок */
+
+            TlRuler *ruler = tl_ruler_new(tl_vec2(500, 500), tl_vec2(1500, 500));
+            tl_project_add_ruler(project, ruler);
+            EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_RULER, .ruler = ruler, .index = 0}, tl_vec2(1000, 500),
+                        tl_vec2(1000, 800), false));
+            EXPECT_NEAR(ruler->start.y, 800, 1e-9);
+            TlDrag state;
+            EXPECT(tl_drag_begin(&state, project, (TlDragTarget){.kind = TL_DRAG_RULER, .ruler = ruler, .index = 2},
+                                 tl_vec2(1500, 800)));
+            TlSnapContext snap = snap_of(project);
+            snap.magnet = true;
+            tl_drag_move(&state, project, tl_vec2(2948, 810), &snap, false, NULL); /* к грани перегородки */
+            EXPECT_INT(state.measure.kind != TL_SNAP_NONE, 1);
+            EXPECT_NEAR(ruler->end.x, 2950, 1e-6);
+            tl_drag_end(&state, project);
+
+            TlExpansionJoint *joint = tl_expansion_joint_new(tl_vec2(1000, 0), tl_vec2(1000, 4000), 5);
+            tl_project_add_expansion_joint(project, joint);
+            tl_project_update_spaces(project);
+            EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_JOINT, .joint = joint, .index = 0}, tl_vec2(1000, 2000),
+                        tl_vec2(1200, 2000), false));
+            EXPECT_NEAR(joint->start.x, 1200, 1e-9);
+            tl_project_free(project);
+        }
+        IT("сетка плитки комнаты — сдвиг раскладки целыми мм, в осях раскладки")
+        {
+            TlProject *project = house_with_partition();
+            TlSpace *space = tl_project_space_at(project, tl_vec2(1000, 1000));
+            TlTileSettings *tile = tl_space_effective_tile(space);
+            tile->rotation_degrees = 90;
+            EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_TILES, .space = space}, tl_vec2(1000, 1000),
+                        tl_vec2(1000, 1100.4), false));
+            EXPECT_NEAR(tile->offset_x, 100, 1e-9); /* поворот 90°: вниз на экране — вдоль раскладки */
+            EXPECT_NEAR(tile->offset_y, 0, 1e-9);
             tl_project_free(project);
         }
     }
