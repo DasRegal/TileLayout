@@ -1,4 +1,6 @@
 // Вид плана: масштаб (пикселей на мм) и сдвиг; колесо — масштаб у курсора,
+// нажатие на предмет — onDragStart(точка, событие) может вернуть {move, end}:
+// тогда перетаскивание двигает предмет, а не вид;
 // перетаскивание — сдвиг, два пальца — масштаб и сдвиг; щелчок без
 // перетаскивания — onClick(точка в мм, событие); движение мыши без кнопок —
 // onHover(точка в мм, событие).
@@ -47,10 +49,11 @@ function clamp(value, min, max) {
 }
 
 /** Управление видом мышью и пальцами на элементе element. */
-export function attachViewControls(element, view, { onChange, onClick, onHover }) {
+export function attachViewControls(element, view, { onChange, onClick, onHover, onDragStart }) {
   const pointers = new Map(); // id → [x, y]
   let start = null; // где нажали
   let dragged = false;
+  let grab = null; // перетаскивание предмета: {move(точка, событие), end()}
   let pinch = null; // {distance, middle}
 
   const local = (event) => {
@@ -76,6 +79,10 @@ export function attachViewControls(element, view, { onChange, onClick, onHover }
     if (pointers.size === 1) {
       start = local(event);
       dragged = false;
+      grab = onDragStart ? onDragStart(view.toWorld(...start), event) : null;
+    } else if (grab) { // второй палец — масштаб, а не перетаскивание
+      grab.end(false);
+      grab = null;
     }
     pinch = pointers.size === 2 ? pinchState() : null;
   });
@@ -99,6 +106,11 @@ export function attachViewControls(element, view, { onChange, onClick, onHover }
       return;
     }
     if (!event.buttons) return;
+    if (grab) {
+      dragged = dragged || Math.hypot(current[0] - start[0], current[1] - start[1]) > CLICK_SLOP;
+      if (dragged) grab.move(view.toWorld(...current), event);
+      return;
+    }
     view.panX += current[0] - previous[0];
     view.panY += current[1] - previous[1];
     dragged = dragged || Math.hypot(current[0] - start[0], current[1] - start[1]) > CLICK_SLOP;
@@ -109,6 +121,10 @@ export function attachViewControls(element, view, { onChange, onClick, onHover }
     const at = pointers.get(event.pointerId);
     pointers.delete(event.pointerId);
     if (pointers.size < 2) pinch = null;
+    if (grab && pointers.size === 0) {
+      grab.end(dragged);
+      grab = null;
+    }
     if (event.type === 'pointerup' && at && !dragged && pointers.size === 0) {
       onClick(view.toWorld(at[0], at[1]), event);
     }

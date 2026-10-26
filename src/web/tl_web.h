@@ -72,16 +72,34 @@ int tl_web_add_partition(double x0, double y0, double x1, double y1, double thic
 const char *tl_web_opening_preview(double x, double y, double width, double tolerance, double grid);
 int tl_web_add_opening(double x, double y, double width, double tolerance, double grid, double now_seconds);
 
-/* Что под точкой: проём, перегородка, стена дома, комната.
-   {"kind": "opening" | "partition" | "house" | "space" | "none", "index": номер, "space": id} */
+/* Предмет под точкой — маркеры важнее тел: угол дома, середина узла
+   перегородок, примыкание, свободный конец перегородки, проём, перегородка,
+   стена дома, комната.
+   {"kind": "vertex" | "node" | "tee" | "partition" | "opening" | "wall" | "space" | "none",
+    "index": номер (у угла и стены — дома; у узла и примыкания — перегородки),
+    "part": угол или стена дома; у перегородки 0 — тело, 1 — начало, 2 — конец,
+    "end": конец перегородки в узле или примыкании (0 — начало, 1 — конец), "space": id комнаты} */
 const char *tl_web_pick(double x, double y, double tolerance);
-/* Свойства предмета для панели; null — нет такого. Перегородка — {"thickness",
-   "length", "locked"}, проём — {"width", "host", "locked"}, дом — {"walls", "thickness"}. */
-const char *tl_web_object(const char *kind, int index);
+/* Свойства предмета (как от tl_web_pick) для панели и подсветки; null — нет такого.
+   Общее: "outline" — контуры для подсветки, "handles" — точки маркеров, "locked";
+   перегородка — "thickness", "length"; проём — "width", "host"; стена — "thickness",
+   "length", "walls"; угол — "walls"; узел — "count" (перегородок). */
+const char *tl_web_object(const char *kind, int index, int part, int end);
 bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds);
 bool tl_web_set_opening_width(int index, double width, double now_seconds);
-/* Удалить предмет (заблокированный — нельзя). */
-bool tl_web_delete(const char *kind, int index, double now_seconds);
+/* Толщина стены дома (вместе со смежной стеной соседнего дома). */
+bool tl_web_set_wall_thickness(int house, int wall, double thickness, double now_seconds);
+/* Удалить: перегородку, проём, дом (kind "wall" или "house"), угол дома (если углов
+   больше трёх), узел (сломанная перегородка выпрямляется). Заблокированное — нельзя. */
+bool tl_web_delete(const char *kind, int index, int part, int end, double now_seconds);
+
+/* Перетаскивание предмета (как от tl_web_pick; комнату не тянут — это сдвиг вида).
+   begin — false, если тянуть нельзя; move — шаг (первый запоминает проект для
+   отмены), ответ — {"guides": [...], "selection": предмет сейчас}; end — отпустили,
+   ответ — предмет после правки (перегородки могли слиться). */
+bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x, double y);
+const char *tl_web_drag_move(double x, double y, double tolerance, double grid, bool free, double now_seconds);
+const char *tl_web_drag_end(void);
 
 /* ---- расчёт и отмена ---------------------------------------------------------- */
 

@@ -146,11 +146,11 @@ void spec_web(void)
             int index = tl_web_add_partition(4000, 0, 4000, 4000, 100, 4);
             EXPECT(index >= 0);
             EXPECT(answer_is(tl_web_pick(4000, 3000, 20), "kind", "partition"));
-            EXPECT(answer_is(tl_web_pick(-100, 2000, 20), "kind", "house"));
+            EXPECT(answer_is(tl_web_pick(-100, 2000, 20), "kind", "wall"));
             EXPECT(answer_is(tl_web_pick(5000, 3000, 20), "kind", "space"));
             EXPECT(answer_is(tl_web_pick(-5000, 0, 20), "kind", "none"));
             EXPECT(tl_web_set_partition_thickness(index, 120, 5));
-            EXPECT_NEAR(answer_number(tl_web_object("partition", index), "thickness"), 120, 1e-9);
+            EXPECT_NEAR(answer_number(tl_web_object("partition", index, 0, 0), "thickness"), 120, 1e-9);
             EXPECT(!tl_web_set_partition_thickness(index, 1, 6)); /* меньше 10 мм */
             EXPECT(strcmp(tl_web_opening_preview(-5000, 0, 800, 20, 10), "null") == 0);
             EXPECT(strstr(tl_web_opening_preview(4000, 3000, 800, 20, 10), "\"partition\"") != NULL);
@@ -158,15 +158,53 @@ void spec_web(void)
             EXPECT(door >= 0);
             EXPECT(answer_is(tl_web_pick(4000, 3000, 20), "kind", "opening"));
             EXPECT(tl_web_set_opening_width(door, 900, 8));
-            EXPECT_NEAR(answer_number(tl_web_object("opening", door), "width"), 900, 1e-9);
+            EXPECT_NEAR(answer_number(tl_web_object("opening", door, 0, 0), "width"), 900, 1e-9);
             int undo = tl_web_undo_count();
-            EXPECT(tl_web_delete("partition", index, 9)); /* проём в ней уходит вместе с ней */
+            EXPECT(tl_web_delete("partition", index, 0, 0, 9)); /* проём в ней уходит вместе с ней */
             EXPECT(answer_is(tl_web_pick(4000, 3000, 20), "kind", "space"));
-            EXPECT(strcmp(tl_web_object("opening", door), "null") == 0);
+            EXPECT(strcmp(tl_web_object("opening", door, 0, 0), "null") == 0);
             EXPECT(tl_web_undo());
             EXPECT_INT(tl_web_undo_count(), undo);
             EXPECT(answer_is(tl_web_pick(4000, 3000, 20), "kind", "opening"));
-            EXPECT(!tl_web_delete("partition", 99, 10));
+            EXPECT(!tl_web_delete("partition", 99, 0, 0, 10));
+        }
+        IT("маркеры: угол дома, свободный конец, узел; перетаскивание угла и перегородки с отменой; толщина стены")
+        {
+            tl_web_open("{\"version\": 4, \"outlines\": [], \"partitions\": [], \"spaces\": []}");
+            tl_web_add_contour("[0, 0, 6000, 0, 6000, 4000, 0, 4000]", 200, 100, 1);
+            int index = tl_web_add_partition(3000, 0, 3000, 2500, 100, 2);
+            const char *corner = tl_web_pick(6005, 3995, 20);
+            EXPECT(answer_is(corner, "kind", "vertex") && answer_number(corner, "part") == 2);
+            const char *free_end = tl_web_pick(3000, 2500, 20);
+            EXPECT(answer_is(free_end, "kind", "partition") && answer_number(free_end, "part") == 2);
+            EXPECT(strstr(tl_web_object("partition", index, 0, 0), "\"handles\"") != NULL);
+
+            EXPECT(tl_web_drag_begin("vertex", 0, 2, 0, 6000, 4000));
+            EXPECT(strstr(tl_web_drag_move(6302, 4403, 20, 10, false, 3), "\"vertex\"") != NULL);
+            EXPECT(answer_is(tl_web_drag_end(), "kind", "vertex"));
+            const char *moved = tl_web_pick(6300, 4400, 5); /* угол — по сетке 10 мм */
+            EXPECT(answer_is(moved, "kind", "vertex") && answer_number(moved, "part") == 2);
+            int undo = tl_web_undo_count();
+            EXPECT(tl_web_drag_begin("partition", index, 2, 0, 3000, 2500));
+            tl_web_drag_move(3000, 3000, 20, 10, false, 4);
+            tl_web_drag_move(3000, 3200, 20, 10, false, 4.1);
+            const char *after = tl_web_drag_end();
+            EXPECT(answer_is(after, "kind", "partition"));
+            EXPECT_NEAR(answer_number(tl_web_object("partition", (int)answer_number(after, "index"), 0, 0), "length"), 3200,
+                        1e-9);
+            EXPECT_INT(tl_web_undo_count(), undo + 1); /* всё перетаскивание — один шаг */
+            EXPECT(tl_web_undo());
+            EXPECT_NEAR(answer_number(tl_web_object("partition", index, 0, 0), "length"), 2500, 1e-9);
+            EXPECT(!tl_web_drag_begin("space", 0, 0, 0, 100, 100)); /* комнату не тянут */
+
+            EXPECT(tl_web_set_wall_thickness(0, 1, 300, 5));
+            EXPECT_NEAR(answer_number(tl_web_object("wall", 0, 1, 0), "thickness"), 300, 1e-9);
+            int node_partition = tl_web_add_partition(3000, 2500, 6000, 2500, 100, 6); /* узел в (3000, 2500) */
+            EXPECT(node_partition >= 0);
+            EXPECT(answer_is(tl_web_pick(3000, 2500, 20), "kind", "node"));
+            EXPECT(tl_web_delete("vertex", 0, 2, 0, 7)); /* угол — дом стал треугольником */
+            EXPECT_NEAR(answer_number(tl_web_object("wall", 0, 0, 0), "walls"), 3, 1e-9);
+            EXPECT(!tl_web_delete("vertex", 0, 0, 0, 8)); /* у треугольника — нельзя */
         }
         IT("притягивание к углу дома и к сетке; раскладка от угла и с минимумом плиток; название комнаты")
         {

@@ -9,12 +9,16 @@ import { TOOL_HINTS, Tools } from './tools.js';
 import { attachViewControls, View } from './view.js';
 
 const PICK_PX = 6; // допуск выбора предмета, пиксели экрана
+const SNAP_PX = 10; // допуск притягивания при перетаскивании
+const DRAGGABLE = new Set(['vertex', 'wall', 'partition', 'node', 'tee', 'opening']);
+const CURSORS = { vertex: 'crosshair', node: 'move', tee: 'move', wall: 'move', partition: 'move', opening: 'ew-resize' };
 
 const state = {
   core: null,
   scene: null,
-  selection: null, // {kind: 'space', space: id} | {kind: 'partition' | 'opening' | 'house', index}
+  selection: null, // предмет плана (tl_web_pick): {kind, index, part, end, space}
   object: null, // свойства выделенного предмета (tl_web_object)
+  guides: [], // линии выравнивания при перетаскивании
   fileName: 'plan.tilelayout.json',
   settings: { houseThickness: 200, partitionThickness: 100, openingWidth: 800, grid: 10, ...readSettings() },
 };
@@ -62,8 +66,13 @@ const panel = new Panel(document.getElementById('panel'), {
     requestDraw();
   },
   setObjectSize: (value) => {
-    const { kind, index } = state.selection;
-    const ok = kind === 'partition' ? state.core.setPartitionThickness(index, value) : state.core.setOpeningWidth(index, value);
+    const { kind, index, part } = state.selection;
+    const ok =
+      kind === 'partition'
+        ? state.core.setPartitionThickness(index, value)
+        : kind === 'wall'
+          ? state.core.setWallThickness(index, part, value)
+          : state.core.setOpeningWidth(index, value);
     if (ok) changed();
     else say('Значение не подходит.');
   },
@@ -91,16 +100,48 @@ function draw() {
     highlight: highlightOf(state.object),
     image: (ref) => catalogs.image(ref),
     dpr,
-    overlay: (c) => tools.draw(c),
+    overlay: (c) => {
+      drawHandles(c);
+      tools.draw(c);
+    },
   });
 }
 
 /** Контуры выделенного предмета для подсветки. */
 function highlightOf(object) {
-  if (!object) return [];
-  if (object.kind === 'partition') return [object.body];
-  if (object.kind === 'opening') return object.cut ? [object.cut] : [];
-  return [object.outer, object.inner];
+  return object ? object.outline : [];
+}
+
+/** Маркеры выделенного (углы, концы, узлы) и линии выравнивания — в пикселях экрана. */
+function drawHandles(c) {
+  const object = state.object;
+  if (object) {
+    object.handles.forEach(([x, y], i) => {
+      const [sx, sy] = view.toScreen(x, y);
+      c.fillStyle = object.kind === 'vertex' && i === object.part ? '#2563eb' : '#ffffff'; // взятый угол — залит
+      c.strokeStyle = '#2563eb';
+      c.lineWidth = 1.5;
+      c.fillRect(sx - 4, sy - 4, 8, 8);
+      c.strokeRect(sx - 4, sy - 4, 8, 8);
+    });
+  }
+  const far = 100000; // линия — через весь экран
+  for (const [x, y, vertical] of state.guides) {
+    const [sx, sy] = view.toScreen(x, y);
+    c.beginPath();
+    if (vertical) {
+      c.moveTo(sx, -far);
+      c.lineTo(sx, far);
+    } else {
+      c.moveTo(-far, sy);
+      c.lineTo(far, sy);
+    }
+    c.setLineDash([4, 4]);
+    c.strokeStyle = '#1a73e8';
+    c.lineWidth = 1;
+    c.stroke();
+    c.setLineDash([]);
+  }
 }
 
 function fitView() {
@@ -121,7 +162,7 @@ function refresh() {
   if (selection?.kind === 'space' && !state.scene.spaces.some((space) => space.id === selection.space)) {
     state.selection = null;
   }
-  state.object = state.selection && state.selection.kind !== 'space' ? core.object(state.selection.kind, state.selection.index) : null;
+  state.object = state.selection && state.selection.kind !== 'space' ? core.object(state.selection) : null;
   if (state.selection && state.selection.kind !== 'space' && !state.object) state.selection = null;
   panel.show(selectedSpace() ? core.spaceTile(selectedSpace()) : null, catalogs);
   panel.showObject(state.object);
@@ -161,8 +202,12 @@ function deleteSelection() {
     say('Комнату образуют стены: удалите перегородку или весь дом (щёлкните его стену).');
     return;
   }
-  if (!state.core.deleteObject(selection.kind, selection.index)) {
-    say('Не удалось удалить: предмет заблокирован в настольной программе.');
+  if (selection.kind === 'tee') {
+    say('Примыкание удаляется вместе с перегородкой: выделите её саму.');
+    return;
+  }
+  if (!state.core.deleteObject(selection)) {
+    say(selection.kind === 'vertex' ? 'У дома должно остаться хотя бы три угла.' : 'Не удалось удалить: заблокировано в настольной программе.');
     return;
   }
   state.selection = null;
@@ -208,9 +253,42 @@ async function pickTile() {
 
 function select(world) {
   const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
-  state.selection = hit.kind === 'none' ? null : hit.kind === 'space' ? { kind: 'space', space: hit.space } : hit;
+  state.selection = hit.kind === 'none' ? null : hit;
   refresh();
   say('');
+}
+
+/** Нажатие в «Выборе»: предмет под курсором тянется; комната и пустое место — сдвиг вида. */
+function startDrag(world) {
+  if (!state.core || tools.drawing) return null;
+  const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  if (!DRAGGABLE.has(hit.kind) || !state.core.dragBegin(hit, world[0], world[1])) return null;
+  state.selection = hit;
+  refresh();
+  return {
+    move(point, event) {
+      const result = state.core.dragMove(point[0], point[1], SNAP_PX / view.scale, state.settings.grid, event.shiftKey);
+      state.selection = result.selection;
+      state.guides = result.guides;
+      refresh();
+    },
+    end(moved) {
+      const result = state.core.dragEnd();
+      state.guides = [];
+      if (!moved) return;
+      state.selection = result.kind === 'none' ? null : result;
+      changed();
+    },
+  };
+}
+
+function updateCursor(world) {
+  if (tools.drawing) {
+    canvas.style.cursor = '';
+    return;
+  }
+  const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  canvas.style.cursor = CURSORS[hit.kind] || '';
 }
 
 // ---- команды -------------------------------------------------------------------
@@ -298,10 +376,13 @@ function bindCommands() {
       }
     },
     onHover: (world, event) => {
-      if (!state.core || !tools.drawing) return;
+      if (!state.core) return;
+      updateCursor(world);
+      if (!tools.drawing) return;
       tools.hover(world, event.shiftKey);
       requestDraw();
     },
+    onDragStart: (world) => startDrag(world),
   });
   canvas.addEventListener('dblclick', () => {
     tools.doubleClick();

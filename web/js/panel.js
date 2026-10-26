@@ -53,10 +53,43 @@ const TOOL_TITLES = {
   opening: 'Проём',
 };
 
-const OBJECT_TEXT = {
-  partition: { title: 'Перегородка', size: 'Толщина' },
-  opening: { title: 'Проём', size: 'Ширина' },
-  house: { title: 'Дом', size: '' },
+/* Предметы плана: заголовок, поле размера (если есть), подсказка, кнопка удаления. */
+const OBJECTS = {
+  partition: {
+    title: 'Перегородка',
+    size: 'Толщина',
+    info: (o) => `Длина ${o.length} мм. Тяните за тело — поперёк, за конец — длина и поворот.`,
+    remove: 'Удалить',
+  },
+  opening: {
+    title: 'Проём',
+    size: 'Ширина',
+    info: (o) =>
+      ({ wall: 'В основной стене.', partition: 'В перегородке.', none: 'Не на стене — сдвиньте или удалите.' })[o.host] +
+      ' Тяните вдоль стены.',
+    remove: 'Удалить',
+  },
+  wall: {
+    title: 'Стена дома',
+    size: 'Толщина',
+    info: (o) => `Длина ${o.length} мм. Тяните — стена двигается параллельно себе.`,
+    remove: 'Удалить дом',
+  },
+  vertex: {
+    title: 'Угол дома',
+    info: () => 'Тяните, чтобы переместить; угол притягивается к сетке и выравнивается по соседним.',
+    remove: 'Удалить угол',
+  },
+  node: {
+    title: 'Узел перегородок',
+    info: (o) => `Перегородок в узле: ${o.count}. Тяните — узел двигается целиком. «Убрать узел» выпрямляет перегородку.`,
+    remove: 'Убрать узел',
+  },
+  tee: {
+    title: 'Примыкание',
+    info: () => 'Конец перегородки на боку другой. Тяните вдоль неё; за её грань — станет узлом.',
+    remove: '',
+  },
 };
 
 /**
@@ -195,18 +228,13 @@ export class Panel {
     this.updateEmpty();
   }
 
-  /** Выделенная перегородка, проём или дом (tl_web_object) или null. */
+  /** Выделенный предмет плана (tl_web_object) или null. */
   showObject(object) {
     this.objectSettings.hidden = !object;
     if (object) {
-      const text = OBJECT_TEXT[object.kind];
+      const text = OBJECTS[object.kind];
       this.root.querySelector('#object-title').textContent = text.title;
-      const info = {
-        partition: () => `Длина ${object.length} мм.`,
-        opening: () =>
-          ({ wall: 'В основной стене.', partition: 'В перегородке.', none: 'Не на стене — сдвиньте или удалите.' })[object.host],
-        house: () => `Стен: ${object.walls}, толщина ${object.thickness} мм. Удаляется вместе с комнатами.`,
-      }[object.kind]();
+      const info = text.info(object);
       this.root.querySelector('#object-info').textContent = object.locked
         ? `${info} Заблокировано в настольной программе — менять нельзя.`
         : info;
@@ -214,14 +242,16 @@ export class Panel {
       sizeRow.hidden = !text.size;
       if (text.size) {
         this.root.querySelector('#object-size-caption').textContent = text.size;
-        const value = object.kind === 'partition' ? object.thickness : object.width;
-        Object.assign(this.objectSize, object.kind === 'partition' ? { min: 10, max: 1000, step: 10 } : { min: 100, max: 10000, step: 10 });
+        const value = object.kind === 'opening' ? object.width : object.thickness;
+        const limits = object.kind === 'opening' ? { min: 100, max: 10000 } : { min: 10, max: object.kind === 'wall' ? 2000 : 1000 };
+        Object.assign(this.objectSize, { ...limits, step: 10 });
         if (document.activeElement !== this.objectSize) this.objectSize.value = String(Math.round(value * 10) / 10);
         this.objectSize.disabled = object.locked;
       }
       const remove = this.root.querySelector('#object-delete');
-      remove.disabled = object.locked;
-      remove.textContent = object.kind === 'house' ? 'Удалить дом' : 'Удалить';
+      remove.hidden = !text.remove;
+      remove.textContent = text.remove;
+      remove.disabled = object.locked || (object.kind === 'vertex' && object.walls <= 3);
     }
     this.updateEmpty();
   }

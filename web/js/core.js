@@ -19,6 +19,8 @@ export async function loadCore() {
   }
 
   const text = (pointer) => module.UTF8ToString(pointer);
+  /** Предмет плана полностью: у нарисованного только что нет part и end. */
+  const item = ({ kind, index = 0, part = 0, end = 0 }) => ({ kind, index, part, end });
   const now = () => Date.now() / 1000;
 
   return {
@@ -43,7 +45,7 @@ export async function loadCore() {
     alignTiles: (id, mode) => withString(mode, (m) => JSON.parse(text(module._tl_web_align_tiles(id, m, now())))),
     setSpaceName: (id, name) => withString(name, (n) => module._tl_web_set_space_name(id, n, now())) !== 0,
 
-    // ---- правка плана: предметы — {kind, index}; tolerance и grid — в мм
+    // ---- правка плана: предметы — {kind, index, part, end} (tl_web_pick); tolerance и grid — в мм
     snap: (x, y, start, refs, tolerance, grid, free) =>
       withString(JSON.stringify(refs), (r) =>
         JSON.parse(text(module._tl_web_snap(x, y, start ? 1 : 0, start?.[0] ?? 0, start?.[1] ?? 0, r, tolerance, grid, free ? 1 : 0))),
@@ -57,10 +59,25 @@ export async function loadCore() {
       JSON.parse(text(module._tl_web_opening_preview(x, y, width, tolerance, grid))),
     addOpening: (x, y, width, tolerance, grid) => module._tl_web_add_opening(x, y, width, tolerance, grid, now()),
     pick: (x, y, tolerance) => JSON.parse(text(module._tl_web_pick(x, y, tolerance))),
-    object: (kind, index) => withString(kind, (k) => JSON.parse(text(module._tl_web_object(k, index)))),
+    object(target) {
+      const { kind, index, part, end } = item(target);
+      return withString(kind, (k) => JSON.parse(text(module._tl_web_object(k, index, part, end))));
+    },
     setPartitionThickness: (index, value) => module._tl_web_set_partition_thickness(index, value, now()) !== 0,
     setOpeningWidth: (index, value) => module._tl_web_set_opening_width(index, value, now()) !== 0,
-    deleteObject: (kind, index) => withString(kind, (k) => module._tl_web_delete(k, index, now())) !== 0,
+    setWallThickness: (house, wall, value) => module._tl_web_set_wall_thickness(house, wall, value, now()) !== 0,
+    deleteObject(target) {
+      const { kind, index, part, end } = item(target);
+      return withString(kind, (k) => module._tl_web_delete(k, index, part, end, now())) !== 0;
+    },
+    /** Перетаскивание: begin → move… → end; ответ end — предмет после правки. */
+    dragBegin(target, x, y) {
+      const { kind, index, part, end } = item(target);
+      return withString(kind, (k) => module._tl_web_drag_begin(k, index, part, end, x, y)) !== 0;
+    },
+    dragMove: (x, y, tolerance, grid, free) =>
+      JSON.parse(text(module._tl_web_drag_move(x, y, tolerance, grid, free ? 1 : 0, now()))),
+    dragEnd: () => JSON.parse(text(module._tl_web_drag_end())),
 
     summary: () => JSON.parse(text(module._tl_web_summary())),
     undo: () => module._tl_web_undo() !== 0,

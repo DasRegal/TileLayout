@@ -6,6 +6,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "tl_drag.h"
 #include "tl_snap.h"
 #include "tl_web.h"
 #include "tl_web_internal.h"
@@ -157,6 +158,31 @@ int tl_web_add_opening(double x, double y, double width, double tolerance, doubl
 
 /* ---- выбор -------------------------------------------------------------------- */
 
+#define HANDLE_FACTOR 1.5 /* маркеры (углы, концы, узлы) ловятся чуть дальше тел */
+
+/* Предмет плана — как в ответах для JavaScript. */
+typedef struct Item {
+    const char *kind;
+    int index, part, end, space;
+} Item;
+
+static const char *item_json(Item item)
+{
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "kind", tl_json_string(item.kind));
+    tl_json_object_set(json, "index", tl_json_number(item.index));
+    tl_json_object_set(json, "part", tl_json_number(item.part));
+    tl_json_object_set(json, "end", tl_json_number(item.end));
+    tl_json_object_set(json, "space", tl_json_number(item.space));
+    return keep(json);
+}
+
+static TlJson *item_object(Item item)
+{
+    TlJson *json = tl_json_parse(item_json(item), NULL, 0);
+    return json;
+}
+
 static bool on_opening(TlProject *project, const TlOpening *opening, TlVec2 point, double tolerance)
 {
     TlBand band;
@@ -169,41 +195,107 @@ static bool on_opening(TlProject *project, const TlOpening *opening, TlVec2 poin
            across <= fmax(band.near, band.far) + tolerance;
 }
 
-static bool on_house_walls(const TlOutline *outline, TlVec2 point)
+static bool end_in_node(TlProject *project, TlPartition *partition, TlPartitionEnd end)
+{
+    TlNode node;
+    return tl_project_node_of(project, partition, end, &node);
+}
+
+/* Стена дома под точкой: в теле стен — ближайшая к точке внутренняя грань. */
+static int wall_at(const TlOutline *outline, TlVec2 point)
 {
     TlPolygon outer = tl_outline_outer(outline);
     bool inside = tl_polygon_contains(&outer, point) && !tl_polygon_contains(&outline->inner, point);
     tl_polygon_free(&outer);
-    return inside;
+    if (!inside)
+        return -1;
+    int best = -1;
+    double best_distance = INFINITY;
+    for (size_t i = 0; i < tl_outline_wall_count(outline); i++) {
+        double distance = tl_point_segment_distance(point, tl_outline_wall_start(outline, i),
+                                                    tl_outline_wall_end(outline, i), NULL);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = (int)i;
+        }
+    }
+    return best;
 }
 
-static const char *picked(const char *kind, int index, int space)
+static bool pick_handle(TlProject *project, TlVec2 point, double tolerance, Item *item)
 {
-    TlJson *json = tl_json_object();
-    tl_json_object_set(json, "kind", tl_json_string(kind));
-    tl_json_object_set(json, "index", tl_json_number(index));
-    tl_json_object_set(json, "space", tl_json_number(space));
-    return keep(json);
+    double reach = tolerance * HANDLE_FACTOR;
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        const TlPolygon *inner = &project->outlines.items[o]->inner;
+        for (size_t i = 0; i < inner->count; i++)
+            if (tl_distance(point, inner->items[i]) < reach) {
+                *item = (Item){"vertex", (int)o, (int)i, 0, 0};
+                return true;
+            }
+    }
+    bool found = false;
+    double best = reach;
+    TlNodeList nodes = tl_project_nodes(project);
+    for (size_t n = 0; n < nodes.count; n++) {
+        double distance = tl_distance(point, tl_node_center(&nodes.items[n]));
+        if (distance < best) {
+            best = distance;
+            const TlNodeEnd *end = &nodes.items[n].ends[0];
+            *item = (Item){"node", index_of_partition(project, end->partition), 0, (int)end->end, 0};
+            found = true;
+        }
+    }
+    tl_node_list_free(&nodes);
+    TlTeeList tees = tl_project_tees(project);
+    for (size_t t = 0; t < tees.count; t++) {
+        double distance = tl_distance(point, tees.items[t].point);
+        if (distance < best) {
+            best = distance;
+            *item = (Item){"tee", index_of_partition(project, tees.items[t].branch), 0, (int)tees.items[t].end, 0};
+            found = true;
+        }
+    }
+    tl_tee_list_free(&tees);
+    if (found)
+        return true;
+    for (size_t i = 0; i < project->partitions.count; i++) {
+        TlPartition *partition = project->partitions.items[i];
+        const TlVec2 ends[2] = {partition->start, partition->end};
+        for (int e = 0; e < 2; e++)
+            if (tl_distance(point, ends[e]) < reach && !end_in_node(project, partition, (TlPartitionEnd)e)) {
+                TlTee tee;
+                if (tl_project_tee_of(project, partition, (TlPartitionEnd)e, &tee))
+                    continue; /* конец на боку другой — его тянут как примыкание */
+                *item = (Item){"partition", (int)i, e + 1, 0, 0};
+                return true;
+            }
+    }
+    return false;
 }
 
 const char *tl_web_pick(double x, double y, double tolerance)
 {
     TlProject *project = tl_web_project();
     TlVec2 point = tl_vec2(x, y);
+    Item item = {"none", 0, 0, 0, 0};
+    if (pick_handle(project, point, tolerance, &item))
+        return item_json(item);
     for (size_t i = 0; i < project->openings.count; i++)
         if (on_opening(project, project->openings.items[i], point, tolerance))
-            return picked("opening", (int)i, 0);
+            return item_json((Item){"opening", (int)i, 0, 0, 0});
     for (size_t i = 0; i < project->partitions.count; i++) {
         const TlPartition *partition = project->partitions.items[i];
         if (tl_point_segment_distance(point, partition->start, partition->end, NULL) <=
             tl_partition_max_thickness(partition) / 2 + tolerance)
-            return picked("partition", (int)i, 0);
+            return item_json((Item){"partition", (int)i, 0, 0, 0});
     }
-    for (size_t i = 0; i < project->outlines.count; i++)
-        if (on_house_walls(project->outlines.items[i], point))
-            return picked("house", (int)i, 0);
+    for (size_t i = 0; i < project->outlines.count; i++) {
+        int wall = wall_at(project->outlines.items[i], point);
+        if (wall >= 0)
+            return item_json((Item){"wall", (int)i, wall, 0, 0});
+    }
     TlSpace *space = tl_project_space_at(project, point);
-    return space ? picked("space", 0, space->id) : picked("none", 0, 0);
+    return item_json(space ? (Item){"space", 0, 0, 0, space->id} : item);
 }
 
 static TlPartition *partition_at(int index)
@@ -224,46 +316,109 @@ static TlOutline *house_at(int index)
     return index >= 0 && (size_t)index < project->outlines.count ? project->outlines.items[index] : NULL;
 }
 
-const char *tl_web_object(const char *kind, int index)
+static bool is(const char *kind, const char *expected) { return strcmp(kind, expected) == 0; }
+
+static void add_point(TlJson *array, TlVec2 p) { tl_json_array_push(array, point_json(p)); }
+
+static void add_outline(TlJson *outlines, const TlPolygon *polygon) { tl_json_array_push(outlines, tl_web_polygon(polygon)); }
+
+static bool node_locked(const TlNode *node)
+{
+    for (size_t i = 0; i < node->count; i++)
+        if (node->ends[i].partition->locked)
+            return true;
+    return false;
+}
+
+/* Свойства дома: подсветка — обе стороны стен, маркеры — углы. */
+static void house_properties(TlJson *json, TlOutline *house, TlJson *outlines, TlJson *handles)
+{
+    TlPolygon outer = tl_outline_outer(house);
+    add_outline(outlines, &outer);
+    add_outline(outlines, &house->inner);
+    for (size_t i = 0; i < house->inner.count; i++)
+        add_point(handles, house->inner.items[i]);
+    tl_json_object_set(json, "walls", tl_json_number((double)tl_outline_wall_count(house)));
+    tl_json_object_set(json, "locked", tl_json_bool(tl_outline_any_locked(house)));
+    tl_polygon_free(&outer);
+}
+
+const char *tl_web_object(const char *kind, int index, int part, int end)
 {
     TlProject *project = tl_web_project();
-    TlJson *json = tl_json_object();
-    tl_json_object_set(json, "kind", tl_json_string(kind));
-    tl_json_object_set(json, "index", tl_json_number(index));
-    TlPartition *partition = strcmp(kind, "partition") == 0 ? partition_at(index) : NULL;
-    TlOpening *opening = strcmp(kind, "opening") == 0 ? opening_at(index) : NULL;
-    TlOutline *house = strcmp(kind, "house") == 0 ? house_at(index) : NULL;
-    if (partition) {
+    TlJson *json = item_object((Item){kind, index, part, end, 0});
+    TlJson *outlines = tl_json_array(), *handles = tl_json_array();
+    TlPartition *partition = partition_at(index);
+    TlOpening *opening = opening_at(index);
+    TlOutline *house = house_at(index);
+    bool found = true;
+    if (is(kind, "partition") && partition) {
+        TlPolygon body = tl_project_partition_body(project, partition, 0);
+        add_outline(outlines, &body);
+        tl_polygon_free(&body);
+        if (!end_in_node(project, partition, TL_PARTITION_START))
+            add_point(handles, partition->start);
+        if (!end_in_node(project, partition, TL_PARTITION_END))
+            add_point(handles, partition->end);
         tl_json_object_set(json, "thickness", tl_json_number(tl_partition_max_thickness(partition)));
         tl_json_object_set(json, "length", tl_json_number(round(tl_partition_length(partition))));
-        TlPolygon body = tl_project_partition_body(project, partition, 0);
-        tl_json_object_set(json, "body", tl_web_polygon(&body));
-        tl_polygon_free(&body);
         tl_json_object_set(json, "locked", tl_json_bool(partition->locked));
-    } else if (opening) {
+    } else if (is(kind, "opening") && opening) {
         TlBand band;
         bool hosted = tl_project_opening_host(project, opening, &band);
+        TlPolygon cut = {0};
+        if (tl_project_opening_cut(project, opening, &cut))
+            add_outline(outlines, &cut);
+        tl_polygon_free(&cut);
         tl_json_object_set(json, "width", tl_json_number(opening->width));
         tl_json_object_set(json, "host", tl_json_string(!hosted ? "none"
                                                         : band.host.kind == TL_HOST_PARTITION ? "partition"
                                                                                               : "wall"));
-        TlPolygon cut = {0};
-        tl_json_object_set(json, "cut", tl_project_opening_cut(project, opening, &cut) ? tl_web_polygon(&cut)
-                                                                                         : tl_json_null());
-        tl_polygon_free(&cut);
         tl_json_object_set(json, "locked", tl_json_bool(opening->locked));
-    } else if (house) {
-        TlPolygon outer = tl_outline_outer(house);
-        tl_json_object_set(json, "walls", tl_json_number((double)tl_outline_wall_count(house)));
-        tl_json_object_set(json, "thickness", tl_json_number(house->thickness.items[0]));
-        tl_json_object_set(json, "outer", tl_web_polygon(&outer));
-        tl_json_object_set(json, "inner", tl_web_polygon(&house->inner));
-        tl_json_object_set(json, "locked", tl_json_bool(tl_outline_any_locked(house)));
-        tl_polygon_free(&outer);
+    } else if ((is(kind, "wall") || is(kind, "vertex") || is(kind, "house")) && house &&
+               (is(kind, "house") || (part >= 0 && (size_t)part < house->inner.count))) {
+        house_properties(json, house, outlines, handles);
+        if (is(kind, "wall")) {
+            tl_json_object_set(json, "thickness", tl_json_number(house->thickness.items[part]));
+            tl_json_object_set(json, "length", tl_json_number(round(tl_distance(
+                                                   tl_outline_wall_start(house, (size_t)part),
+                                                   tl_outline_wall_end(house, (size_t)part)))));
+            tl_json_object_set(json, "locked", tl_json_bool(house->locked.items[part]));
+        } else if (is(kind, "vertex")) {
+            tl_json_object_set(json, "locked", tl_json_bool(tl_outline_vertex_locked(house, (size_t)part)));
+        }
+    } else if ((is(kind, "node") || is(kind, "tee")) && partition) {
+        TlNode node;
+        TlTee tee;
+        if (is(kind, "node") && tl_project_node_of(project, partition, (TlPartitionEnd)end, &node)) {
+            for (size_t i = 0; i < node.count; i++) {
+                TlPolygon body = tl_project_partition_body(project, node.ends[i].partition, 0);
+                add_outline(outlines, &body);
+                tl_polygon_free(&body);
+            }
+            add_point(handles, tl_node_center(&node));
+            tl_json_object_set(json, "count", tl_json_number((double)node.count));
+            tl_json_object_set(json, "locked", tl_json_bool(node_locked(&node)));
+        } else if (is(kind, "tee") && tl_project_tee_of(project, partition, (TlPartitionEnd)end, &tee)) {
+            TlPolygon body = tl_project_partition_body(project, tee.branch, 0);
+            add_outline(outlines, &body);
+            tl_polygon_free(&body);
+            add_point(handles, tee.point);
+            tl_json_object_set(json, "locked", tl_json_bool(tee.branch->locked || tee.host->locked));
+        } else {
+            found = false;
+        }
     } else {
+        found = false;
+    }
+    if (!found) {
+        tl_json_free(outlines);
+        tl_json_free(handles);
         tl_json_free(json);
         return "null";
     }
+    tl_json_object_set(json, "outline", outlines);
+    tl_json_object_set(json, "handles", handles);
     return keep(json);
 }
 
@@ -296,24 +451,162 @@ bool tl_web_set_opening_width(int index, double width, double now_seconds)
     return true;
 }
 
-bool tl_web_delete(const char *kind, int index, double now_seconds)
+bool tl_web_set_wall_thickness(int house_index, int wall, double thickness, double now_seconds)
+{
+    TlOutline *house = house_at(house_index);
+    if (!house || wall < 0 || (size_t)wall >= tl_outline_wall_count(house) || house->locked.items[wall] ||
+        !(thickness >= 10 && thickness <= 2000))
+        return false;
+    tl_web_checkpoint("wthick", now_seconds);
+    tl_project_set_thickness(tl_web_project(), house, (size_t)wall, thickness, true);
+    return true;
+}
+
+bool tl_web_delete(const char *kind, int index, int part, int end, double now_seconds)
 {
     TlProject *project = tl_web_project();
-    TlPartition *partition = strcmp(kind, "partition") == 0 ? partition_at(index) : NULL;
-    TlOpening *opening = strcmp(kind, "opening") == 0 ? opening_at(index) : NULL;
-    TlOutline *house = strcmp(kind, "house") == 0 ? house_at(index) : NULL;
-    if ((partition && partition->locked) || (opening && opening->locked) || (house && tl_outline_any_locked(house)) ||
-        !(partition || opening || house))
-        return false;
-    tl_web_checkpoint("", now_seconds);
-    if (partition) {
+    TlPartition *partition = partition_at(index);
+    TlOpening *opening = opening_at(index);
+    TlOutline *house = house_at(index);
+    if (is(kind, "partition") && partition && !partition->locked) {
+        tl_web_checkpoint("", now_seconds);
         tl_project_delete_partition(project, partition);
         tl_project_remove_orphan_openings(project);
-    } else if (opening) {
+    } else if (is(kind, "opening") && opening && !opening->locked) {
+        tl_web_checkpoint("", now_seconds);
         tl_project_delete_opening(project, opening);
-    } else {
+    } else if ((is(kind, "house") || is(kind, "wall")) && house && !tl_outline_any_locked(house)) {
+        tl_web_checkpoint("", now_seconds);
         tl_project_delete_outline(project, house);
+    } else if (is(kind, "vertex") && house && part >= 0 && (size_t)part < house->inner.count &&
+               tl_outline_wall_count(house) > 3 && !tl_outline_vertex_locked(house, (size_t)part)) {
+        tl_web_checkpoint("", now_seconds);
+        TlEditToken *token = tl_project_begin_edit(project, NULL);
+        tl_outline_remove_vertex(house, (size_t)part);
+        tl_project_end_edit(project, token, NULL);
+        tl_project_remove_orphan_openings(project);
+    } else if (is(kind, "node") && partition) {
+        TlNode node;
+        if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node) || node_locked(&node))
+            return false;
+        tl_web_checkpoint("", now_seconds);
+        tl_project_dissolve_node(project, &node);
+    } else {
+        return false;
     }
     tl_project_update_spaces(project);
     return true;
+}
+
+/* ---- перетаскивание ------------------------------------------------------------- */
+
+static struct {
+    TlDrag drag;
+    bool active, moved;
+} dragging;
+
+bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x, double y)
+{
+    TlProject *project = tl_web_project();
+    if (dragging.active)
+        tl_drag_free(&dragging.drag);
+    dragging.active = dragging.moved = false;
+    TlDragTarget target = {.index = part, .end = (TlPartitionEnd)end, .link_walls = true};
+    if (is(kind, "vertex") || is(kind, "wall")) {
+        target.kind = is(kind, "vertex") ? TL_DRAG_VERTEX : TL_DRAG_WALL;
+        target.outline = house_at(index);
+        if (!target.outline)
+            return false;
+    } else if (is(kind, "partition") || is(kind, "node") || is(kind, "tee")) {
+        target.kind = is(kind, "partition") ? TL_DRAG_PARTITION : is(kind, "node") ? TL_DRAG_NODE : TL_DRAG_TEE;
+        target.partition = partition_at(index);
+        if (!target.partition)
+            return false;
+        if (target.kind == TL_DRAG_NODE)
+            target.index = 0; /* за середину — узел целиком */
+    } else if (is(kind, "opening")) {
+        target.kind = TL_DRAG_OPENING;
+        target.opening = opening_at(index);
+        if (!target.opening)
+            return false;
+    } else {
+        return false;
+    }
+    dragging.active = tl_drag_begin(&dragging.drag, project, target, tl_vec2(x, y));
+    return dragging.active;
+}
+
+/* Предмет, который тянут сейчас, — номерами для JavaScript. */
+static Item dragged_item(TlProject *project)
+{
+    const TlDragTarget *t = &dragging.drag.target;
+    switch (t->kind) {
+    case TL_DRAG_VERTEX:
+    case TL_DRAG_WALL: {
+        int house = -1;
+        for (size_t i = 0; i < project->outlines.count; i++)
+            if (project->outlines.items[i] == t->outline)
+                house = (int)i;
+        return (Item){t->kind == TL_DRAG_VERTEX ? "vertex" : "wall", house, t->index, 0, 0};
+    }
+    case TL_DRAG_PARTITION: return (Item){"partition", index_of_partition(project, t->partition), t->index, 0, 0};
+    case TL_DRAG_NODE: return (Item){"node", index_of_partition(project, t->partition), 0, (int)t->end, 0};
+    case TL_DRAG_TEE: return (Item){"tee", index_of_partition(project, t->partition), 0, (int)t->end, 0};
+    case TL_DRAG_OPENING: return (Item){"opening", index_of_opening(project, t->opening), 0, 0, 0};
+    default: return (Item){"none", 0, 0, 0, 0};
+    }
+}
+
+const char *tl_web_drag_move(double x, double y, double tolerance, double grid, bool free, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (!dragging.active)
+        return "null";
+    if (!dragging.moved) {
+        tl_web_checkpoint("", now_seconds);
+        dragging.moved = true;
+    }
+    TlSnapContext snap = {.project = project, .tolerance = tolerance, .grid_step = grid, .skip_vertex = -1,
+                          .align = true};
+    TlGuides guides;
+    tl_drag_move(&dragging.drag, project, tl_vec2(x, y), &snap, free, &guides);
+    TlJson *json = tl_json_object();
+    TlJson *guide_list = tl_json_array();
+    for (int i = 0; i < guides.count; i++) {
+        TlJson *guide = point_json(guides.items[i].from);
+        tl_json_array_push(guide, tl_json_bool(guides.items[i].vertical));
+        tl_json_array_push(guide_list, guide);
+    }
+    tl_json_object_set(json, "guides", guide_list);
+    tl_json_object_set(json, "selection", item_object(dragged_item(project)));
+    return keep(json);
+}
+
+const char *tl_web_drag_end(void)
+{
+    TlProject *project = tl_web_project();
+    if (!dragging.active)
+        return "null";
+    bool moved = dragging.moved;
+    /* перегородка, которую тянули, могла слиться с соседней — запомнить её середину */
+    TlPartition *partition = dragging.drag.target.partition;
+    bool partition_kind = dragging.drag.target.kind == TL_DRAG_PARTITION;
+    TlVec2 middle = partition_kind ? tl_vec2_midpoint(partition->start, partition->end) : tl_vec2(0, 0);
+    Item item = dragged_item(project);
+    if (moved)
+        tl_drag_end(&dragging.drag, project);
+    else
+        tl_drag_free(&dragging.drag);
+    dragging.active = dragging.moved = false;
+    if (partition_kind) {
+        item.index = -1;
+        for (size_t i = 0; i < project->partitions.count; i++) {
+            const TlPartition *candidate = project->partitions.items[i];
+            if (tl_point_segment_distance(middle, candidate->start, candidate->end, NULL) < 1)
+                item.index = (int)i;
+        }
+        if (item.index < 0)
+            item.kind = "none";
+    }
+    return item_json(item);
 }
