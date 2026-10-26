@@ -44,78 +44,6 @@ bool app_selection_is_locked(TlProject *project, const AppSelection *s)
 
 /* ---- добавление -------------------------------------------------------------- */
 
-static TlOutline *outline_containing(TlProject *project, const TlVec2 *corners, size_t count)
-{
-    for (size_t o = 0; o < project->outlines.count; o++) {
-        TlOutline *outline = project->outlines.items[o];
-        bool all_inside = true;
-        for (size_t i = 0; i < count && all_inside; i++)
-            all_inside = tl_outline_contains_or_touches(outline, corners[i]);
-        if (all_inside)
-            return outline;
-    }
-    return NULL;
-}
-
-static bool edge_lies_on_face(const TlFaceList *faces, TlVec2 a, TlVec2 b)
-{
-    for (size_t i = 0; i < faces->count; i++)
-        if (tl_point_segment_distance(a, faces->items[i].start, faces->items[i].end, NULL) < 1 &&
-            tl_point_segment_distance(b, faces->items[i].start, faces->items[i].end, NULL) < 1)
-            return true;
-    return false;
-}
-
-/* Перегородки по сторонам нарисованной комнаты: её внутренние размеры равны
- * нарисованным; стороны, легшие на существующие стены, пропускаются, у
- * соседних с ними перегородок конец — на этой стене. */
-static void add_partitions_around(AppDocument *document, const TlVec2 *corners, size_t n)
-{
-    TlProject *project = document->project;
-    double thickness = document->preferences.partition_thickness;
-    TlPolygon contour = tl_polygon_from_points(corners, n);
-    TlFaceList faces = tl_project_faces(project);
-    bool *on_wall = g_new0(bool, n);
-    TlVec2 *line_points = g_new(TlVec2, n), *directions = g_new(TlVec2, n), *normals = g_new(TlVec2, n);
-    for (size_t i = 0; i < n; i++) {
-        on_wall[i] = edge_lies_on_face(&faces, corners[i], corners[(i + 1) % n]);
-        tl_polygon_edge_frame(&contour, i, &directions[i], &normals[i]);
-        line_points[i] = tl_vec2_add(corners[i], tl_vec2_scale(normals[i], thickness / 2));
-    }
-    for (size_t i = 0; i < n; i++) {
-        if (on_wall[i])
-            continue;
-        TlVec2 ends[2];
-        for (int side = 0; side < 2; side++) {
-            size_t neighbour = side == 0 ? (i + n - 1) % n : (i + 1) % n;
-            double sign = side == 0 ? -1 : 1;
-            TlVec2 hit;
-            bool found;
-            if (on_wall[neighbour]) {
-                found = tl_line_intersection(line_points[i], directions[i], corners[neighbour],
-                                             directions[neighbour], &hit);
-            } else {
-                found = tl_line_intersection(line_points[i], directions[i], line_points[neighbour],
-                                             directions[neighbour], &hit);
-                if (found) /* заходим на соседнюю перегородку, чтобы угол замкнулся */
-                    hit = tl_vec2_add(hit, tl_vec2_scale(directions[i], sign * thickness / 2));
-            }
-            if (!found) {
-                TlVec2 corner = side == 0 ? corners[i] : corners[(i + 1) % n];
-                hit = tl_vec2_add(corner, tl_vec2_scale(normals[i], thickness / 2));
-            }
-            ends[side] = hit;
-        }
-        tl_project_add_partition(project, tl_partition_new(ends[0], ends[1], thickness));
-    }
-    g_free(on_wall);
-    g_free(line_points);
-    g_free(directions);
-    g_free(normals);
-    tl_face_list_free(&faces);
-    tl_polygon_free(&contour);
-}
-
 static void select_space_at(AppDocument *document, TlVec2 point)
 {
     TlSpace *space = tl_project_space_at(document->project, point);
@@ -124,24 +52,16 @@ static void select_space_at(AppDocument *document, TlVec2 point)
 
 void app_command_add_contour(AppDocument *document, const TlVec2 *corners, size_t corner_count)
 {
-    TlProject *project = document->project;
     app_document_checkpoint(document, "");
     TlPolygon contour = tl_polygon_from_points(corners, corner_count);
     TlVec2 inside_point = tl_polygon_label_point(&contour);
     tl_polygon_free(&contour);
-    if (outline_containing(project, corners, corner_count)) {
-        size_t rooms_before = project->spaces.count;
-        add_partitions_around(document, corners, corner_count);
-        tl_project_update_spaces(project);
-        select_space_at(document, inside_point);
-        if (project->spaces.count <= rooms_before)
-            app_document_status(document, "Перегородки добавлены, но замкнутой комнаты не получилось");
-    } else {
-        tl_project_add_outline(project, tl_outline_new(corners, corner_count,
-                                                       document->preferences.house_thickness));
-        tl_project_update_spaces(project);
-        select_space_at(document, inside_point);
-    }
+    TlContourResult result = tl_project_add_contour(document->project, corners, corner_count,
+                                                    document->preferences.house_thickness,
+                                                    document->preferences.partition_thickness);
+    select_space_at(document, inside_point);
+    if (result == TL_CONTOUR_PARTITIONS)
+        app_document_status(document, "Перегородки добавлены, но замкнутой комнаты не получилось");
     app_document_commit(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
@@ -164,28 +84,25 @@ void app_command_add_partition(AppDocument *document, TlVec2 start, TlVec2 end)
     if (tl_distance(start, end) < 1)
         return;
     app_document_checkpoint(document, "");
-    TlPartition *partition = tl_partition_new(start, end, document->preferences.partition_thickness);
-    tl_project_add_partition(document->project, partition);
-    tl_project_merge_straight_nodes(document->project); /* продолжила другую по прямой — одна перегородка */
-    tl_project_update_spaces(document->project);
-    document->selection = (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition};
+    TlPartition *partition = tl_project_draw_partition(document->project, start, end,
+                                                       document->preferences.partition_thickness);
+    document->selection = partition ? (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition}
+                                    : (AppSelection){0};
     app_document_commit(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
 void app_command_add_opening(AppDocument *document, const TlBand *band, double along)
 {
-    double width = document->preferences.opening_width;
-    if (band->length < width) {
+    if (band->length < document->preferences.opening_width) {
         app_document_status(document, "Стена короче ширины проёма");
         return;
     }
     app_document_checkpoint(document, "");
-    TlOpening *opening = tl_opening_new(tl_band_point(band, along, tl_band_middle(band)), width);
-    tl_project_add_opening(document->project, opening);
-    tl_opening_set_threshold(opening, tl_project_default_threshold(document->project, opening));
+    TlOpening *opening = tl_project_place_opening(document->project, band, along,
+                                                  document->preferences.opening_width);
     document->selection = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening};
-    app_document_commit_rooms(document);
+    app_document_commit(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 

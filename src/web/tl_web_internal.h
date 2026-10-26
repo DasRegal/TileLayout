@@ -7,6 +7,8 @@
 
 /* Открытый проект (создаётся примером при первом обращении). */
 TlProject *tl_web_project(void);
+/* Запомнить проект перед правкой (шаг отмены; merge_key — см. tl_history.h). */
+void tl_web_checkpoint(const char *merge_key, double now_seconds);
 /* JSON в текст, который живёт в *slot до следующего вызова с тем же slot. */
 const char *tl_web_keep(char **slot, TlJson *json);
 

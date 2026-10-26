@@ -46,9 +46,24 @@ const SECTIONS = [
   },
 ];
 
+const TOOL_TITLES = {
+  rect: 'Прямоугольник',
+  contour: 'Контур',
+  partition: 'Перегородка',
+  opening: 'Проём',
+};
+
+const OBJECT_TEXT = {
+  partition: { title: 'Перегородка', size: 'Толщина' },
+  opening: { title: 'Проём', size: 'Ширина' },
+  house: { title: 'Дом', size: '' },
+};
+
 /**
- * Панель: build — один раз; show(roomTile, catalogs) — после каждого изменения.
- * actions: {setField(key, value), chooseTile(), colorOnly()}.
+ * Панель: build — один раз; после каждого изменения — show(комната, каталоги),
+ * showTool(инструмент, настройки, подсказка), showObject(предмет).
+ * actions: {setField(key, value), chooseTile(), colorOnly(), rename(name),
+ *           align(mode), setSetting(key, value), setObjectSize(value), deleteObject()}.
  */
 export class Panel {
   constructor(root, actions) {
@@ -62,6 +77,35 @@ export class Panel {
     this.empty = this.root.querySelector('#room-empty');
     this.room = this.root.querySelector('#room-settings');
     this.roomName = this.root.querySelector('#room-name');
+    this.roomName.addEventListener('change', () => {
+      const name = this.roomName.value.trim();
+      if (name) this.actions.rename(name);
+    });
+    for (const button of this.root.querySelectorAll('[data-align]')) {
+      button.addEventListener('click', () => this.actions.align(button.dataset.align));
+    }
+    this.toolSettings = this.root.querySelector('#tool-settings');
+    this.settingInputs = {
+      houseThickness: this.root.querySelector('#setting-house'),
+      partitionThickness: this.root.querySelector('#setting-partition'),
+      openingWidth: this.root.querySelector('#setting-opening'),
+      grid: this.root.querySelector('#setting-grid'),
+    };
+    for (const [key, input] of Object.entries(this.settingInputs)) {
+      input.addEventListener('change', () => {
+        const value = Number(input.value);
+        if (input.value !== '' && Number.isFinite(value)) {
+          this.actions.setSetting(key, Math.min(Number(input.max), Math.max(Number(input.min), value)));
+        }
+      });
+    }
+    this.objectSettings = this.root.querySelector('#object-settings');
+    this.objectSize = this.root.querySelector('#object-size');
+    this.objectSize.addEventListener('change', () => {
+      const value = Number(this.objectSize.value);
+      if (this.objectSize.value !== '' && Number.isFinite(value)) this.actions.setObjectSize(value);
+    });
+    this.root.querySelector('#object-delete').addEventListener('click', () => this.actions.deleteObject());
     this.shared = this.root.querySelector('#room-shared');
     this.enabled = this.root.querySelector('#tile-enabled');
     this.enabled.addEventListener('change', () => this.actions.setField('enabled', this.enabled.checked));
@@ -131,12 +175,63 @@ export class Panel {
     return row;
   }
 
+  updateEmpty() {
+    this.empty.hidden = !(this.room.hidden && this.toolSettings.hidden && this.objectSettings.hidden);
+  }
+
+  /** Инструмент рисования: его настройки и подсказка (у «Выбора» — скрыто). */
+  showTool(tool, settings, hint) {
+    this.toolSettings.hidden = tool === 'select';
+    if (!this.toolSettings.hidden) {
+      this.root.querySelector('#tool-title').textContent = TOOL_TITLES[tool];
+      this.root.querySelector('#tool-hint').textContent = hint;
+      for (const row of this.toolSettings.querySelectorAll('[data-tools]')) {
+        row.hidden = !row.dataset.tools.split(' ').includes(tool);
+      }
+      for (const [key, input] of Object.entries(this.settingInputs)) {
+        if (document.activeElement !== input) input.value = String(settings[key]);
+      }
+    }
+    this.updateEmpty();
+  }
+
+  /** Выделенная перегородка, проём или дом (tl_web_object) или null. */
+  showObject(object) {
+    this.objectSettings.hidden = !object;
+    if (object) {
+      const text = OBJECT_TEXT[object.kind];
+      this.root.querySelector('#object-title').textContent = text.title;
+      const info = {
+        partition: () => `Длина ${object.length} мм.`,
+        opening: () =>
+          ({ wall: 'В основной стене.', partition: 'В перегородке.', none: 'Не на стене — сдвиньте или удалите.' })[object.host],
+        house: () => `Стен: ${object.walls}, толщина ${object.thickness} мм. Удаляется вместе с комнатами.`,
+      }[object.kind]();
+      this.root.querySelector('#object-info').textContent = object.locked
+        ? `${info} Заблокировано в настольной программе — менять нельзя.`
+        : info;
+      const sizeRow = this.root.querySelector('#object-size-row');
+      sizeRow.hidden = !text.size;
+      if (text.size) {
+        this.root.querySelector('#object-size-caption').textContent = text.size;
+        const value = object.kind === 'partition' ? object.thickness : object.width;
+        Object.assign(this.objectSize, object.kind === 'partition' ? { min: 10, max: 1000, step: 10 } : { min: 100, max: 10000, step: 10 });
+        if (document.activeElement !== this.objectSize) this.objectSize.value = String(Math.round(value * 10) / 10);
+        this.objectSize.disabled = object.locked;
+      }
+      const remove = this.root.querySelector('#object-delete');
+      remove.disabled = object.locked;
+      remove.textContent = object.kind === 'house' ? 'Удалить дом' : 'Удалить';
+    }
+    this.updateEmpty();
+  }
+
   /** room — от ядра (tl_web_space_tile) или null; catalogs — для названия плитки. */
   show(room, catalogs) {
-    this.empty.hidden = Boolean(room);
     this.room.hidden = !room;
+    this.updateEmpty();
     if (!room) return;
-    this.roomName.textContent = room.name;
+    if (document.activeElement !== this.roomName) this.roomName.value = room.name;
     this.shared.hidden = !room.source;
     this.shared.textContent = room.source ? `Пол общий с комнатой «${room.source}»: настройки — её.` : '';
     const tile = room.tile;

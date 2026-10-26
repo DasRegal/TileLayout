@@ -18,7 +18,7 @@ static void preview_at(AppCanvas *canvas, TlVec2 world)
     double along;
     tl_band_local(&band, world, &along, NULL);
     canvas->opening_band = band;
-    canvas->opening_along = app_snap_along(along, canvas->document->preferences.opening_width, band.length,
+    canvas->opening_along = tl_snap_along(along, canvas->document->preferences.opening_width, band.length,
                                            canvas->document->preferences.snap_step);
 }
 

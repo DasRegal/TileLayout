@@ -41,6 +41,48 @@ bool tl_web_set_tile_field(int space_id, const char *key, const char *value, dou
 /* Несколько полей одним шагом отмены: fields — JSON-объект {ключ: значение}. */
 bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds);
 
+/* Раскладка комнаты: смещение сетки по правилу mode — "top_left", "top_right",
+   "bottom_left", "bottom_right" (целая плитка в углу), "center" (центр плитки в
+   центре комнаты), "center_joint" (там — пересечение швов), "min_tiles"
+   (меньше всего плиток к покупке), "min_narrow" (меньше узких подрезок).
+   Ответ — {"ok": bool, "message": "что получилось"}. */
+const char *tl_web_align_tiles(int space_id, const char *mode, double now_seconds);
+bool tl_web_set_space_name(int space_id, const char *name, double now_seconds);
+
+/* ---- правка плана (tl_web_edit.c) ---------------------------------------------
+ * Предметы плана — {"kind": "partition" | "opening" | "house", "index": номер в
+ * списке проекта}; номера живут до следующей правки. tolerance — допуск
+ * попадания в мм (из масштаба вида), grid — шаг сетки, мм (0 — без сетки). */
+
+/* Точка курсора с привязками: к углам, концам перегородок, граням стен, сетке,
+   выравнивание с опорными точками и с началом start (has_start).
+   refs — JSON-массив [x0, y0, …] — точки рисуемого контура. free — без привязок.
+   {"point": [x, y], "on_face": bool, "face": [x0, y0, x1, y1] | null,
+    "guides": [[x, y, вертикальная], …]} */
+const char *tl_web_snap(double x, double y, bool has_start, double start_x, double start_y, const char *refs,
+                        double tolerance, double grid, bool free);
+/* Контур [x0, y0, …]: на пустом месте — дом, внутри дома — комната.
+   {"result": "house" | "room" | "partitions" | "invalid", "space": id комнаты в контуре или 0} */
+const char *tl_web_add_contour(const char *points, double house_thickness, double partition_thickness,
+                               double now_seconds);
+/* Перегородка; ответ — номер или −1 (слишком короткая). */
+int tl_web_add_partition(double x0, double y0, double x1, double y1, double thickness, double now_seconds);
+/* Проём шириной width на стене или перегородке у точки: предпросмотр — вырез
+   {"cut": [...], "host": "wall" | "partition"} или null; добавить — номер или −1. */
+const char *tl_web_opening_preview(double x, double y, double width, double tolerance, double grid);
+int tl_web_add_opening(double x, double y, double width, double tolerance, double grid, double now_seconds);
+
+/* Что под точкой: проём, перегородка, стена дома, комната.
+   {"kind": "opening" | "partition" | "house" | "space" | "none", "index": номер, "space": id} */
+const char *tl_web_pick(double x, double y, double tolerance);
+/* Свойства предмета для панели; null — нет такого. Перегородка — {"thickness",
+   "length", "locked"}, проём — {"width", "host", "locked"}, дом — {"walls", "thickness"}. */
+const char *tl_web_object(const char *kind, int index);
+bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds);
+bool tl_web_set_opening_width(int index, double width, double now_seconds);
+/* Удалить предмет (заблокированный — нельзя). */
+bool tl_web_delete(const char *kind, int index, double now_seconds);
+
 /* ---- расчёт и отмена ---------------------------------------------------------- */
 
 /* Сводка к покупке (формат — в tl_web_summary.c). */

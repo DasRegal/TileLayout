@@ -1,6 +1,7 @@
 // Вид плана: масштаб (пикселей на мм) и сдвиг; колесо — масштаб у курсора,
 // перетаскивание — сдвиг, два пальца — масштаб и сдвиг; щелчок без
-// перетаскивания — onClick(точка в мм).
+// перетаскивания — onClick(точка в мм, событие); движение мыши без кнопок —
+// onHover(точка в мм, событие).
 
 const MIN_SCALE = 0.005; // пикселей на мм: дом 100 м — 500 px
 const MAX_SCALE = 5;
@@ -46,7 +47,7 @@ function clamp(value, min, max) {
 }
 
 /** Управление видом мышью и пальцами на элементе element. */
-export function attachViewControls(element, view, { onChange, onClick }) {
+export function attachViewControls(element, view, { onChange, onClick, onHover }) {
   const pointers = new Map(); // id → [x, y]
   let start = null; // где нажали
   let dragged = false;
@@ -81,7 +82,10 @@ export function attachViewControls(element, view, { onChange, onClick }) {
 
   element.addEventListener('pointermove', (event) => {
     const previous = pointers.get(event.pointerId);
-    if (!previous) return;
+    if (!previous) {
+      if (event.pointerType === 'mouse' && onHover) onHover(view.toWorld(...local(event)), event);
+      return;
+    }
     const current = local(event);
     pointers.set(event.pointerId, current);
     if (pointers.size === 2 && pinch) {
@@ -106,7 +110,7 @@ export function attachViewControls(element, view, { onChange, onClick }) {
     pointers.delete(event.pointerId);
     if (pointers.size < 2) pinch = null;
     if (event.type === 'pointerup' && at && !dragged && pointers.size === 0) {
-      onClick(view.toWorld(at[0], at[1]));
+      onClick(view.toWorld(at[0], at[1]), event);
     }
   };
   element.addEventListener('pointerup', release);

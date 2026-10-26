@@ -21,7 +21,13 @@
       <span class="divider" aria-hidden="true"></span>
       <button type="button" data-action="fit" title="Весь план в окне">Вписать</button>
     </nav>
-    <a class="desktop-link" href="https://github.com/DasRegal/TileLayout/releases/latest">Программа для Windows и Linux</a>
+    <nav class="tools tool-modes" aria-label="Инструменты">
+      <button type="button" data-tool="select" title="Выбор (V)" aria-pressed="true">Выбор</button>
+      <button type="button" data-tool="rect" title="Прямоугольник: дом или комната (R)" aria-pressed="false">Прямоугольник</button>
+      <button type="button" data-tool="contour" title="Контур: дом или комната любой формы (C)" aria-pressed="false">Контур</button>
+      <button type="button" data-tool="partition" title="Перегородка (P)" aria-pressed="false">Перегородка</button>
+      <button type="button" data-tool="opening" title="Проём (O)" aria-pressed="false">Проём</button>
+    </nav>
   </header>
 
   <main class="workspace">
@@ -33,8 +39,30 @@
     <aside id="panel" class="panel">
       <section>
         <p id="room-empty" class="hint">Щёлкните комнату на плане, чтобы настроить её плитку. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг.</p>
+
+        <div id="tool-settings" hidden>
+          <h2 id="tool-title"></h2>
+          <p id="tool-hint" class="hint"></p>
+          <label class="row" data-tools="rect contour"><span class="caption">Толщина стен нового дома</span>
+            <span class="control"><input type="number" id="setting-house" min="50" max="1000" step="10"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="rect contour partition"><span class="caption">Толщина перегородок</span>
+            <span class="control"><input type="number" id="setting-partition" min="10" max="1000" step="10"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="opening"><span class="caption">Ширина проёма</span>
+            <span class="control"><input type="number" id="setting-opening" min="100" max="10000" step="10"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="rect contour partition opening"><span class="caption">Шаг привязки</span>
+            <span class="control"><input type="number" id="setting-grid" min="0" max="1000" step="5"><span class="unit">мм</span></span></label>
+        </div>
+
+        <div id="object-settings" hidden>
+          <h2 id="object-title"></h2>
+          <p id="object-info" class="hint"></p>
+          <label class="row" id="object-size-row"><span class="caption" id="object-size-caption"></span>
+            <span class="control"><input type="number" id="object-size"><span class="unit">мм</span></span></label>
+          <div class="button-row"><button type="button" id="object-delete" class="danger">Удалить</button></div>
+        </div>
+
         <div id="room-settings" hidden>
-          <h2 id="room-name"></h2>
+          <input type="text" id="room-name" class="room-name" aria-label="Название комнаты" maxlength="120">
           <p id="room-shared" class="hint" hidden></p>
           <label class="row check"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка в комнате</span></label>
           <div class="texture">
@@ -48,6 +76,21 @@
               <button type="button" id="color-only" title="Убрать рисунок: плитка — просто цветом">Только цвет</button>
             </div>
           </div>
+          <div class="align">
+            <span class="caption">Раскладка от угла</span>
+            <div class="button-row">
+              <button type="button" data-align="top_left" title="Целая плитка в левом верхнем углу">↖</button>
+              <button type="button" data-align="top_right" title="Целая плитка в правом верхнем углу">↗</button>
+              <button type="button" data-align="bottom_left" title="Целая плитка в левом нижнем углу">↙</button>
+              <button type="button" data-align="bottom_right" title="Целая плитка в правом нижнем углу">↘</button>
+              <button type="button" data-align="center" title="Центр плитки — в центре комнаты">По центру</button>
+              <button type="button" data-align="center_joint" title="В центре комнаты — пересечение швов">Швы в центре</button>
+            </div>
+            <div class="button-row">
+              <button type="button" data-align="min_tiles" title="Смещение сетки, при котором плиток к покупке меньше всего">Минимум плиток</button>
+              <button type="button" data-align="min_narrow" title="Смещение сетки с наименьшим числом узких подрезок">Меньше узких подрезок</button>
+            </div>
+          </div>
           <div id="tile-fields"></div>
         </div>
       </section>
@@ -56,9 +99,9 @@
         <div id="summary" class="summary"></div>
       </section>
       <footer class="note">
-        Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Рисовать стены и перегородки
-        пока можно в <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программе</a>:
-        её файлы открываются здесь.
+        Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Файлы — те же, что у
+        <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программы</a>: в ней есть
+        ещё перетаскивание стен и углов, деформационные швы, печать с чертежами подрезок.
       </footer>
     </aside>
   </main>

@@ -28,7 +28,7 @@ if(UNIX)
 endif()
 
 # ---- ядро для веб-версии: проект, сцена и расчёт строками JSON -------------
-set(TL_WEB_SOURCES src/web/tl_web.c src/web/tl_web_scene.c src/web/tl_web_summary.c)
+set(TL_WEB_SOURCES src/web/tl_web.c src/web/tl_web_edit.c src/web/tl_web_scene.c src/web/tl_web_summary.c)
 add_library(tlweb STATIC ${TL_WEB_SOURCES})
 target_include_directories(tlweb PUBLIC ${CMAKE_SOURCE_DIR}/src/web)
 target_link_libraries(tlweb PUBLIC tlcore)
@@ -56,7 +56,7 @@ if(EMSCRIPTEN)
     target_link_options(tilelayout_web PRIVATE --no-entry -sMODULARIZE=1 -sEXPORT_NAME=createTileLayout
                         -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0
                         "-sEXPORTED_RUNTIME_METHODS=[\"UTF8ToString\",\"stringToUTF8\",\"lengthBytesUTF8\"]"
-                        "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\",\"_tl_web_new_demo\",\"_tl_web_open\",\"_tl_web_error\",\"_tl_web_save\",\"_tl_web_scene\",\"_tl_web_space_at\",\"_tl_web_space_tile\",\"_tl_web_set_tile_field\",\"_tl_web_set_tile_fields\",\"_tl_web_summary\",\"_tl_web_undo\",\"_tl_web_redo\",\"_tl_web_undo_count\",\"_tl_web_redo_count\"]")
+                        "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\",\"_tl_web_new_demo\",\"_tl_web_open\",\"_tl_web_error\",\"_tl_web_save\",\"_tl_web_scene\",\"_tl_web_space_at\",\"_tl_web_space_tile\",\"_tl_web_set_tile_field\",\"_tl_web_set_tile_fields\",\"_tl_web_summary\",\"_tl_web_align_tiles\",\"_tl_web_set_space_name\",\"_tl_web_snap\",\"_tl_web_add_contour\",\"_tl_web_add_partition\",\"_tl_web_opening_preview\",\"_tl_web_add_opening\",\"_tl_web_pick\",\"_tl_web_object\",\"_tl_web_set_partition_thickness\",\"_tl_web_set_opening_width\",\"_tl_web_delete\",\"_tl_web_undo\",\"_tl_web_redo\",\"_tl_web_undo_count\",\"_tl_web_redo_count\"]")
 elseif(UNIX)
     # список каталогов для сайта (запускается при сборке сайта, см. web/build.sh)
     add_executable(tl_catalog_index src/web/tl_catalog_index.c)

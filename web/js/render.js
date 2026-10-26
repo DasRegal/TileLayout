@@ -23,8 +23,10 @@ const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
 
 /**
- * Нарисовать сцену. options: {selected — id комнаты, image(reference) — картинка
- * плитки или null (ещё грузится / нет), dpr — плотность пикселей}.
+ * Нарисовать сцену. options: {selected — id комнаты, highlight — контуры
+ * выделенного предмета (плоские массивы, мм), image(reference) — картинка плитки
+ * или null (ещё грузится / нет), dpr — плотность пикселей, overlay(ctx) —
+ * рисование инструмента поверх, в пикселях экрана}.
  */
 export function drawScene(ctx, scene, view, options) {
   const { width, height } = ctx.canvas;
@@ -43,9 +45,10 @@ export function drawScene(ctx, scene, view, options) {
   drawWalls(ctx, scene, view, px, dpr);
   drawOpenings(ctx, scene, view, px);
   const selected = scene.spaces.find((space) => space.id === options.selected);
-  if (selected) {
-    polygonPath(ctx, selected.outline, true);
-    for (const hole of selected.holes) polygonPath(ctx, hole, false);
+  const outlines = selected ? [selected.outline, ...selected.holes] : options.highlight || [];
+  if (outlines.length) {
+    ctx.beginPath();
+    for (const outline of outlines) polygonPath(ctx, outline, false);
     ctx.lineWidth = px(2.5);
     ctx.strokeStyle = COLOR.selection;
     ctx.setLineDash([px(8), px(5)]);
@@ -57,6 +60,7 @@ export function drawScene(ctx, scene, view, options) {
   for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view);
   for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
   for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
+  if (options.overlay) options.overlay(ctx);
 }
 
 // ---- контуры -----------------------------------------------------------------

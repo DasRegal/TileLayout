@@ -16,6 +16,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; } /* иначе display у строк панели перебивает hidden */
+
 html, body { height: 100%; }
 
 body {
@@ -67,7 +69,6 @@ button.primary:hover:not(:disabled) { background: #1a4387; }
 
 .tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .divider { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
-.desktop-link { margin-left: auto; color: var(--accent); font-size: 13px; }
 
 /* ---- план и панель ---- */
 
@@ -88,6 +89,7 @@ button.primary:hover:not(:disabled) { background: #1a4387; }
   cursor: grab;
 }
 #plan:active { cursor: grabbing; }
+body.drawing #plan { cursor: crosshair; }
 
 .status {
   position: absolute;
@@ -164,6 +166,26 @@ legend {
 .texture-name { font-weight: 600; }
 .texture-buttons { grid-column: 1 / -1; display: flex; gap: 6px; }
 
+.button-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.align { margin: 10px 0 0; }
+.align .caption, #tool-settings .caption, #object-settings .caption { color: var(--muted); font-size: 12px; }
+#tool-settings .caption, #object-settings .caption { font-size: 14px; color: var(--ink); }
+.room-name {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.room-name:hover, .room-name:focus { border-color: var(--line); }
+button.danger { color: #b3261e; border-color: #e7b9b4; }
+button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e; }
+.tool-modes button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#tool-settings, #object-settings { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; }
+
+
 /* ---- расчёт ---- */
 
 .summary { display: flex; flex-direction: column; gap: 12px; }
@@ -175,7 +197,7 @@ legend {
 .summary-details { white-space: pre-line; color: var(--muted); font-size: 13px; }
 
 .note { margin-top: auto; color: var(--muted); font-size: 12px; }
-.note a, .desktop-link { color: var(--accent); }
+.note a { color: var(--accent); }
 
 /* ---- окно каталога ---- */
 
@@ -243,7 +265,6 @@ legend {
   .workspace { grid-template-columns: 1fr; }
   .plan-area { height: 62vh; }
   .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); }
-  .desktop-link { margin-left: 0; }
   .catalog-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .catalog-tree { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
 }

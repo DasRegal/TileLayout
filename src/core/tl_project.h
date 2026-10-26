@@ -118,6 +118,22 @@ void tl_project_delete_expansion_joint(TlProject *project, TlExpansionJoint *joi
 /* Удаляет дом вместе с перегородками внутри и осиротевшими проёмами. */
 void tl_project_delete_outline(TlProject *project, TlOutline *outline);
 
+/* ---- добавление на план (tl_project_commands.c) ---------------------------- */
+
+typedef enum TlContourResult {
+    TL_CONTOUR_HOUSE,      /* на пустом месте — новый дом */
+    TL_CONTOUR_ROOM,       /* внутри дома — комната из перегородок по сторонам контура */
+    TL_CONTOUR_PARTITIONS  /* внутри дома, но замкнутой комнаты не получилось */
+} TlContourResult;
+
+TlContourResult tl_project_add_contour(TlProject *project, const TlVec2 *corners, size_t count,
+                                       double house_thickness, double partition_thickness);
+/* Новая перегородка; продолжила другую по прямой — сливается с ней. Возвращает
+   перегородку на этом месте (NULL — короче 1 мм). */
+TlPartition *tl_project_draw_partition(TlProject *project, TlVec2 start, TlVec2 end, double thickness);
+/* Проём шириной width с центром along на полосе стены; NULL — стена короче проёма. */
+TlOpening *tl_project_place_opening(TlProject *project, const TlBand *band, double along, double width);
+
 /* ---- комнаты ------------------------------------------------------------- */
 
 void tl_project_update_spaces(TlProject *project);

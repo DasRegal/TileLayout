@@ -10,7 +10,7 @@
 #define APP_CANVAS_PRIVATE_H
 
 #include "app_canvas.h"
-#include "app_snap.h"
+#include "tl_snap.h"
 #include "app_view.h"
 #include "tl_measure_snap.h"
 
@@ -114,7 +114,7 @@ struct AppCanvas {
     TlVec2 rect_start;
     bool has_wall_start;
     TlVec2 wall_start;
-    AppSnapResult wall_snap;
+    TlSnapResult wall_snap;
     bool has_opening_preview;
     TlBand opening_band;
     double opening_along;
@@ -122,7 +122,7 @@ struct AppCanvas {
     TlVec2 segment_start;
     TlVec2 segment_press_screen;    /* где нажали: протянули — отрезок готов */
     TlSnapPoint measure_snap;       /* куда притянулся конец линейки или шва (для значка) */
-    AppGuides guides;               /* вспомогательные линии выравнивания к cursor */
+    TlGuides guides;               /* вспомогательные линии выравнивания к cursor */
     TlVec2 guides_to;
 
     AppDrag drag;
@@ -137,7 +137,7 @@ struct AppCanvas {
 
 void app_canvas_redraw(AppCanvas *canvas);
 void app_canvas_set_cursor(AppCanvas *canvas, const char *name);
-AppSnapContext app_canvas_snap_context(AppCanvas *canvas);
+TlSnapContext app_canvas_snap_context(AppCanvas *canvas);
 /* Точка конца отрезка с учётом набранной длины. */
 TlVec2 app_canvas_typed_target(const AppCanvas *canvas, TlVec2 start, TlVec2 toward);
 /* Набор длины: цифры, точка/запятая, Backspace. true — клавиша съедена. */
@@ -163,7 +163,7 @@ TlVec2 app_canvas_measure_point(AppCanvas *canvas, TlVec2 world, const TlVec2 *a
                                 bool free);
 
 /* Вспомогательные линии выравнивания к точке to (показываются до сброса). */
-void app_canvas_show_guides(AppCanvas *canvas, const AppGuides *guides, TlVec2 to);
+void app_canvas_show_guides(AppCanvas *canvas, const TlGuides *guides, TlVec2 to);
 void app_canvas_clear_guides(AppCanvas *canvas);
 void app_canvas_draw_snap_marker(AppCanvas *canvas, cairo_t *cr);
 
@@ -172,6 +172,7 @@ void app_select_begin_tiles_drag(AppCanvas *canvas, const AppPointer *pointer);
 void app_select_motion(AppCanvas *canvas, const AppPointer *pointer);
 void app_select_release(AppCanvas *canvas, const AppPointer *pointer);
 
+#define APP_SNAP_TOLERANCE_PX 10.0 /* притягивание курсора, px экрана */
 #define APP_GREEN "#0b8043"
 #define APP_BLUE "#1a73e8"
 

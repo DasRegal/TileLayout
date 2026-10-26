@@ -54,14 +54,15 @@ void app_canvas_set_cursor(AppCanvas *canvas, const char *name)
         g_object_unref(cursor);
 }
 
-AppSnapContext app_canvas_snap_context(AppCanvas *canvas)
+TlSnapContext app_canvas_snap_context(AppCanvas *canvas)
 {
-    return (AppSnapContext){.project = canvas->document->project, .view = &canvas->view,
+    return (TlSnapContext){.project = canvas->document->project,
+                           .tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX),
                             .grid_step = canvas->document->preferences.snap_step, .skip_vertex = -1,
                             .align = canvas->document->preferences.auto_align};
 }
 
-void app_canvas_show_guides(AppCanvas *canvas, const AppGuides *guides, TlVec2 to)
+void app_canvas_show_guides(AppCanvas *canvas, const TlGuides *guides, TlVec2 to)
 {
     canvas->guides = *guides;
     canvas->guides_to = to;
@@ -87,8 +88,8 @@ static TlVec2 align_ruler_end(AppCanvas *canvas, TlVec2 point, TlVec2 anchor, do
         aligned = crossing;
     else
         snap->kind = TL_SNAP_NONE;
-    AppGuides guides = {0};
-    app_guides_add(&guides, anchor, which == 1);
+    TlGuides guides = {0};
+    tl_guides_add(&guides, anchor, which == 1);
     app_canvas_show_guides(canvas, &guides, aligned);
     return aligned;
 }
@@ -114,7 +115,7 @@ TlVec2 app_canvas_measure_point(AppCanvas *canvas, TlVec2 world, const TlVec2 *a
 static void draw_guides(AppCanvas *canvas, cairo_t *cr)
 {
     for (int i = 0; i < canvas->guides.count; i++) {
-        const AppGuide *guide = &canvas->guides.items[i];
+        const TlGuide *guide = &canvas->guides.items[i];
         TlVec2 to = guide->vertical ? tl_vec2(guide->from.x, canvas->guides_to.y)
                                     : tl_vec2(canvas->guides_to.x, guide->from.y);
         /* чуть дальше точки — чтобы линия была видна и вдоль самой линейки */

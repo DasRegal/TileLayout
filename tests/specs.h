@@ -17,5 +17,6 @@ void spec_catalog(void);
 void spec_expansion_joint(void);
 void spec_doorway(void);
 void spec_web(void);
+void spec_commands(void);
 
 #endif

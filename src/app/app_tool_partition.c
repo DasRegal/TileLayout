@@ -10,8 +10,8 @@
 
 static void track(AppCanvas *canvas, const AppPointer *pointer)
 {
-    AppSnapContext context = app_canvas_snap_context(canvas);
-    canvas->wall_snap = app_snap_wall_point(&context, pointer->world,
+    TlSnapContext context = app_canvas_snap_context(canvas);
+    canvas->wall_snap = tl_snap_wall_point(&context, pointer->world,
                                             canvas->has_wall_start ? &canvas->wall_start : NULL, pointer->shift);
     canvas->cursor = canvas->wall_snap.point;
     app_canvas_show_guides(canvas, &canvas->wall_snap.guides, canvas->cursor);

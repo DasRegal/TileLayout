@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include "tl_history.h"
+#include "tl_layout.h"
+#include "tl_report.h"
 #include "tl_project_io.h"
 #include "tl_web_internal.h"
 
@@ -13,7 +15,7 @@ static struct {
     TlProject *project;
     TlHistory *history;
     char error[256];
-    char *saved, *tile;
+    char *saved, *tile, *aligned;
 } web;
 
 TlProject *tl_web_project(void)
@@ -41,6 +43,11 @@ TlJson *tl_web_polygon(const TlPolygon *polygon)
         tl_json_array_push(points, tl_web_number(polygon->items[i].y));
     }
     return points;
+}
+
+void tl_web_checkpoint(const char *merge_key, double now_seconds)
+{
+    tl_history_checkpoint(web.history, tl_web_project(), merge_key, now_seconds);
 }
 
 /* ---- проект ---------------------------------------------------------------- */
@@ -203,6 +210,92 @@ bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds
     bool ok = parsed && set_fields(space_id, parsed, "", now_seconds);
     tl_json_free(parsed);
     return ok;
+}
+
+/* ---- раскладка комнаты ---------------------------------------------------------- */
+
+static const struct {
+    const char *mode;
+    TlLayoutCorner corner;
+    const char *name;
+} CORNERS[] = {{"top_left", TL_CORNER_TOP_LEFT, "левый верхний"},
+               {"top_right", TL_CORNER_TOP_RIGHT, "правый верхний"},
+               {"bottom_left", TL_CORNER_BOTTOM_LEFT, "левый нижний"},
+               {"bottom_right", TL_CORNER_BOTTOM_RIGHT, "правый нижний"}};
+
+static const char *aligned(bool ok, const char *message)
+{
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "ok", tl_json_bool(ok));
+    tl_json_object_set(json, "message", tl_json_string(message));
+    return tl_web_keep(&web.aligned, json);
+}
+
+/* Смещение сетки — как у настольной программы: к одному шагу сетки, до 0,1 мм. */
+static void set_offsets(TlSpace *space, double x, double y, double now_seconds)
+{
+    tl_web_checkpoint("", now_seconds);
+    TlTileSettings *tile = tl_space_effective_tile(space);
+    tl_layout_normalize_offsets(tile, &x, &y);
+    tile->offset_x = round(x * 10) / 10;
+    tile->offset_y = round(y * 10) / 10;
+}
+
+const char *tl_web_align_tiles(int space_id, const char *mode, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlSpace *space = tl_project_space_by_id(project, space_id);
+    if (!space)
+        return aligned(false, "Нет такой комнаты");
+    char message[200];
+    double x, y;
+    for (size_t i = 0; i < sizeof CORNERS / sizeof CORNERS[0]; i++)
+        if (strcmp(mode, CORNERS[i].mode) == 0) {
+            tl_layout_corner_offsets(space, CORNERS[i].corner, &x, &y);
+            set_offsets(space, x, y, now_seconds);
+            snprintf(message, sizeof message, "Раскладка от угла: %s", CORNERS[i].name);
+            return aligned(true, message);
+        }
+    if (strcmp(mode, "center") == 0 || strcmp(mode, "center_joint") == 0) {
+        bool joint = strcmp(mode, "center_joint") == 0;
+        tl_layout_center_offsets(space, joint, &x, &y);
+        set_offsets(space, x, y, now_seconds);
+        return aligned(true, joint ? "В центре комнаты — пересечение швов" : "В центре комнаты — центр плитки");
+    }
+    if (strcmp(mode, "min_narrow") == 0) {
+        if (!tl_layout_optimize_narrow(space, &x, &y))
+            return aligned(false, "Слишком много плиток для перебора");
+        set_offsets(space, x, y, now_seconds);
+        return aligned(true, "Смещение подобрано: меньше узких подрезок");
+    }
+    if (strcmp(mode, "min_tiles") == 0) {
+        TlTileCountResult result;
+        if (!tl_report_optimize_count(project, space, &result))
+            return aligned(false, "Слишком много плиток для перебора");
+        set_offsets(space, result.offset_x, result.offset_y, now_seconds);
+        if (result.after.tiles < result.before.tiles)
+            snprintf(message, sizeof message, "Минимум плиток: было %d, стало %d (без запаса)",
+                     result.before.tiles, result.after.tiles);
+        else if (result.after.narrow < result.before.narrow)
+            snprintf(message, sizeof message,
+                     "Плиток меньше не получится (%d), зато узких подрезок стало %d вместо %d",
+                     result.after.tiles, result.after.narrow, result.before.narrow);
+        else
+            snprintf(message, sizeof message, "Раскладка уже оптимальна: %d плиток (без запаса)",
+                     result.after.tiles);
+        return aligned(true, message);
+    }
+    return aligned(false, "Неизвестное правило раскладки");
+}
+
+bool tl_web_set_space_name(int space_id, const char *name, double now_seconds)
+{
+    TlSpace *space = tl_project_space_by_id(tl_web_project(), space_id);
+    if (!space || !name[0])
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    tl_space_set_name(space, name);
+    return true;
 }
 
 /* ---- отмена ----------------------------------------------------------------- */

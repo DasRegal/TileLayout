@@ -210,7 +210,7 @@ static void drag_opening(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
 {
     double along = drag->original_along + tl_vec2_dot(delta, drag->band.direction);
     if (!free)
-        along = app_snap_along(along, drag->opening->width, drag->band.length,
+        along = tl_snap_along(along, drag->opening->width, drag->band.length,
                                canvas->document->preferences.snap_step);
     drag->opening->center = tl_band_point(&drag->band, along, tl_band_middle(&drag->band));
     tl_project_update_spaces(canvas->document->project); /* пол проёма переходит с ним */
@@ -301,7 +301,7 @@ static TlVec2 partition_end_target(AppCanvas *canvas, TlPartition *partition, Tl
     app_canvas_clear_guides(canvas);
     if (free)
         return target;
-    AppSnapContext context = app_canvas_snap_context(canvas);
+    TlSnapContext context = app_canvas_snap_context(canvas);
     context.skip_partition = partition;
     const TlVec2 directions[] = {tl_vec2_sub(moving, fixed), {1, 0}, {0, 1}};
     size_t direction_count = context.align ? 3 : 1;
@@ -310,12 +310,12 @@ static TlVec2 partition_end_target(AppCanvas *canvas, TlPartition *partition, Tl
     size_t which;
     if (!tl_align_direction(fixed, target, directions, direction_count, tolerance, &aligned, &which)) {
         context.align = false; /* поворот: только углы, грани, сетка */
-        return app_snap_wall_point(&context, target, NULL, false).point;
+        return tl_snap_wall_point(&context, target, NULL, false).point;
     }
-    TlVec2 end = app_snap_stretch(&context, fixed, aligned, aligned, false);
+    TlVec2 end = tl_snap_stretch(&context, fixed, aligned, aligned, false);
     if (which > 0) {
-        AppGuides guides = {0};
-        app_guides_add(&guides, fixed, which == 2);
+        TlGuides guides = {0};
+        tl_guides_add(&guides, fixed, which == 2);
         app_canvas_show_guides(canvas, &guides, end);
     }
     return end;
@@ -366,7 +366,7 @@ static void drag_node(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
         return;
     TlVec2 target = tl_vec2_add(drag->original_point, delta);
     if (!free)
-        target = app_snap_grid(canvas->document->preferences.snap_step, target);
+        target = tl_snap_grid(canvas->document->preferences.snap_step, target);
     if (drag->index == 0)
         tl_project_move_node(project, &node, tl_vec2_add(drag->original_node, tl_vec2_sub(target, drag->original_point)));
     else
@@ -385,7 +385,7 @@ static void drag_tee(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
         return;
     TlVec2 target = tl_vec2_add(drag->original_point, delta);
     if (!free)
-        target = app_snap_grid(canvas->document->preferences.snap_step, target);
+        target = tl_snap_grid(canvas->document->preferences.snap_step, target);
     bool became_node = tl_project_move_tee(project, &tee, target);
     TlEditOptions options = {.frozen = drag->frozen, .keep_ends = true};
     tl_project_apply_edit(project, drag->token, &options);
@@ -405,10 +405,10 @@ static void drag_outline(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
     if (drag->kind == APP_DRAG_HOUSE) {
         TlVec2 first = drag->original_corners.items[0];
         if (!free) { /* привязка первого угла дома */
-            AppSnapContext context = app_canvas_snap_context(canvas);
+            TlSnapContext context = app_canvas_snap_context(canvas);
             context.skip_outline = outline;
             context.skip_vertex = 0;
-            delta = tl_vec2_sub(app_snap_point(&context, tl_vec2_add(first, delta), NULL, 0, false).point, first);
+            delta = tl_vec2_sub(tl_snap_point(&context, tl_vec2_add(first, delta), NULL, 0, false).point, first);
         }
         restore_outline(outline, &drag->original_corners);
         tl_outline_translate(outline, delta);
@@ -421,11 +421,11 @@ static void drag_outline(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
     if (drag->kind == APP_DRAG_VERTEX) {
         size_t n = outline->inner.count;
         const TlVec2 neighbours[2] = {outline->inner.items[(index + n - 1) % n], outline->inner.items[(index + 1) % n]};
-        AppSnapContext context = app_canvas_snap_context(canvas);
+        TlSnapContext context = app_canvas_snap_context(canvas);
         context.skip_outline = outline;
         context.skip_vertex = (int)index;
         TlVec2 target = tl_vec2_add(drag->original_corners.items[index], delta);
-        AppSnapResult snap = app_snap_point(&context, target, neighbours, 2, free);
+        TlSnapResult snap = tl_snap_point(&context, target, neighbours, 2, free);
         outline->inner.items[index] = snap.point;
         app_canvas_show_guides(canvas, &snap.guides, snap.point);
     } else {
@@ -535,7 +535,7 @@ static void double_click(AppCanvas *canvas, const AppPointer *pointer)
     TlVec2 b = tl_outline_wall_end(hit.outline, (size_t)hit.index);
     double t;
     tl_point_segment_distance(pointer->world, a, b, &t);
-    TlVec2 on_grid = app_snap_grid(canvas->document->preferences.snap_step, tl_vec2_lerp(a, b, t));
+    TlVec2 on_grid = tl_snap_grid(canvas->document->preferences.snap_step, tl_vec2_lerp(a, b, t));
     tl_point_segment_distance(on_grid, a, b, &t); /* точка должна остаться на стене */
     if (t > 0 && t < 1)
         app_command_insert_vertex(canvas->document, hit.outline, (size_t)hit.index, tl_vec2_lerp(a, b, t));

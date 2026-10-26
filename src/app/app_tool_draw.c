@@ -16,11 +16,11 @@
 /* Точка курсора: привязки и выравнивание с уже поставленными точками контура. */
 static TlVec2 cursor_point(AppCanvas *canvas, const AppPointer *pointer)
 {
-    AppSnapContext context = app_canvas_snap_context(canvas);
+    TlSnapContext context = app_canvas_snap_context(canvas);
     context.extra_refs = canvas->draw_points.items;
     context.extra_ref_count = canvas->draw_points.count;
     const TlVec2 *last = tl_polygon_last(&canvas->draw_points);
-    AppSnapResult snap = app_snap_wall_point(&context, pointer->world, last, pointer->shift);
+    TlSnapResult snap = tl_snap_wall_point(&context, pointer->world, last, pointer->shift);
     app_canvas_show_guides(canvas, &snap.guides, snap.point);
     return snap.point;
 }

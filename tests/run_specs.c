@@ -18,5 +18,6 @@ int main(void)
     spec_expansion_joint();
     spec_doorway();
     spec_web();
+    spec_commands();
     return spec_report() == 0 ? 0 : 1;
 }

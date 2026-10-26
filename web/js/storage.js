@@ -67,3 +67,24 @@ export function acceptDroppedFiles(element, onFile) {
     if (file) onFile({ name: file.name, text: await file.text() });
   });
 }
+
+// ---- настройки рисования (толщины, ширина проёма, шаг) — удобство этого браузера
+
+const SETTINGS_KEY = 'tilelayout.settings';
+
+export function readSettings() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return settings && typeof settings === 'object' ? settings : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeSettings(settings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // без сохранения настроек — не страшно
+  }
+}
