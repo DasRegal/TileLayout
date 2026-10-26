@@ -312,6 +312,43 @@ void spec_web(void)
             tl_web_drag_end();
             EXPECT(strcmp(tl_web_object("threshold", door, 1, 0), "null") != 0);
         }
+        IT("по числам: точка угла, длина стены, проём от края, стык, блокировка, общий пол, новый угол и дом")
+        {
+            tl_web_open("{\"version\": 4, \"outlines\": [], \"partitions\": [], \"spaces\": []}");
+            tl_web_add_contour("[0, 0, 6000, 0, 6000, 4000, 0, 4000]", 200, 100, 1);
+            EXPECT(answer_is(tl_web_set_point("vertex", 0, 2, 0, 6500, 4500, 2), "kind", "vertex"));
+            EXPECT_NEAR(answer_number(tl_web_object("vertex", 0, 2, 0), "x"), 6500, 1e-9);
+            EXPECT(tl_web_undo());
+            EXPECT(tl_web_set_wall_length(0, 0, 7400, true, true, 3)); /* наружная 7400 — внутренняя 7000 */
+            EXPECT_NEAR(answer_number(tl_web_object("wall", 0, 0, 0), "length"), 7000, 1e-6);
+            EXPECT(tl_web_set_locked("wall", 0, 0, true, 4));
+            EXPECT(!tl_web_set_wall_length(0, 0, 6000, false, true, 5));
+            EXPECT(tl_web_set_locked("wall", 0, 0, false, 6));
+
+            int index = tl_web_add_partition(3000, 0, 3000, 4000, 100, 7);
+            int door = tl_web_add_opening(3000, 2000, 800, 20, 10, 8);
+            EXPECT(tl_web_place_opening(door, 500, false, 9));
+            EXPECT_NEAR(answer_number(tl_web_object("opening", door, 0, 0), "from_start"), 500, 0.1);
+            EXPECT(tl_web_set_threshold(door, 30, 0, 10)); /* глубина проёма — 100 мм (перегородка) */
+            const char *threshold = tl_web_object("threshold", door, 1, 0);
+            EXPECT_NEAR(answer_number(threshold, "depth"), 100, 1e-9);
+            EXPECT_NEAR(answer_number(threshold, "right"), 30, 1e-9);
+            EXPECT(tl_web_set_locked("partition", index, 0, true, 11));
+            EXPECT(!tl_web_set_partition_thickness(index, 200, 12));
+            EXPECT(tl_web_set_locked("partition", index, 0, false, 13));
+
+            int left = tl_web_space_at(1000, 1000), right = tl_web_space_at(5000, 1000);
+            EXPECT(strstr(tl_web_space_tile(left), "\"sources\":[{") != NULL);
+            EXPECT(tl_web_set_space_source(left, right, 14));
+            EXPECT(strstr(tl_web_space_tile(left), "\"source\":\"") != NULL); /* пол как у правой */
+            EXPECT(!tl_web_set_space_source(left, left, 15));
+            EXPECT(tl_web_set_space_source(left, 0, 16));
+
+            EXPECT(tl_web_insert_vertex(0, 0, 1503, -100, 10, 17)); /* угол на верхней стене */
+            EXPECT_NEAR(answer_number(tl_web_object("vertex", 0, 1, 0), "x"), 1500, 1e-6);
+            int house = tl_web_add_house(3000, 2000, 200, 18);
+            EXPECT(house > 0 && house != left && house != right);
+        }
         IT("притягивание к углу дома и к сетке; раскладка от угла и с минимумом плиток; название комнаты")
         {
             tl_web_open("{\"version\": 4, \"outlines\": [], \"partitions\": [], \"spaces\": []}");
@@ -338,6 +375,31 @@ void spec_web(void)
             EXPECT(tl_web_set_space_name(id, "Кухня", 5));
             EXPECT(strstr(tl_web_space_tile(id), "\"Кухня\"") != NULL);
             EXPECT(!tl_web_set_space_name(id, "", 6));
+        }
+        IT("для печати: номер у каждой плитки плана, карточки подрезок с контурами кусков")
+        {
+            char *text = read_fixture(TL_FIXTURES_DIR "/python_demo.tilelayout.json");
+            tl_web_open(text);
+            free(text);
+            TlJson *numbers = tl_json_parse(tl_web_tile_numbers(), NULL, 0);
+            int tiles = 0, numbered = 0;
+            for (size_t i = 0; i < tl_json_length(numbers); i++) {
+                const TlJson *space = tl_json_at(numbers, i);
+                int id = (int)tl_json_number_or(tl_json_get(space, "space"), 0);
+                numbered += (int)tl_json_length(tl_json_get(space, "numbers")) / 5;
+                tiles += scene_count(id);
+            }
+            EXPECT(numbered > 0);
+            EXPECT_INT(numbered, tiles);
+            tl_json_free(numbers);
+            TlJson *cards = tl_json_parse(tl_web_cut_cards(), NULL, 0);
+            EXPECT(tl_json_length(cards) > 0);
+            const TlJson *card = tl_json_at(cards, 0);
+            EXPECT(tl_json_string_or(tl_json_get(card, "title"), "")[0] != '\0');
+            const TlJson *part = tl_json_at(tl_json_get(card, "parts"), 0);
+            EXPECT(tl_json_length(tl_json_at(tl_json_get(part, "shapes"), 0)) >= 6); /* хотя бы треугольник */
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(card, "tile"), "w"), 0) > 0);
+            tl_json_free(cards);
         }
         IT("комната в точке; сводка к покупке по видам плитки")
         {

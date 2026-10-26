@@ -35,14 +35,6 @@ static double threshold_share_at(TlProject *project, const TlOpening *opening, i
 
 /* ---- блокировки ------------------------------------------------------------- */
 
-static bool node_locked(const TlNode *node)
-{
-    for (size_t i = 0; i < node->count; i++)
-        if (node->ends[i].partition->locked)
-            return true;
-    return false;
-}
-
 static bool partition_inside(const TlPartition *partition, const TlOutline *outline)
 {
     return tl_outline_contains_or_touches(outline, partition->start) &&
@@ -108,7 +100,7 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
     }
     case TL_DRAG_NODE: {
         TlNode node;
-        if (!tl_project_node_of(project, target.partition, target.end, &node) || node_locked(&node))
+        if (!tl_project_node_of(project, target.partition, target.end, &node) || tl_node_locked(&node))
             return false;
         drag->original_point = tl_node_point(&node, target.index);
         drag->original_node = node.point;

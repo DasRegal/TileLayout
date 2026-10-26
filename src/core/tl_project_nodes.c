@@ -225,6 +225,14 @@ bool tl_node_corner_patch(const TlNode *node, size_t corner, TlPolygon *patch)
     return true;
 }
 
+bool tl_node_locked(const TlNode *node)
+{
+    for (size_t i = 0; i < node->count; i++)
+        if (node->ends[i].partition->locked)
+            return true;
+    return false;
+}
+
 /* ---- правка узла ---------------------------------------------------------- */
 
 void tl_project_move_node(TlProject *project, const TlNode *node, TlVec2 point)

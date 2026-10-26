@@ -58,6 +58,52 @@ static void collect_chain(TlProject *project, TlPartition *partition, Chain *cha
     }
 }
 
+/* ---- концы грани ------------------------------------------------------------ */
+
+/* Где вдоль band кончается бок side цепочки перегородок: по углам их тел на этом
+   боку (в Г-узле внешний угол дальше конца оси на полтолщины, внутренний — ближе). */
+static void chain_face_ends(TlProject *project, const Chain *chain, const TlBand *band, int side, double *low,
+                            double *high)
+{
+    *low = INFINITY;
+    *high = -INFINITY;
+    for (size_t i = 0; i < chain->count; i++) {
+        TlPartition *partition = chain->items[i];
+        bool same_direction = tl_vec2_dot(tl_partition_direction(partition), band->direction) > 0;
+        bool left = (side > 0) == same_direction; /* бок side — левый у этой перегородки? */
+        TlPolygon body = tl_project_partition_body(project, partition, 0);
+        const TlPartitionCorner corners[2] = {left ? TL_PARTITION_START_LEFT : TL_PARTITION_START_RIGHT,
+                                              left ? TL_PARTITION_END_LEFT : TL_PARTITION_END_RIGHT};
+        for (int c = 0; c < 2; c++) {
+            double along;
+            tl_band_local(band, body.items[corners[c]], &along, NULL);
+            *low = fmin(*low, along);
+            *high = fmax(*high, along);
+        }
+        tl_polygon_free(&body);
+    }
+}
+
+bool tl_project_opening_span(TlProject *project, const TlOpening *opening, double *start, double *end)
+{
+    TlBand band;
+    if (!tl_project_opening_host(project, opening, &band))
+        return false;
+    if (band.host.kind != TL_HOST_PARTITION) {
+        *start = 0;
+        *end = band.length;
+        return true;
+    }
+    Chain chain = {0};
+    collect_chain(project, band.host.partition, &chain);
+    double low[2], high[2];
+    chain_face_ends(project, &chain, &band, +1, &low[0], &high[0]);
+    chain_face_ends(project, &chain, &band, -1, &low[1], &high[1]);
+    *start = fmin(low[0], low[1]);
+    *end = fmax(high[0], high[1]);
+    return true;
+}
+
 /* ---- точки разбивки --------------------------------------------------------- */
 
 static int compare_doubles(const void *left, const void *right)
@@ -125,15 +171,9 @@ TlDoubleArray tl_project_face_breaks(TlProject *project, const TlBand *band, int
     TlDoubleArray breaks = {0};
     Chain chain = {0};
     if (band->host.kind == TL_HOST_PARTITION) {
-        collect_chain(project, band->host.partition, &chain);
-        double low = INFINITY, high = -INFINITY; /* узлы внутри прямой грань не прерывают */
-        for (size_t i = 0; i < chain.count; i++) {
-            double start, end;
-            tl_band_local(band, chain.items[i]->start, &start, NULL);
-            tl_band_local(band, chain.items[i]->end, &end, NULL);
-            low = fmin(low, fmin(start, end));
-            high = fmax(high, fmax(start, end));
-        }
+        collect_chain(project, band->host.partition, &chain); /* узлы внутри прямой грань не прерывают */
+        double low, high;
+        chain_face_ends(project, &chain, band, side, &low, &high);
         add_break(&breaks, low);
         add_break(&breaks, high);
     } else {

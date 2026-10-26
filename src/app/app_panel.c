@@ -399,27 +399,16 @@ static bool selected_wall(AppPanel *panel, TlOutline **outline, size_t *wall)
     return true;
 }
 
-typedef struct LinkedShift {
-    TlProject *project;
-    bool linked;
-} LinkedShift;
-
-static void shift_with_links(TlOutline *outline, size_t wall, TlVec2 offset, void *context)
-{
-    LinkedShift *shift = context;
-    tl_project_shift_wall(shift->project, outline, wall, offset, shift->linked);
-}
-
 static void change_wall_length(AppPanel *panel, double inner_length, const char *key)
 {
     TlOutline *outline;
     size_t wall;
     if (!selected_wall(panel, &outline, &wall) || inner_length <= 1)
         return;
-    TlEditToken *token = app_document_begin_geometry(panel->document, key, NULL);
-    LinkedShift shift = {panel->document->project, panel->document->preferences.link_walls};
-    tl_outline_set_inner_length(outline, wall, inner_length, check_active(panel->keep_angles), shift_with_links, &shift);
-    app_document_end_geometry(panel->document, token, NULL);
+    app_document_checkpoint(panel->document, key);
+    if (tl_project_set_wall_length(panel->document->project, outline, wall, inner_length,
+                                   check_active(panel->keep_angles), panel->document->preferences.link_walls))
+        app_document_commit(panel->document);
 }
 
 static void on_wall_inner(GtkSpinButton *spin, AppPanel *panel)
@@ -584,13 +573,11 @@ static void on_opening_width(GtkSpinButton *spin, AppPanel *panel)
 static void place_opening(AppPanel *panel, double distance, bool from_end)
 {
     TlOpening *opening = selected_opening(panel);
-    TlBand band;
-    if (!opening || !tl_project_opening_host(panel->document->project, opening, &band))
+    if (!opening)
         return;
     app_document_checkpoint(panel->document, "opos");
-    double along = from_end ? band.length - distance - opening->width / 2 : distance + opening->width / 2;
-    opening->center = tl_band_point(&band, along, tl_band_middle(&band));
-    app_document_commit_rooms(panel->document);
+    if (tl_project_place_opening_at(panel->document->project, opening, distance, from_end))
+        app_document_commit(panel->document);
 }
 
 static void on_opening_from_start(GtkSpinButton *spin, AppPanel *panel)
@@ -638,12 +625,9 @@ static void set_threshold(AppPanel *panel, double middle, double skew)
     TlOpening *opening = selected_opening(panel);
     if (!opening)
         return;
-    skew = fmax(-1, fmin(1, skew));
-    middle = fmax(fabs(skew) / 2, fmin(1 - fabs(skew) / 2, middle));
     app_document_checkpoint(panel->document, "threshold");
-    opening->threshold = middle - skew / 2;
-    opening->threshold_end = middle + skew / 2;
-    app_document_commit_rooms(panel->document);
+    if (tl_project_set_threshold(panel->document->project, opening, middle, skew))
+        app_document_commit(panel->document);
 }
 
 /* Глубина проёма, отданная комнате справа, — в мм. */
@@ -1434,8 +1418,10 @@ static void refresh_opening(AppPanel *panel, TlOpening *opening)
             gtk_label_set_text(GTK_LABEL(panel->opening_host), "в перегородке");
         else
             set_label(panel->opening_host, "в наружной стене %.0f", (double)band.host.wall + 1);
-        set_spin(panel->opening_from_start, along - opening->width / 2);
-        set_spin(panel->opening_to_end, band.length - along - opening->width / 2);
+        double start = 0, end = band.length;
+        tl_project_opening_span(panel->document->project, opening, &start, &end);
+        set_spin(panel->opening_from_start, along - opening->width / 2 - start);
+        set_spin(panel->opening_to_end, end - along - opening->width / 2);
     }
     gtk_widget_set_sensitive(panel->opening_from_start, hosted && !opening->locked);
     gtk_widget_set_sensitive(panel->opening_to_end, hosted && !opening->locked);

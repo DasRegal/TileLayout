@@ -5,6 +5,7 @@
  */
 #include "tl_project.h"
 
+#include <math.h>
 #include <stdlib.h>
 
 #include "tl_memory.h"
@@ -125,4 +126,104 @@ TlOpening *tl_project_place_opening(TlProject *project, const TlBand *band, doub
     tl_project_merge_straight_nodes(project);
     tl_project_update_spaces(project);
     return opening;
+}
+
+/* ---- правка по числам ------------------------------------------------------------ */
+
+bool tl_project_set_vertex(TlProject *project, TlOutline *outline, size_t index, TlVec2 point)
+{
+    size_t count = outline->inner.count;
+    if (index >= count || outline->locked.items[index] || outline->locked.items[(index + count - 1) % count])
+        return false;
+    TlEditToken *token = tl_project_begin_edit(project, NULL);
+    outline->inner.items[index] = point;
+    tl_project_end_edit(project, token, NULL);
+    return true;
+}
+
+#define NODE_CENTER_STEPS 8 /* середина узла сдвигается чуть иначе, чем сам узел, — уточняем */
+
+bool tl_project_set_node_point(TlProject *project, const TlNode *node, int index, TlVec2 point)
+{
+    if (tl_node_locked(node))
+        return false;
+    TlPartition *partition = node->ends[0].partition;
+    TlPartitionEnd end = node->ends[0].end;
+    TlEditToken *token = tl_project_begin_edit(project, NULL);
+    TlNode current = *node;
+    if (index == 0) {
+        for (int step = 0; step < NODE_CENTER_STEPS && tl_project_node_of(project, partition, end, &current); step++) {
+            TlVec2 shift = tl_vec2_sub(point, tl_node_center(&current));
+            tl_project_move_node(project, &current, tl_vec2_add(current.point, shift));
+        }
+    } else {
+        tl_project_set_node_corner(project, &current, (size_t)index - 1, point);
+    }
+    tl_project_end_edit(project, token, NULL);
+    return true;
+}
+
+bool tl_project_set_tee_point(TlProject *project, TlPartition *branch, TlPartitionEnd end, TlVec2 point,
+                              bool *became_node)
+{
+    TlTee tee;
+    if (!tl_project_tee_of(project, branch, end, &tee) || tee.branch->locked || tee.host->locked)
+        return false;
+    TlEditToken *token = tl_project_begin_edit(project, NULL);
+    bool node = tl_project_move_tee(project, &tee, point);
+    TlEditOptions options = {.frozen = tee.branch, .keep_ends = true};
+    tl_project_end_edit(project, token, &options);
+    if (became_node)
+        *became_node = node;
+    return true;
+}
+
+typedef struct LinkedShift {
+    TlProject *project;
+    bool linked;
+} LinkedShift;
+
+static void shift_with_links(TlOutline *outline, size_t wall, TlVec2 offset, void *context)
+{
+    LinkedShift *shift = context;
+    tl_project_shift_wall(shift->project, outline, wall, offset, shift->linked);
+}
+
+bool tl_project_set_wall_length(TlProject *project, TlOutline *outline, size_t wall, double inner_length,
+                                bool keep_angles, bool linked)
+{
+    if (wall >= tl_outline_wall_count(outline) || inner_length <= 1 || outline->locked.items[wall])
+        return false;
+    TlEditToken *token = tl_project_begin_edit(project, NULL);
+    LinkedShift shift = {project, linked};
+    tl_outline_set_inner_length(outline, wall, inner_length, keep_angles, shift_with_links, &shift);
+    tl_project_end_edit(project, token, NULL);
+    return true;
+}
+
+bool tl_project_place_opening_at(TlProject *project, TlOpening *opening, double distance, bool from_end)
+{
+    TlBand band;
+    double start, end;
+    if (opening->locked || !tl_project_opening_host(project, opening, &band) ||
+        !tl_project_opening_span(project, opening, &start, &end))
+        return false;
+    double along = from_end ? end - distance - opening->width / 2 : start + distance + opening->width / 2;
+    opening->center = tl_band_point(&band, along, tl_band_middle(&band));
+    tl_project_merge_straight_nodes(project);
+    tl_project_update_spaces(project);
+    return true;
+}
+
+bool tl_project_set_threshold(TlProject *project, TlOpening *opening, double middle, double skew)
+{
+    if (opening->locked)
+        return false;
+    skew = fmax(-1, fmin(1, skew));
+    middle = fmax(fabs(skew) / 2, fmin(1 - fabs(skew) / 2, middle));
+    opening->threshold = middle - skew / 2;
+    opening->threshold_end = middle + skew / 2;
+    tl_project_merge_straight_nodes(project);
+    tl_project_update_spaces(project);
+    return true;
 }

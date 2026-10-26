@@ -134,6 +134,28 @@ TlPartition *tl_project_draw_partition(TlProject *project, TlVec2 start, TlVec2 
 /* Проём шириной width с центром along на полосе стены; NULL — стена короче проёма. */
 TlOpening *tl_project_place_opening(TlProject *project, const TlBand *band, double along, double width);
 
+/* ---- правка по числам (поля панели) --------------------------------------------
+ * false — заблокировано или неприменимо; проект после — согласован. */
+
+/* Угол дома — в точку (перегородки и проёмы на его стенах следуют). */
+bool tl_project_set_vertex(TlProject *project, TlOutline *outline, size_t index, TlVec2 point);
+/* Точка узла — в точку: index 0 — середина (узел целиком), 1… — угол узла. */
+bool tl_project_set_node_point(TlProject *project, const TlNode *node, int index, TlVec2 point);
+/* Точка примыкания — в точку: вдоль бока скользит, за грань — узел (*became_node). */
+bool tl_project_set_tee_point(TlProject *project, TlPartition *branch, TlPartitionEnd end, TlVec2 point,
+                              bool *became_node);
+/* Внутренняя длина стены; keep_angles — углы между стенами сохраняются (сдвигается
+   соседняя стена), иначе — соседняя стена поворачивается. linked — со смежной
+   стеной соседнего дома. */
+bool tl_project_set_wall_length(TlProject *project, TlOutline *outline, size_t wall, double inner_length,
+                                bool keep_angles, bool linked);
+/* Проём — на distance мм от начала стены (from_end — от конца) до своего края;
+   концы стены — как у tl_project_opening_span. */
+bool tl_project_place_opening_at(TlProject *project, TlOpening *opening, double distance, bool from_end);
+/* Стык полов в проёме: middle — доля глубины проёма посередине, skew — разница
+   долей у косяков (наклон); концы не выходят за грани. */
+bool tl_project_set_threshold(TlProject *project, TlOpening *opening, double middle, double skew);
+
 /* ---- комнаты ------------------------------------------------------------- */
 
 void tl_project_update_spaces(TlProject *project);
@@ -172,6 +194,8 @@ bool tl_node_core(const TlNode *node, TlPolygon *core);
    конца срезана, а заплатка даёт обводке настоящий угол. false — бока не
    сошлись или продолжают друг друга. */
 bool tl_node_corner_patch(const TlNode *node, size_t corner, TlPolygon *patch);
+/* В узле есть заблокированная перегородка. */
+bool tl_node_locked(const TlNode *node);
 /* Все концы узла — в точку. */
 void tl_project_move_node(TlProject *project, const TlNode *node, TlVec2 point);
 /* Угол узла — в точку: меняются отступы у узла обоих боков, сходящихся в нём;
@@ -275,6 +299,10 @@ void tl_project_solid_stretch(TlProject *project, const TlBand *band, double *fr
  * проёмов (кроме exclude). side: у перегородки +1 — левый бок, −1 — правый; у
  * стены — внутренняя грань. По возрастанию. */
 TlDoubleArray tl_project_face_breaks(TlProject *project, const TlBand *band, int side, const TlOpening *exclude);
+/* Где вдоль полосы проёма кончается его стена: у перегородки — дальний из углов
+   тел обоих боков (с прямым продолжением через узлы), у основной стены — её
+   внутренняя грань. Для «от начала стены» / «до конца стены». */
+bool tl_project_opening_span(TlProject *project, const TlOpening *opening, double *start, double *end);
 /* Ближайшие к проёму [from, to] точки разбивки грани: до него и после. */
 bool tl_project_opening_gaps(TlProject *project, const TlBand *band, int side, const TlOpening *exclude,
                              double from, double to, double *before, double *after);
