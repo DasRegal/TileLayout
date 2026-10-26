@@ -27,14 +27,40 @@ if(UNIX)
     target_link_libraries(tlcore PUBLIC m)
 endif()
 
+# ---- ядро для веб-версии: проект, сцена и расчёт строками JSON -------------
+set(TL_WEB_SOURCES src/web/tl_web.c src/web/tl_web_scene.c src/web/tl_web_summary.c)
+add_library(tlweb STATIC ${TL_WEB_SOURCES})
+target_include_directories(tlweb PUBLIC ${CMAKE_SOURCE_DIR}/src/web)
+target_link_libraries(tlweb PUBLIC tlcore)
+
 # ---- спецификации ---------------------------------------------------------
 if(TL_BUILD_TESTS)
     enable_testing()
     file(GLOB TL_SPEC_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.c)
     add_executable(tl_specs ${TL_SPEC_SOURCES})
-    target_link_libraries(tl_specs PRIVATE tlcore)
+    target_link_libraries(tl_specs PRIVATE tlweb)
     target_compile_definitions(tl_specs PRIVATE TL_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures")
+    if(EMSCRIPTEN) # под node: файлы примеров — прямо с диска
+        target_link_options(tl_specs PRIVATE -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1)
+    endif()
     add_test(NAME specifications COMMAND tl_specs)
+endif()
+
+# ---- веб-версия: emcmake cmake … && cmake --build … -------------------------
+if(EMSCRIPTEN)
+    set(TL_BUILD_APP OFF)
+    add_executable(tilelayout_web ${TL_WEB_SOURCES})
+    set_target_properties(tilelayout_web PROPERTIES OUTPUT_NAME tilelayout SUFFIX .js)
+    target_include_directories(tilelayout_web PRIVATE ${CMAKE_SOURCE_DIR}/src/web)
+    target_link_libraries(tilelayout_web PRIVATE tlcore)
+    target_link_options(tilelayout_web PRIVATE --no-entry -sMODULARIZE=1 -sEXPORT_NAME=createTileLayout
+                        -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0
+                        "-sEXPORTED_RUNTIME_METHODS=[\"UTF8ToString\",\"stringToUTF8\",\"lengthBytesUTF8\"]"
+                        "-sEXPORTED_FUNCTIONS=[\"_malloc\",\"_free\",\"_tl_web_new_demo\",\"_tl_web_open\",\"_tl_web_error\",\"_tl_web_save\",\"_tl_web_scene\",\"_tl_web_space_at\",\"_tl_web_space_tile\",\"_tl_web_set_tile_field\",\"_tl_web_set_tile_fields\",\"_tl_web_summary\",\"_tl_web_undo\",\"_tl_web_redo\",\"_tl_web_undo_count\",\"_tl_web_redo_count\"]")
+elseif(UNIX)
+    # список каталогов для сайта (запускается при сборке сайта, см. web/build.sh)
+    add_executable(tl_catalog_index src/web/tl_catalog_index.c)
+    target_link_libraries(tl_catalog_index PRIVATE tlcore)
 endif()
 
 # ---- приложение (GTK 3) ---------------------------------------------------

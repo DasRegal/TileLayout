@@ -1,0 +1,291 @@
+/*
+ * Сцена для рисования в браузере — всё в мм, многоугольники плоскими
+ * массивами [x0, y0, x1, y1, …]:
+ *
+ * {"bounds": [left, top, right, bottom],
+ *  "walls": [{"outer": [...], "inner": [...]}],         основные стены
+ *  "partitions": [[...], ...],                           силуэт перегородок
+ *  "doorways": [[...], ...],                             пол под проёмами — стены его не закрывают
+ *  "openings": [{"kind": "door" | "wall",
+ *                "cut": [...],                           вырез в стене (у "wall")
+ *                "jambs": [[x0, y0, x1, y1], ...],       косяки (у "door")
+ *                "threshold": [x0, y0, x1, y1] | null,   стык полов
+ *                "width": мм, "from": [x, y], "to": [x, y]}],  подпись ширины — вдоль from→to
+ *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм}],  снаружи дома
+ *  "spaces": [{"id", "name", "outline": [...], "holes": [[...]], "room": [...],      room — для длин стен
+ *              "label": [x, y], "area": м², "source": "имя" | null,
+ *              "tile": {настройки, ключи как в файле},
+ *              "layout": null | {"matrix": [a, b, c, d, tx, ty],  оси раскладки → мм плана
+ *                                "floor": [...], "holes": [[...]], "too_many": bool,
+ *                                "tiles": [left, top, right, bottom, вид, ...],  вид: 0 целая, 1 подрезка, 2 узкая
+ *                                "clips": [x0, y0, ...], "count": плиток}}]}
+ */
+#include <math.h>
+
+#include "tl_layout.h"
+#include "tl_web.h"
+#include "tl_web_internal.h"
+
+#define FACES_OTHER_PROBE 50.0 /* мм за стену: там другой дом — размер снаружи не нужен */
+
+static TlJson *point(TlVec2 p)
+{
+    TlJson *array = tl_json_array();
+    tl_json_array_push(array, tl_web_number(p.x));
+    tl_json_array_push(array, tl_web_number(p.y));
+    return array;
+}
+
+static TlJson *segment(TlVec2 a, TlVec2 b)
+{
+    TlPolygon line = {0};
+    tl_polygon_push(&line, a);
+    tl_polygon_push(&line, b);
+    TlJson *json = tl_web_polygon(&line);
+    tl_polygon_free(&line);
+    return json;
+}
+
+static TlJson *polygons(const TlPolygonList *list)
+{
+    TlJson *array = tl_json_array();
+    for (size_t i = 0; i < list->count; i++)
+        tl_json_array_push(array, tl_web_polygon(&list->items[i]));
+    return array;
+}
+
+/* ---- стены ------------------------------------------------------------------ */
+
+static TlJson *walls(TlProject *project)
+{
+    TlJson *array = tl_json_array();
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlOutline *outline = project->outlines.items[o];
+        TlPolygon outer = tl_outline_outer(outline);
+        TlJson *wall = tl_json_object();
+        tl_json_object_set(wall, "outer", tl_web_polygon(&outer));
+        tl_json_object_set(wall, "inner", tl_web_polygon(&outline->inner));
+        tl_json_array_push(array, wall);
+        tl_polygon_free(&outer);
+    }
+    return array;
+}
+
+static TlJson *doorways(TlProject *project)
+{
+    TlPolygonList list = {0};
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlPolygon doorway;
+        if (tl_project_opening_doorway(project, project->openings.items[i], &doorway))
+            tl_polygon_list_push(&list, doorway);
+    }
+    TlJson *json = polygons(&list);
+    tl_polygon_list_free_all(&list);
+    return json;
+}
+
+/* Косяки двери в перегородке: края проёма по обе стороны стыка (from[i]—to[i]
+   поперёк перегородки: from — правый край, to — левый). */
+static bool door_jambs(TlProject *project, const TlOpening *opening, TlVec2 from[2], TlVec2 to[2])
+{
+    TlOpening right_side = *opening, left_side = *opening;
+    tl_opening_set_threshold(&right_side, 0);
+    tl_opening_set_threshold(&left_side, 1);
+    return tl_project_opening_threshold(project, &right_side, &from[0], &to[0]) &&
+           tl_project_opening_threshold(project, &left_side, &from[1], &to[1]);
+}
+
+/* Стык полов под проёмом; у основной стены — только если под проёмом пол. */
+static TlJson *threshold(TlProject *project, const TlOpening *opening, bool door)
+{
+    TlVec2 from, to;
+    if (!tl_project_opening_threshold(project, opening, &from, &to))
+        return tl_json_null();
+    TlPolygon doorway;
+    if (!door) {
+        if (!tl_project_opening_doorway(project, opening, &doorway))
+            return tl_json_null();
+        tl_polygon_free(&doorway);
+    }
+    return segment(from, to);
+}
+
+/* NULL — проём не на стене. */
+static TlJson *opening_json(TlProject *project, const TlOpening *opening)
+{
+    TlBand band;
+    bool door = tl_project_opening_host(project, opening, &band) && band.host.kind == TL_HOST_PARTITION;
+    TlJson *jambs = tl_json_array();
+    TlJson *json = tl_json_object();
+    TlVec2 width_from, width_to;
+    if (door) {
+        TlVec2 from[2], to[2];
+        if (!door_jambs(project, opening, from, to)) {
+            tl_json_free(jambs);
+            tl_json_free(json);
+            return NULL;
+        }
+        tl_json_array_push(jambs, segment(from[0], from[1]));
+        tl_json_array_push(jambs, segment(to[0], to[1]));
+        width_from = tl_vec2_midpoint(from[0], from[1]);
+        width_to = tl_vec2_midpoint(to[0], to[1]);
+    } else {
+        TlPolygon cut;
+        if (!tl_project_opening_cut(project, opening, &cut)) {
+            tl_json_free(jambs);
+            tl_json_free(json);
+            return NULL;
+        }
+        tl_json_object_set(json, "cut", tl_web_polygon(&cut));
+        width_from = tl_vec2_midpoint(cut.items[0], cut.items[3]);
+        width_to = tl_vec2_midpoint(cut.items[1], cut.items[2]);
+        tl_polygon_free(&cut);
+    }
+    tl_json_object_set(json, "kind", tl_json_string(door ? "door" : "wall"));
+    tl_json_object_set(json, "jambs", jambs);
+    tl_json_object_set(json, "threshold", threshold(project, opening, door));
+    tl_json_object_set(json, "width", tl_json_number(opening->width));
+    tl_json_object_set(json, "from", point(width_from));
+    tl_json_object_set(json, "to", point(width_to));
+    return json;
+}
+
+static TlJson *openings(TlProject *project)
+{
+    TlJson *array = tl_json_array();
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlJson *json = opening_json(project, project->openings.items[i]);
+        if (json)
+            tl_json_array_push(array, json);
+    }
+    return array;
+}
+
+/* ---- размеры снаружи ---------------------------------------------------------- */
+
+static bool faces_other_outline(TlProject *project, TlOutline *outline, const TlPolygon *outer, size_t wall)
+{
+    TlVec2 normal;
+    tl_outline_wall_frame(outline, wall, NULL, &normal);
+    TlVec2 middle = tl_vec2_midpoint(outer->items[wall], outer->items[(wall + 1) % outer->count]);
+    TlVec2 probe = tl_vec2_add(middle, tl_vec2_scale(normal, FACES_OTHER_PROBE));
+    for (size_t o = 0; o < project->outlines.count; o++)
+        if (project->outlines.items[o] != outline && tl_outline_contains(project->outlines.items[o], probe))
+            return true;
+    return false;
+}
+
+static TlJson *dimensions(TlProject *project)
+{
+    TlJson *array = tl_json_array();
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlOutline *outline = project->outlines.items[o];
+        TlPolygon outer = tl_outline_outer(outline);
+        for (size_t wall = 0; wall < tl_outline_wall_count(outline); wall++) {
+            if (outline->thickness.items[wall] <= 0 || faces_other_outline(project, outline, &outer, wall))
+                continue;
+            TlVec2 a = outer.items[wall], b = outer.items[(wall + 1) % outer.count], normal;
+            tl_outline_wall_frame(outline, wall, NULL, &normal);
+            TlJson *dimension = tl_json_object();
+            tl_json_object_set(dimension, "from", point(a));
+            tl_json_object_set(dimension, "to", point(b));
+            tl_json_object_set(dimension, "normal", point(normal));
+            tl_json_object_set(dimension, "length", tl_json_number(round(tl_distance(a, b))));
+            tl_json_array_push(array, dimension);
+        }
+        tl_polygon_free(&outer);
+    }
+    return array;
+}
+
+/* ---- комнаты ------------------------------------------------------------------- */
+
+static TlJson *layout_json(TlSpace *space)
+{
+    TlLayout *layout = tl_space_layout(space);
+    TlJson *json = tl_json_object();
+    const TlAffine *m = &layout->local_to_world;
+    const double matrix[6] = {m->a, m->b, m->c, m->d, m->tx, m->ty};
+    TlJson *matrix_json = tl_json_array();
+    for (int i = 0; i < 6; i++)
+        tl_json_array_push(matrix_json, tl_json_number(matrix[i]));
+    tl_json_object_set(json, "matrix", matrix_json);
+    tl_json_object_set(json, "floor", tl_web_polygon(&layout->floor_outline));
+    tl_json_object_set(json, "holes", polygons(&layout->floor_holes));
+    tl_json_object_set(json, "too_many", tl_json_bool(layout->too_many));
+    TlJson *tiles = tl_json_array();
+    for (size_t i = 0; i < layout->tiles.count && !layout->too_many; i++) {
+        const TlTile *tile = &layout->tiles.items[i];
+        tl_json_array_push(tiles, tl_web_number(tile->rect.left));
+        tl_json_array_push(tiles, tl_web_number(tile->rect.top));
+        tl_json_array_push(tiles, tl_web_number(tile->rect.right));
+        tl_json_array_push(tiles, tl_web_number(tile->rect.bottom));
+        tl_json_array_push(tiles, tl_json_number(tile->kind));
+    }
+    tl_json_object_set(json, "tiles", tiles);
+    tl_json_object_set(json, "clips", tl_web_polygon(&layout->clip_points));
+    tl_json_object_set(json, "count", tl_json_number(layout->too_many ? 0 : tl_layout_total(layout)));
+    return json;
+}
+
+static TlJson *space_json(TlSpace *space)
+{
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "id", tl_json_number(space->id));
+    tl_json_object_set(json, "name", tl_json_string(space->name));
+    tl_json_object_set(json, "outline", tl_web_polygon(&space->outline));
+    tl_json_object_set(json, "holes", polygons(&space->holes));
+    tl_json_object_set(json, "room", tl_web_polygon(tl_space_room_outline(space)));
+    tl_json_object_set(json, "label", point(tl_space_label_point(space)));
+    tl_json_object_set(json, "area", tl_json_number(round(tl_space_area(space) / 1e4) / 100));
+    tl_json_object_set(json, "source", tl_space_has_shared_floor(space) ? tl_json_string(space->layout_source->name)
+                                                                        : tl_json_null());
+    const TlTileSettings *tile = tl_space_effective_tile(space);
+    tl_json_object_set(json, "tile", tl_web_tile_json(tile));
+    tl_json_object_set(json, "layout", tile->enabled ? layout_json(space) : tl_json_null());
+    return json;
+}
+
+/* ---- сцена ----------------------------------------------------------------------- */
+
+static TlJson *bounds(TlProject *project)
+{
+    TlRect rect = {INFINITY, INFINITY, -INFINITY, -INFINITY};
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlPolygon outer = tl_outline_outer(project->outlines.items[o]);
+        for (size_t i = 0; i < outer.count; i++) {
+            rect.left = fmin(rect.left, outer.items[i].x);
+            rect.top = fmin(rect.top, outer.items[i].y);
+            rect.right = fmax(rect.right, outer.items[i].x);
+            rect.bottom = fmax(rect.bottom, outer.items[i].y);
+        }
+        tl_polygon_free(&outer);
+    }
+    if (!isfinite(rect.left))
+        rect = (TlRect){0, 0, 10000, 8000};
+    const double values[4] = {rect.left, rect.top, rect.right, rect.bottom};
+    TlJson *array = tl_json_array();
+    for (int i = 0; i < 4; i++)
+        tl_json_array_push(array, tl_web_number(values[i]));
+    return array;
+}
+
+const char *tl_web_scene(void)
+{
+    static char *scene;
+    TlProject *project = tl_web_project();
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "bounds", bounds(project));
+    tl_json_object_set(json, "walls", walls(project));
+    TlPolygonList silhouette = tl_project_partition_silhouette(project);
+    tl_json_object_set(json, "partitions", polygons(&silhouette));
+    tl_polygon_list_free_all(&silhouette);
+    tl_json_object_set(json, "doorways", doorways(project));
+    tl_json_object_set(json, "openings", openings(project));
+    tl_json_object_set(json, "dimensions", dimensions(project));
+    TlJson *spaces = tl_json_array();
+    for (size_t s = 0; s < project->spaces.count; s++)
+        tl_json_array_push(spaces, space_json(project->spaces.items[s]));
+    tl_json_object_set(json, "spaces", spaces);
+    return tl_web_keep(&scene, json);
+}

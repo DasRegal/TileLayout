@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TileLayout</title>
+  <meta name="description" content="Раскладка плитки по комнатам: план, подрезки, расчёт плитки, клея и СВП. Работает в браузере, проекты остаются у вас.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="loading">
+  <header class="bar">
+    <a class="brand" href="./"><img src="icon.svg" alt="" width="26" height="26"> TileLayout</a>
+    <nav class="tools" aria-label="Проект">
+      <button type="button" data-action="demo" title="Пример проекта">Пример</button>
+      <button type="button" data-action="open" title="Открыть файл проекта (Ctrl+O)">Открыть…</button>
+      <button type="button" data-action="save" title="Сохранить проект файлом (Ctrl+S)">Сохранить</button>
+      <span class="divider" aria-hidden="true"></span>
+      <button type="button" data-action="undo" title="Отменить (Ctrl+Z)" disabled>Отменить</button>
+      <button type="button" data-action="redo" title="Повторить (Ctrl+Shift+Z)" disabled>Повторить</button>
+      <span class="divider" aria-hidden="true"></span>
+      <button type="button" data-action="fit" title="Весь план в окне">Вписать</button>
+    </nav>
+    <a class="desktop-link" href="https://github.com/DasRegal/TileLayout/releases/latest">Программа для Windows и Linux</a>
+  </header>
+
+  <main class="workspace">
+    <section class="plan-area" aria-label="План">
+      <canvas id="plan"></canvas>
+      <p id="status" class="status" role="status">Загрузка…</p>
+    </section>
+
+    <aside id="panel" class="panel">
+      <section>
+        <p id="room-empty" class="hint">Щёлкните комнату на плане, чтобы настроить её плитку. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг.</p>
+        <div id="room-settings" hidden>
+          <h2 id="room-name"></h2>
+          <p id="room-shared" class="hint" hidden></p>
+          <label class="row check"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка в комнате</span></label>
+          <div class="texture">
+            <img id="texture-image" alt="" hidden>
+            <div>
+              <span class="caption">Рисунок</span>
+              <span id="texture-name" class="texture-name"></span>
+            </div>
+            <div class="texture-buttons">
+              <button type="button" id="choose-tile" title="Плитка из каталога (Ctrl+K)">Выбрать…</button>
+              <button type="button" id="color-only" title="Убрать рисунок: плитка — просто цветом">Только цвет</button>
+            </div>
+          </div>
+          <div id="tile-fields"></div>
+        </div>
+      </section>
+      <section>
+        <h2>Расчёт к покупке</h2>
+        <div id="summary" class="summary"></div>
+      </section>
+      <footer class="note">
+        Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Рисовать стены и перегородки
+        пока можно в <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программе</a>:
+        её файлы открываются здесь.
+      </footer>
+    </aside>
+  </main>
+
+  <dialog id="catalog-dialog" class="catalog-dialog">
+    <form method="dialog">
+      <header>
+        <h2>Плитка из каталога</h2>
+        <input type="search" id="catalog-search" placeholder="Название или размер, например 600×300" autocomplete="off">
+      </header>
+      <div class="catalog-body">
+        <ul class="catalog-tree" aria-label="Каталоги и разделы"></ul>
+        <div class="catalog-grid"></div>
+      </div>
+      <footer>
+        <button value="color-only" title="Убрать рисунок: плитка — просто цветом">Только цвет</button>
+        <span class="spacer"></span>
+        <button value="cancel">Отмена</button>
+        <button value="choose" data-action="choose" class="primary">Выбрать</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="tilelayout.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

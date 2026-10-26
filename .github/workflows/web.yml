@@ -1,0 +1,56 @@
+# Веб-версия: ядро в WebAssembly (Emscripten), спецификации ядра под WebAssembly
+# (в node) и сайт. Публикация на GitHub Pages — при пуше в main и вручную
+# (Actions → Веб-версия → Run workflow); у пул-реквестов сайт только
+# собирается — проверка, что не сломан. (Окружение github-pages по умолчанию
+# разрешает публикацию только с основной ветки — поэтому не по тегам.)
+#
+# Один раз в настройках репозитория: Settings → Pages → Source: GitHub Actions.
+name: Веб-версия
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Сборка сайта
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+      - name: Спецификации ядра под WebAssembly
+        run: |
+          emcmake cmake -S . -B build-specs -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-specs --target tl_specs -j
+          node build-specs/tl_specs.js
+      - name: Сайт
+        run: web/build.sh dist/web
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    name: Публикация на GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -7,3 +7,4 @@ build-*/
 
 # переносная сборка
 dist/
+build-web/
