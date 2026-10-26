@@ -92,6 +92,28 @@ bool app_selection_partition_corner(const AppSelection *selection, TlPartitionCo
     return true;
 }
 
+bool app_selection_node(const AppSelection *selection, TlProject *project, TlNode *node)
+{
+    return selection->kind == APP_SELECT_NODE && selection->partition &&
+           tl_project_node_of(project, selection->partition, selection->end, node) &&
+           selection->index >= 0 && (size_t)selection->index <= node->count;
+}
+
+bool app_selection_tee(const AppSelection *selection, TlProject *project, TlTee *tee)
+{
+    return selection->kind == APP_SELECT_TEE && selection->partition &&
+           tl_project_tee_of(project, selection->partition, selection->end, tee);
+}
+
+TlVec2 app_node_point(const TlNode *node, int index)
+{
+    if (index <= 0)
+        return tl_node_center(node);
+    TlNodeCorner corners[TL_NODE_MAX];
+    tl_node_corners(node, corners);
+    return corners[index - 1].first;
+}
+
 bool app_selection_equal(const AppSelection *a, const AppSelection *b)
 {
     return memcmp(a, b, sizeof *a) == 0;
@@ -137,6 +159,16 @@ static bool selection_is_valid(AppDocument *document)
     case APP_SELECT_RULER: return contains_pointer((void *const *)p->rulers.items, p->rulers.count, s->ruler);
     case APP_SELECT_EXPANSION_JOINT:
         return contains_pointer((void *const *)p->expansion_joints.items, p->expansion_joints.count, s->expansion_joint);
+    case APP_SELECT_NODE: {
+        TlNode node;
+        return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition) &&
+               app_selection_node(s, p, &node);
+    }
+    case APP_SELECT_TEE: {
+        TlTee tee;
+        return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition) &&
+               app_selection_tee(s, p, &tee);
+    }
     }
     return false;
 }
@@ -162,6 +194,7 @@ void app_document_commit(AppDocument *document)
 
 void app_document_commit_rooms(AppDocument *document)
 {
+    tl_project_merge_straight_nodes(document->project);
     tl_project_update_spaces(document->project);
     app_document_commit(document);
 }
@@ -185,6 +218,7 @@ typedef struct SelectionKey {
     AppSelectionKind kind;
     long position;
     int index;
+    TlPartitionEnd end;
 } SelectionKey;
 
 static long position_in(void *const *items, size_t count, const void *item)
@@ -199,7 +233,7 @@ static SelectionKey selection_key(AppDocument *document)
 {
     const AppSelection *s = &document->selection;
     TlProject *p = document->project;
-    SelectionKey key = {s->kind, -1, s->index};
+    SelectionKey key = {s->kind, -1, s->index, s->end};
     switch (s->kind) {
     case APP_SELECT_VERTEX:
     case APP_SELECT_WALL:
@@ -209,6 +243,8 @@ static SelectionKey selection_key(AppDocument *document)
         key.position = position_in((void *const *)p->spaces.items, p->spaces.count, s->space);
         break;
     case APP_SELECT_PARTITION:
+    case APP_SELECT_NODE:
+    case APP_SELECT_TEE:
         key.position = position_in((void *const *)p->partitions.items, p->partitions.count, s->partition);
         break;
     case APP_SELECT_OPENING:
@@ -229,7 +265,7 @@ static SelectionKey selection_key(AppDocument *document)
 static void restore_selection(AppDocument *document, SelectionKey key)
 {
     TlProject *p = document->project;
-    AppSelection s = {.kind = key.kind, .index = key.index};
+    AppSelection s = {.kind = key.kind, .index = key.index, .end = key.end};
     size_t position = (size_t)key.position;
     bool found = key.position >= 0;
     switch (key.kind) {
@@ -245,6 +281,8 @@ static void restore_selection(AppDocument *document, SelectionKey key)
             s.space = p->spaces.items[position];
         break;
     case APP_SELECT_PARTITION:
+    case APP_SELECT_NODE:
+    case APP_SELECT_TEE:
         found = found && position < p->partitions.count;
         if (found)
             s.partition = p->partitions.items[position];

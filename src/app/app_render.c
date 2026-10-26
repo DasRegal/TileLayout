@@ -292,8 +292,8 @@ static void render_partitions(cairo_t *cr, const AppView *view, const AppRenderO
 bool app_render_doorway_jambs(TlProject *project, const TlOpening *opening, TlVec2 from_jamb[2], TlVec2 to_jamb[2])
 {
     TlOpening right_side = *opening, left_side = *opening;
-    right_side.threshold = 0;
-    left_side.threshold = 1;
+    tl_opening_set_threshold(&right_side, 0);
+    tl_opening_set_threshold(&left_side, 1);
     return tl_project_opening_threshold(project, &right_side, &from_jamb[0], &to_jamb[0]) &&
            tl_project_opening_threshold(project, &left_side, &from_jamb[1], &to_jamb[1]);
 }

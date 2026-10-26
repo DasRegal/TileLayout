@@ -25,9 +25,13 @@ typedef enum AppSelectionKind {
     APP_SELECT_SPACE,      /* комната */
     APP_SELECT_PARTITION,  /* перегородка: index 0 — тело, 1 — начало, 2 — конец,
                               APP_PARTITION_FIRST_CORNER + TlPartitionCorner — угол тела */
-    APP_SELECT_OPENING,    /* проём: index 0 — сам проём, APP_OPENING_THRESHOLD — стык комнат в нём */
+    APP_SELECT_OPENING,    /* проём: index 0 — сам проём, APP_OPENING_THRESHOLD — стык комнат в нём,
+                              APP_OPENING_THRESHOLD_FROM / _TO — конец стыка у косяка */
     APP_SELECT_RULER,      /* линейка: index 0 — вся, 1 — начало, 2 — конец */
-    APP_SELECT_EXPANSION_JOINT /* деформационный шов: index 0 — весь, 1 — начало, 2 — конец */
+    APP_SELECT_EXPANSION_JOINT, /* деформационный шов: index 0 — весь, 1 — начало, 2 — конец */
+    APP_SELECT_NODE,       /* узел перегородок: partition + end — любой его конец;
+                              index 0 — середина узла, k + 1 — угол k (см. TlNodeCorner) */
+    APP_SELECT_TEE         /* точка примыкания: partition + end — конец, упёршийся в бок другой */
 } AppSelectionKind;
 
 typedef struct AppSelection {
@@ -38,6 +42,7 @@ typedef struct AppSelection {
     TlOpening *opening;
     TlRuler *ruler;
     TlExpansionJoint *expansion_joint;
+    TlPartitionEnd end; /* у узла */
     int index;
 } AppSelection;
 
@@ -112,9 +117,17 @@ bool app_selection_equal(const AppSelection *a, const AppSelection *b);
 
 #define APP_PARTITION_FIRST_CORNER 3
 #define APP_OPENING_THRESHOLD 1
+#define APP_OPENING_THRESHOLD_FROM 2 /* у косяка в начале проёма */
+#define APP_OPENING_THRESHOLD_TO 3   /* у косяка в конце */
 
 /* Выделен угол тела перегородки (тогда *corner — какой). */
 bool app_selection_partition_corner(const AppSelection *selection, TlPartitionCorner *corner);
+/* Выделенный узел (заново по концу перегородки: узлы вычисляются). */
+bool app_selection_node(const AppSelection *selection, TlProject *project, TlNode *node);
+/* Выделенное примыкание. */
+bool app_selection_tee(const AppSelection *selection, TlProject *project, TlTee *tee);
+/* Точка узла по индексу выделения: 0 — середина, k + 1 — угол k. */
+TlVec2 app_node_point(const TlNode *node, int index);
 
 /* ---- файлы -------------------------------------------------------------------- */
 

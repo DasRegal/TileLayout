@@ -185,6 +185,7 @@ static TlJson *opening_to_json(const TlOpening *opening)
     tl_json_object_set(object, "y", tl_json_number(opening->center.y));
     tl_json_object_set(object, "width", tl_json_number(opening->width));
     tl_json_object_set(object, "threshold", tl_json_number(opening->threshold));
+    tl_json_object_set(object, "threshold_end", tl_json_number(opening->threshold_end));
     tl_json_object_set(object, "threshold_gap", tl_json_number(opening->threshold_gap));
     tl_json_object_set(object, "locked", tl_json_bool(opening->locked));
     return object;
@@ -196,6 +197,7 @@ static TlOpening *opening_from_json(const TlJson *object)
                                                 tl_json_number_or(tl_json_get(object, "y"), 0)),
                                         tl_json_number_or(tl_json_get(object, "width"), 800));
     opening->threshold = tl_json_number_or(tl_json_get(object, "threshold"), TL_OPENING_DEFAULT_THRESHOLD);
+    opening->threshold_end = tl_json_number_or(tl_json_get(object, "threshold_end"), opening->threshold);
     opening->threshold_gap =
         fmax(0, tl_json_number_or(tl_json_get(object, "threshold_gap"), TL_OPENING_DEFAULT_THRESHOLD_GAP));
     opening->locked = tl_json_bool_or(tl_json_get(object, "locked"), false);
@@ -263,7 +265,7 @@ static void reset_wall_thresholds(TlProject *project)
         TlOpening *opening = project->openings.items[i];
         TlBand band;
         if (tl_project_opening_host(project, opening, &band) && band.host.kind == TL_HOST_WALL)
-            opening->threshold = tl_project_default_threshold(project, opening);
+            tl_opening_set_threshold(opening, tl_project_default_threshold(project, opening));
     }
 }
 
@@ -317,6 +319,7 @@ bool tl_project_from_json(TlProject *project, const TlJson *root, char *error, s
     if (project->next_space_id <= max_id)
         project->next_space_id = max_id + 1;
     load_legacy_rooms(project, tl_json_get(root, "rooms"));
+    tl_project_merge_straight_nodes(project); /* узлы на прямой — одна перегородка */
     tl_project_update_spaces(project);
     return true;
 }

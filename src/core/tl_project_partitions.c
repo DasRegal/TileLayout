@@ -1,58 +1,14 @@
 /*
- * Перегородки: узлы (совпадающие концы), заполнение углов «на ус», тела и
- * грани, к которым примыкают другие перегородки.
+ * Перегородки: тела (торцы — по углам узлов или по граням, в которые упираются)
+ * и грани, к которым примыкают другие перегородки. Узлы — tl_project_nodes.c.
  */
 #include "tl_project.h"
 
 #include <math.h>
 
 #define JOINT_TOLERANCE 1.0
-#define CAP_LIMIT_FACTOR 3.0
 #define FACE_CONTACT_TOLERANCE 1.0 /* мм: конец перегородки лежит на грани */
 #define MIN_FACE_ANGLE_SINE 0.05   /* грань почти вдоль оси — конец в неё не упирается */
-
-TlJointList tl_project_joints(TlProject *project)
-{
-    TlJointList joints = {0};
-    TlPartitionList *partitions = &project->partitions;
-    const TlPartitionEnd ends[2] = {TL_PARTITION_START, TL_PARTITION_END};
-    for (size_t a = 0; a < partitions->count; a++)
-        for (size_t b = a + 1; b < partitions->count; b++)
-            for (int ea = 0; ea < 2; ea++)
-                for (int eb = 0; eb < 2; eb++) {
-                    TlPartition *first = partitions->items[a], *second = partitions->items[b];
-                    if (tl_distance(*tl_partition_end_point(first, ends[ea]),
-                                    *tl_partition_end_point(second, ends[eb])) < JOINT_TOLERANCE) {
-                        TlJoint joint = {first, ends[ea], second, ends[eb]};
-                        tl_joint_list_push(&joints, joint);
-                    }
-                }
-    return joints;
-}
-
-/* ---- угол «на ус» ------------------------------------------------------------ */
-
-/* Бок перегородки у узла: угол тела и направление бока от этого угла вдоль тела. */
-typedef struct SideAtJoint {
-    TlVec2 corner;
-    TlVec2 direction;
-} SideAtJoint;
-
-/* Бок на стороне travel_side (+1 — слева по ходу travel) у конца end. */
-static SideAtJoint side_at_joint(const TlPartition *partition, TlPartitionEnd end, TlVec2 travel, int travel_side)
-{
-    bool along_axis = tl_vec2_dot(travel, tl_partition_direction(partition)) > 0;
-    bool left = (travel_side > 0) == along_axis; /* «лево» по ходу — лево тела, если идём по оси */
-    bool at_start = end == TL_PARTITION_START;
-    TlPartitionCorner near = left ? (at_start ? TL_PARTITION_START_LEFT : TL_PARTITION_END_LEFT)
-                                  : (at_start ? TL_PARTITION_START_RIGHT : TL_PARTITION_END_RIGHT);
-    TlPartitionCorner far = left ? (at_start ? TL_PARTITION_END_LEFT : TL_PARTITION_START_LEFT)
-                                 : (at_start ? TL_PARTITION_END_RIGHT : TL_PARTITION_START_RIGHT);
-    TlPolygon body = tl_partition_body(partition, 0);
-    SideAtJoint side = {body.items[near], tl_vec2_normalized(tl_vec2_sub(body.items[far], body.items[near]))};
-    tl_polygon_free(&body);
-    return side;
-}
 
 static void orient_counterclockwise(TlPolygon *polygon)
 {
@@ -63,47 +19,6 @@ static void orient_counterclockwise(TlPolygon *polygon)
         polygon->items[i] = polygon->items[j];
         polygon->items[j] = swap;
     }
-}
-
-/*
- * Идём по первой перегородке к узлу и дальше по второй. С внутренней стороны
- * поворота тела перекрываются, с наружной между торцами остаётся клин. Уголок
- * закрывает его: узел, наружные углы обоих тел и точка, где сходятся наружные
- * бока. Если бока сходятся слишком далеко (очень острый угол) или позади
- * торцов — клин срезается прямо между наружными углами.
- */
-bool tl_project_joint_cap(const TlJoint *joint, TlPolygon *cap)
-{
-    TlVec2 joint_point = *tl_partition_end_point(joint->first, joint->first_end);
-    TlVec2 first_far_end = *tl_partition_other_end_point(joint->first, joint->first_end);
-    TlVec2 second_far_end = *tl_partition_other_end_point(joint->second, joint->second_end);
-    TlVec2 into = tl_vec2_normalized(tl_vec2_sub(joint_point, first_far_end));
-    TlVec2 out = tl_vec2_normalized(tl_vec2_sub(second_far_end, joint_point));
-    double turn = tl_vec2_cross(into, out);
-    if (tl_vec2_is_zero(into) || tl_vec2_is_zero(out) || fabs(turn) < 1e-9)
-        return false; /* прямое продолжение — клина нет */
-    int outer = turn > 0 ? -1 : +1;
-    SideAtJoint first = side_at_joint(joint->first, joint->first_end, into, outer);
-    SideAtJoint second = side_at_joint(joint->second, joint->second_end, out, outer);
-
-    double limit = CAP_LIMIT_FACTOR * fmax(tl_partition_thickness_at(joint->first, joint->first_end),
-                                           tl_partition_thickness_at(joint->second, joint->second_end));
-    TlVec2 meeting;
-    bool mitred = tl_line_intersection(first.corner, first.direction, second.corner, second.direction, &meeting) &&
-                  tl_vec2_dot(tl_vec2_sub(meeting, first.corner), into) >= -1e-9 &&
-                  tl_vec2_dot(tl_vec2_sub(meeting, second.corner), out) <= 1e-9 &&
-                  tl_distance(meeting, joint_point) < limit;
-    *cap = (TlPolygon){0};
-    tl_polygon_push(cap, joint_point);
-    tl_polygon_push(cap, first.corner);
-    if (mitred)
-        tl_polygon_push(cap, meeting);
-    tl_polygon_push(cap, second.corner);
-    orient_counterclockwise(cap);
-    if (fabs(tl_polygon_signed_area(cap)) > 1e-9)
-        return true;
-    tl_polygon_free(cap);
-    return false;
 }
 
 /* ---- торцы по граням ------------------------------------------------------- */
@@ -162,6 +77,25 @@ static TlPartitionCorner opposite_corner(TlPartitionCorner corner)
     return OPPOSITE[corner];
 }
 
+/* Углы тела у конца в узле — углы узла. */
+static bool node_corners_of(TlProject *project, const TlPartition *partition, TlPartitionEnd end,
+                            TlVec2 *left, TlVec2 *right)
+{
+    TlNode node;
+    if (!tl_project_node_of(project, partition, end, &node))
+        return false;
+    for (size_t i = 0; i < node.count; i++)
+        if (node.ends[i].partition == partition && node.ends[i].end == end) {
+            TlVec2 outgoing_left, outgoing_right; /* по направлению от узла */
+            tl_node_end_corners(&node, i, &outgoing_left, &outgoing_right);
+            bool at_start = end == TL_PARTITION_START; /* у конца «лево» тела — справа по ходу от узла */
+            *left = at_start ? outgoing_left : outgoing_right;
+            *right = at_start ? outgoing_right : outgoing_left;
+            return true;
+        }
+    return false;
+}
+
 TlPolygon tl_project_partition_body(TlProject *project, const TlPartition *partition, double extension)
 {
     TlPolygon body = tl_partition_body(partition, 0);
@@ -180,6 +114,15 @@ TlPolygon tl_project_partition_body(TlProject *project, const TlPartition *parti
             on_face = square_corner;
         corners[corner] = tl_vec2_add(on_face, tl_vec2_scale(outward, extension));
     }
+    const TlPartitionEnd ENDS[2] = {TL_PARTITION_START, TL_PARTITION_END};
+    for (int e = 0; e < 2; e++) {
+        TlVec2 left, right;
+        if (!node_corners_of(project, partition, ENDS[e], &left, &right))
+            continue;
+        bool at_start = ENDS[e] == TL_PARTITION_START;
+        corners[at_start ? TL_PARTITION_START_LEFT : TL_PARTITION_END_LEFT] = left;
+        corners[at_start ? TL_PARTITION_START_RIGHT : TL_PARTITION_END_RIGHT] = right;
+    }
     tl_polygon_free(&body);
     return tl_polygon_from_points(corners, TL_PARTITION_CORNER_COUNT);
 }
@@ -195,13 +138,13 @@ TlPolygonList tl_project_partition_bodies(TlProject *project, double extension)
         orient_counterclockwise(&body); /* одно направление обхода — заливка без дыр */
         tl_polygon_list_push(&bodies, body);
     }
-    TlJointList joints = tl_project_joints(project);
-    for (size_t i = 0; i < joints.count; i++) {
-        TlPolygon cap;
-        if (tl_project_joint_cap(&joints.items[i], &cap))
-            tl_polygon_list_push(&bodies, cap);
+    TlNodeList nodes = tl_project_nodes(project);
+    for (size_t i = 0; i < nodes.count; i++) {
+        TlPolygon core;
+        if (tl_node_core(&nodes.items[i], &core))
+            tl_polygon_list_push(&bodies, core);
     }
-    tl_joint_list_free(&joints);
+    tl_node_list_free(&nodes);
     return bodies;
 }
 

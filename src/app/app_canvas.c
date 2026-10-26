@@ -253,6 +253,38 @@ static void fill_and_outline(cairo_t *cr, AppColor fill, const char *edge, doubl
     app_stroke(cr, app_color_hex(edge), width);
 }
 
+/* Точки узла: середина — круг, углы — квадраты; active — индекс выделенной
+   (−1 — никакой). */
+static void draw_node_points(AppCanvas *canvas, cairo_t *cr, const TlNode *node, int active)
+{
+    TlNodeCorner corners[TL_NODE_MAX];
+    size_t count = tl_node_corners(node, corners);
+    for (size_t k = 0; k < count; k++)
+        draw_corner_handle(cr, app_view_to_screen(&canvas->view, corners[k].first), active == (int)k + 1);
+    TlVec2 center = app_view_to_screen(&canvas->view, tl_node_center(node));
+    draw_handle(cr, center, active == 0 ? 6 : 4.5, active == 0, APP_BLUE);
+}
+
+/* Точки примыкания у перегородки: конец, упёршийся в бок, и бок, в который упираются. */
+static void draw_tee_points(AppCanvas *canvas, cairo_t *cr, const TlPartition *partition)
+{
+    TlTeeList tees = tl_project_tees(canvas->document->project);
+    for (size_t i = 0; i < tees.count; i++)
+        if (tees.items[i].branch == partition || tees.items[i].host == partition)
+            draw_handle(cr, app_view_to_screen(&canvas->view, tees.items[i].point), 4.5, false, APP_BLUE);
+    tl_tee_list_free(&tees);
+}
+
+/* Координаты выделенной точки — рядом с ней. */
+static void draw_point_coordinates(AppCanvas *canvas, cairo_t *cr, TlVec2 world)
+{
+    char text[64];
+    snprintf(text, sizeof text, "%.0f; %.0f", world.x, world.y);
+    AppTextStyle style = {10.5, true, app_color_hex(APP_BLUE), app_color_rgba(255, 255, 255, 0.88)};
+    TlVec2 at = app_view_to_screen(&canvas->view, world);
+    app_text_centered(cr, text, &style, tl_vec2(at.x, at.y - 16), 0);
+}
+
 static void draw_hover(AppCanvas *canvas, cairo_t *cr)
 {
     const AppSelection *hover = &canvas->hover;
@@ -270,44 +302,70 @@ static void draw_hover(AppCanvas *canvas, cairo_t *cr)
         tl_polygon_free(&body);
     } else if (hover->kind == APP_SELECT_RULER) {
         app_render_ruler(cr, &canvas->view, hover->ruler, app_color_hex(APP_BLUE), 1);
-    } else if (hover->kind == APP_SELECT_OPENING && hover->index == APP_OPENING_THRESHOLD) {
+    } else if (hover->kind == APP_SELECT_OPENING && hover->index >= APP_OPENING_THRESHOLD) {
         TlVec2 from, to;
         if (tl_project_opening_threshold(canvas->document->project, hover->opening, &from, &to))
             app_render_threshold(cr, &canvas->view, from, to, app_color_rgba(80, 160, 255, 1), 3);
     } else if (hover->kind == APP_SELECT_EXPANSION_JOINT) {
         app_render_expansion_joint(cr, &canvas->view, hover->expansion_joint, app_color_rgba(80, 160, 255, 1));
+    } else if (hover->kind == APP_SELECT_TEE) {
+        TlTee tee;
+        if (app_selection_tee(hover, canvas->document->project, &tee)) {
+            TlVec2 point = app_view_to_screen(&canvas->view, tee.point);
+            cairo_arc(cr, point.x, point.y, 8, 0, 2 * G_PI);
+            app_set_color(cr, app_color_rgba(80, 160, 255, 0.45));
+            cairo_fill(cr);
+        }
+    } else if (hover->kind == APP_SELECT_NODE) {
+        TlNode node;
+        if (app_selection_node(hover, canvas->document->project, &node)) {
+            TlVec2 point = app_view_to_screen(&canvas->view, app_node_point(&node, hover->index));
+            cairo_arc(cr, point.x, point.y, 8, 0, 2 * G_PI);
+            app_set_color(cr, app_color_rgba(80, 160, 255, 0.45));
+            cairo_fill(cr);
+        }
     }
 }
 
 /* Расстояния от краёв проёма до концов стены — по стороне комнаты. */
-static void draw_opening_distances(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along,
-                                   double width, const char *color)
+/* Расстояния от краёв проёма до ближайших точек разбивки грани: концов стены,
+   граней примкнувших перегородок, соседних проёмов. У стены — по внутренней
+   грани, у перегородки — по обоим бокам. */
+static void draw_opening_distances(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along, double width,
+                                   const TlOpening *opening, const char *color)
 {
+    TlProject *project = canvas->document->project;
     bool wall = band->host.kind == TL_HOST_WALL;
-    double across = wall ? band->near : band->far;
-    TlVec2 normal = wall ? tl_vec2_scale(band->normal, -1) : band->normal;
-    double edges[2][2] = {{0, along - width / 2}, {along + width / 2, band->length}};
-    for (int i = 0; i < 2; i++) {
-        if (edges[i][1] - edges[i][0] < 1)
+    const int sides[2] = {wall ? 0 : +1, -1};
+    for (int s = 0; s < (wall ? 1 : 2); s++) {
+        double across = wall ? band->near : sides[s] > 0 ? band->far : band->near;
+        TlVec2 normal = tl_vec2_scale(band->normal, wall || sides[s] < 0 ? -1 : 1);
+        double from = along - width / 2, to = along + width / 2, before, after;
+        if (!tl_project_opening_gaps(project, band, sides[s], opening, from, to, &before, &after))
             continue;
-        TlVec2 a = app_view_to_screen(&canvas->view, tl_band_point(band, edges[i][0], across));
-        TlVec2 b = app_view_to_screen(&canvas->view, tl_band_point(band, edges[i][1], across));
-        char text[32];
-        snprintf(text, sizeof text, "%.0f", edges[i][1] - edges[i][0]);
-        AppTextStyle style = {11.3, true, app_color_hex(color), app_color_rgba(255, 255, 255, 0.84)};
-        app_text_along(cr, text, &style, a, b, normal, 12);
+        const double edges[2][2] = {{before, from}, {to, after}};
+        for (int i = 0; i < 2; i++) {
+            if (edges[i][1] - edges[i][0] < 1)
+                continue;
+            TlVec2 a = app_view_to_screen(&canvas->view, tl_band_point(band, edges[i][0], across));
+            TlVec2 b = app_view_to_screen(&canvas->view, tl_band_point(band, edges[i][1], across));
+            char text[32];
+            snprintf(text, sizeof text, "%.0f", edges[i][1] - edges[i][0]);
+            AppTextStyle style = {11.3, true, app_color_hex(color), app_color_rgba(255, 255, 255, 0.84)};
+            app_text_along(cr, text, &style, a, b, normal, 12);
+        }
     }
 }
 
 void app_canvas_draw_opening_preview(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along,
-                                     double width, const char *color, bool preview)
+                                     double width, const TlOpening *opening, const char *color, bool preview)
 {
     TlPolygon shape = tl_project_opening_shape(canvas->document->project, band, along, width);
     app_path_polygon(cr, &canvas->view, &shape);
     AppColor fill = preview ? app_color_rgba(11, 128, 67, 0.43) : app_color_rgba(26, 115, 232, 0.27);
     fill_and_outline(cr, fill, color, preview ? 1.5 : 2.2);
     tl_polygon_free(&shape);
-    draw_opening_distances(canvas, cr, band, along, width, color);
+    draw_opening_distances(canvas, cr, band, along, width, opening, color);
 }
 
 static void draw_selection(AppCanvas *canvas, cairo_t *cr)
@@ -329,24 +387,69 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         return;
     }
     if (s->kind == APP_SELECT_PARTITION) {
-        TlPolygon body = tl_project_partition_body(canvas->document->project, s->partition, 0);
+        TlProject *project = canvas->document->project;
+        TlPolygon body = tl_project_partition_body(project, s->partition, 0);
         app_path_polygon(cr, view, &body);
         fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.35), APP_BLUE, 2.2);
-        for (size_t corner = 0; corner < body.count; corner++)
-            draw_corner_handle(cr, app_view_to_screen(view, body.items[corner]),
-                               s->index == APP_PARTITION_FIRST_CORNER + (int)corner);
+        /* у свободного конца — сам конец и углы тела, у конца в узле — точки узла */
+        const TlPartitionEnd ENDS[2] = {TL_PARTITION_START, TL_PARTITION_END};
+        for (int e = 0; e < 2; e++) {
+            TlNode node;
+            if (tl_project_node_of(project, s->partition, ENDS[e], &node)) {
+                draw_node_points(canvas, cr, &node, -1);
+                continue;
+            }
+            for (size_t corner = 0; corner < body.count; corner++)
+                if (tl_partition_corner_end((TlPartitionCorner)corner) == ENDS[e])
+                    draw_corner_handle(cr, app_view_to_screen(view, body.items[corner]),
+                                       s->index == APP_PARTITION_FIRST_CORNER + (int)corner);
+            int which = e + 1;
+            draw_handle(cr, app_view_to_screen(view, *tl_partition_end_point(s->partition, ENDS[e])),
+                        s->index == which ? 6 : 4.5, s->index == which, APP_BLUE);
+        }
         tl_polygon_free(&body);
-        draw_handle(cr, app_view_to_screen(view, s->partition->start), s->index == 1 ? 6 : 4.5, s->index == 1, APP_BLUE);
-        draw_handle(cr, app_view_to_screen(view, s->partition->end), s->index == 2 ? 6 : 4.5, s->index == 2, APP_BLUE);
+        draw_tee_points(canvas, cr, s->partition);
         app_canvas_draw_dimension(canvas, cr, s->partition->start, s->partition->end, false, APP_BLUE);
         return;
     }
+    if (s->kind == APP_SELECT_TEE) {
+        TlProject *project = canvas->document->project;
+        TlTee tee;
+        if (!app_selection_tee(s, project, &tee))
+            return;
+        const TlPartition *parts[2] = {tee.branch, tee.host};
+        for (int i = 0; i < 2; i++) {
+            TlPolygon body = tl_project_partition_body(project, parts[i], 0);
+            app_path_polygon(cr, view, &body);
+            fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.18), APP_BLUE, 1.2);
+            tl_polygon_free(&body);
+        }
+        draw_handle(cr, app_view_to_screen(view, tee.point), 6, true, APP_BLUE);
+        draw_point_coordinates(canvas, cr, tee.point);
+        return;
+    }
+    if (s->kind == APP_SELECT_NODE) {
+        TlProject *project = canvas->document->project;
+        TlNode node;
+        if (!app_selection_node(s, project, &node))
+            return;
+        for (size_t i = 0; i < node.count; i++) {
+            TlPolygon body = tl_project_partition_body(project, node.ends[i].partition, 0);
+            app_path_polygon(cr, view, &body);
+            fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.18), APP_BLUE, 1.2);
+            tl_polygon_free(&body);
+        }
+        draw_node_points(canvas, cr, &node, s->index);
+        draw_point_coordinates(canvas, cr, app_node_point(&node, s->index));
+        return;
+    }
     TlVec2 threshold_from, threshold_to;
-    if (s->kind == APP_SELECT_OPENING && s->index == APP_OPENING_THRESHOLD &&
+    if (s->kind == APP_SELECT_OPENING && s->index >= APP_OPENING_THRESHOLD &&
         tl_project_opening_threshold(canvas->document->project, s->opening, &threshold_from, &threshold_to)) {
         app_render_threshold(cr, view, threshold_from, threshold_to, app_color_hex(APP_BLUE), 3);
-        draw_handle(cr, app_view_to_screen(view, threshold_from), 3.5, true, APP_BLUE);
-        draw_handle(cr, app_view_to_screen(view, threshold_to), 3.5, true, APP_BLUE);
+        bool from_active = s->index == APP_OPENING_THRESHOLD_FROM, to_active = s->index == APP_OPENING_THRESHOLD_TO;
+        draw_handle(cr, app_view_to_screen(view, threshold_from), from_active ? 5.5 : 4, from_active, APP_BLUE);
+        draw_handle(cr, app_view_to_screen(view, threshold_to), to_active ? 5.5 : 4, to_active, APP_BLUE);
         return;
     }
     if (s->kind == APP_SELECT_OPENING) {
@@ -354,7 +457,7 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         if (tl_project_opening_host(canvas->document->project, s->opening, &band)) {
             double along;
             tl_band_local(&band, s->opening->center, &along, NULL);
-            app_canvas_draw_opening_preview(canvas, cr, &band, along, s->opening->width, APP_BLUE, false);
+            app_canvas_draw_opening_preview(canvas, cr, &band, along, s->opening->width, s->opening, APP_BLUE, false);
         }
         return;
     }

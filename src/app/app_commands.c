@@ -165,6 +165,7 @@ void app_command_add_partition(AppDocument *document, TlVec2 start, TlVec2 end)
     app_document_checkpoint(document, "");
     TlPartition *partition = tl_partition_new(start, end, document->preferences.partition_thickness);
     tl_project_add_partition(document->project, partition);
+    tl_project_merge_straight_nodes(document->project); /* продолжила другую по прямой — одна перегородка */
     tl_project_update_spaces(document->project);
     document->selection = (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition};
     app_document_commit(document);
@@ -181,7 +182,7 @@ void app_command_add_opening(AppDocument *document, const TlBand *band, double a
     app_document_checkpoint(document, "");
     TlOpening *opening = tl_opening_new(tl_band_point(band, along, tl_band_middle(band)), width);
     tl_project_add_opening(document->project, opening);
-    opening->threshold = tl_project_default_threshold(document->project, opening);
+    tl_opening_set_threshold(opening, tl_project_default_threshold(document->project, opening));
     document->selection = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening};
     app_document_commit_rooms(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
@@ -235,6 +236,71 @@ void app_command_insert_vertex(AppDocument *document, TlOutline *outline, size_t
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
+void app_command_set_vertex(AppDocument *document, TlOutline *outline, size_t index, TlVec2 point)
+{
+    size_t count = outline->inner.count;
+    if (index >= count)
+        return;
+    if (outline->locked.items[index] || outline->locked.items[(index + count - 1) % count]) {
+        app_document_status(document, "Стена у этого угла заблокирована");
+        return;
+    }
+    TlEditToken *token = app_document_begin_geometry(document, "", NULL);
+    outline->inner.items[index] = point;
+    app_document_end_geometry(document, token, NULL);
+}
+
+static bool node_locked(const TlNode *node)
+{
+    for (size_t i = 0; i < node->count; i++)
+        if (node->ends[i].partition->locked)
+            return true;
+    return false;
+}
+
+#define NODE_CENTER_STEPS 8 /* середина узла сдвигается чуть иначе, чем сам узел, — уточняем */
+
+void app_command_set_node_point(AppDocument *document, const AppSelection *selection, TlVec2 point)
+{
+    TlProject *project = document->project;
+    TlNode node;
+    if (!app_selection_node(selection, project, &node))
+        return;
+    if (node_locked(&node)) {
+        app_document_status(document, "Перегородка в узле заблокирована");
+        return;
+    }
+    TlEditToken *token = app_document_begin_geometry(document, "", NULL);
+    if (selection->index == 0) {
+        for (int step = 0; step < NODE_CENTER_STEPS && app_selection_node(selection, project, &node); step++) {
+            TlVec2 shift = tl_vec2_sub(point, tl_node_center(&node));
+            tl_project_move_node(project, &node, tl_vec2_add(node.point, shift));
+        }
+    } else {
+        tl_project_set_node_corner(project, &node, (size_t)selection->index - 1, point);
+    }
+    app_document_end_geometry(document, token, NULL);
+}
+
+void app_command_set_tee_point(AppDocument *document, const AppSelection *selection, TlVec2 point)
+{
+    TlProject *project = document->project;
+    TlTee tee;
+    if (!app_selection_tee(selection, project, &tee))
+        return;
+    if (tee.branch->locked || tee.host->locked) {
+        app_document_status(document, "Перегородка заблокирована");
+        return;
+    }
+    AppSelection kept = *selection;
+    TlEditToken *token = app_document_begin_geometry(document, "", NULL);
+    if (tl_project_move_tee(project, &tee, point))
+        kept.kind = APP_SELECT_NODE; /* ушла за грань — теперь это узел */
+    TlEditOptions options = {.frozen = tee.branch, .keep_ends = true};
+    app_document_end_geometry(document, token, &options);
+    app_document_select(document, kept);
+}
+
 /* ---- удаление ---------------------------------------------------------------- */
 
 void app_command_delete_selection(AppDocument *document)
@@ -263,6 +329,19 @@ void app_command_delete_selection(AppDocument *document)
         tl_project_delete_opening(project, s.opening);
         tl_project_update_spaces(project); /* пол проёма уходит из комнат */
         break;
+    case APP_SELECT_NODE: { /* узел убирается: сломанная перегородка выпрямляется */
+        TlNode node;
+        if (!app_selection_node(&s, project, &node))
+            return;
+        if (node_locked(&node)) {
+            app_document_status(document, "Перегородка в узле заблокирована");
+            return;
+        }
+        app_document_checkpoint(document, "");
+        tl_project_dissolve_node(project, &node);
+        tl_project_update_spaces(project);
+        break;
+    }
     case APP_SELECT_PARTITION:
         app_document_checkpoint(document, "");
         tl_project_delete_partition(project, s.partition);

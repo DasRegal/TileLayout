@@ -50,10 +50,19 @@ static bool threshold_strip(TlProject *project, const TlOpening *opening, TlPoly
     TlVec2 direction = tl_vec2_normalized(tl_vec2_sub(to, from));
     double width = fmax(THRESHOLD_GAP, opening->threshold_gap);
     TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(direction), width / 2);
-    TlVec2 a = tl_vec2_sub(from, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
-    TlVec2 b = tl_vec2_add(to, tl_vec2_scale(direction, THRESHOLD_OVERRUN));
-    const TlVec2 corners[] = {tl_vec2_add(a, half), tl_vec2_add(b, half), tl_vec2_sub(b, half), tl_vec2_sub(a, half)};
-    *strip = tl_polygon_from_points(corners, 4);
+    /* Бока полосы — вдоль стыка от косяка до косяка; за косяки она выступает на
+       OVERRUN вдоль стены, а не вдоль стыка: стык наискосок иначе вылез бы в комнату. */
+    TlVec2 along = direction;
+    TlBand band;
+    if (tl_project_opening_host(project, opening, &band))
+        along = tl_vec2_scale(band.direction, tl_vec2_dot(band.direction, direction) < 0 ? -1 : 1);
+    TlVec2 past = tl_vec2_scale(along, THRESHOLD_OVERRUN);
+    const TlVec2 corners[] = {
+        tl_vec2_add(from, half), tl_vec2_add(to, half), tl_vec2_add(tl_vec2_add(to, half), past),
+        tl_vec2_add(tl_vec2_sub(to, half), past), tl_vec2_sub(to, half), tl_vec2_sub(from, half),
+        tl_vec2_sub(tl_vec2_sub(from, half), past), tl_vec2_sub(tl_vec2_add(from, half), past),
+    };
+    *strip = tl_polygon_from_points(corners, 8);
     return true;
 }
 
@@ -300,7 +309,8 @@ void tl_project_update_spaces(TlProject *project)
                 overlap_pair_list_push(&pairs, pair);
             }
         }
-    qsort(pairs.items, pairs.count, sizeof(OverlapPair), compare_pairs_by_area);
+    if (pairs.count > 1)
+        qsort(pairs.items, pairs.count, sizeof(OverlapPair), compare_pairs_by_area);
 
     TlSpace **assigned = tl_calloc(components.count + 1, sizeof(TlSpace *));
     TlSpace **parent = tl_calloc(components.count + 1, sizeof(TlSpace *));

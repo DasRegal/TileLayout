@@ -162,7 +162,7 @@ void spec_project(void)
             tl_project_update_spaces(project);
             EXPECT_INT(project->spaces.count, 2);
             TlPolygonList bodies = tl_project_partition_bodies(project, 0);
-            EXPECT_INT(bodies.count, 3); /* два тела и заполнение угла */
+            EXPECT_INT(bodies.count, 2); /* угол закрывают сами тела: они сходятся «на ус» */
             tl_polygon_list_free_all(&bodies);
             tl_project_free(project);
         }

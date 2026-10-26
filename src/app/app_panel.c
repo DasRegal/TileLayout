@@ -52,6 +52,12 @@ struct AppPanel {
     GtkWidget *partition_corner_hint, *partition_corner_box;
     GtkWidget *partition_corner_name, *partition_corner_offset, *partition_corner_position;
 
+    AppSection node_section;
+    GtkWidget *node_point_name, *node_members, *node_x, *node_y;
+
+    AppSection vertex_section;
+    GtkWidget *vertex_x, *vertex_y;
+
     AppSection ruler_section;
     GtkWidget *ruler_length, *ruler_count;
 
@@ -61,7 +67,7 @@ struct AppPanel {
     AppSection opening_section;
     GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
     GtkWidget *threshold_box, *threshold_title, *threshold_depth_caption, *threshold_depth;
-    GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap;
+    GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap, *threshold_skew;
 
     AppSection tile_section, glue_section, clip_section;
     GtkWidget *shared_note, *row_shift, *color_button;
@@ -603,13 +609,18 @@ static bool doorway_sides(TlProject *project, const TlOpening *opening, DoorwayS
     return sides->depth > 0;
 }
 
-static void set_threshold(AppPanel *panel, double share)
+/* Стык по середине проёма (middle) и наклону (skew — разница долей у косяков);
+   концы не выходят за грани. */
+static void set_threshold(AppPanel *panel, double middle, double skew)
 {
     TlOpening *opening = selected_opening(panel);
     if (!opening)
         return;
+    skew = fmax(-1, fmin(1, skew));
+    middle = fmax(fabs(skew) / 2, fmin(1 - fabs(skew) / 2, middle));
     app_document_checkpoint(panel->document, "threshold");
-    opening->threshold = fmin(1, fmax(0, share));
+    opening->threshold = middle - skew / 2;
+    opening->threshold_end = middle + skew / 2;
     app_document_commit_rooms(panel->document);
 }
 
@@ -619,7 +630,17 @@ static void on_threshold_depth(GtkSpinButton *spin, AppPanel *panel)
     TlOpening *opening = selected_opening(panel);
     DoorwaySides sides;
     if (opening && doorway_sides(panel->document->project, opening, &sides))
-        set_threshold(panel, gtk_spin_button_get_value(spin) / sides.depth);
+        set_threshold(panel, gtk_spin_button_get_value(spin) / sides.depth, opening->threshold_end - opening->threshold);
+}
+
+/* Наклон стыка: на сколько мм конец у косяка в конце проёма дальше, чем в начале. */
+static void on_threshold_skew(GtkSpinButton *spin, AppPanel *panel)
+{
+    TlOpening *opening = selected_opening(panel);
+    DoorwaySides sides;
+    if (opening && doorway_sides(panel->document->project, opening, &sides))
+        set_threshold(panel, (opening->threshold + opening->threshold_end) / 2,
+                      gtk_spin_button_get_value(spin) / sides.depth);
 }
 
 static void on_threshold_gap(GtkSpinButton *spin, AppPanel *panel)
@@ -634,7 +655,7 @@ static void on_threshold_gap(GtkSpinButton *spin, AppPanel *panel)
 
 static void on_threshold_preset(GtkButton *button, AppPanel *panel)
 {
-    set_threshold(panel, *(const double *)g_object_get_data(G_OBJECT(button), "share"));
+    set_threshold(panel, *(const double *)g_object_get_data(G_OBJECT(button), "share"), 0);
 }
 
 static GtkWidget *threshold_button(AppPanel *panel, const double *share)
@@ -919,6 +940,88 @@ static void build_expansion_joint(AppPanel *panel, GtkWidget *box)
                                        G_CALLBACK(on_delete_selection), panel));
 }
 
+/* ---- точка с координатами: узел перегородок, угол дома ------------------------ */
+
+#define COORDINATE_LIMIT 1e7
+
+static void on_node_coordinate(GtkSpinButton *spin, AppPanel *panel)
+{
+    (void)spin;
+    if (panel->updating)
+        return;
+    TlVec2 point = tl_vec2(gtk_spin_button_get_value(GTK_SPIN_BUTTON(panel->node_x)),
+                           gtk_spin_button_get_value(GTK_SPIN_BUTTON(panel->node_y)));
+    AppSelection selection = panel->document->selection;
+    if (selection.kind == APP_SELECT_TEE)
+        app_command_set_tee_point(panel->document, &selection, point);
+    else
+        app_command_set_node_point(panel->document, &selection, point);
+}
+
+static void on_vertex_coordinate(GtkSpinButton *spin, AppPanel *panel)
+{
+    (void)spin;
+    const AppSelection *s = &panel->document->selection;
+    if (panel->updating || s->kind != APP_SELECT_VERTEX)
+        return;
+    TlVec2 point = tl_vec2(gtk_spin_button_get_value(GTK_SPIN_BUTTON(panel->vertex_x)),
+                           gtk_spin_button_get_value(GTK_SPIN_BUTTON(panel->vertex_y)));
+    app_command_set_vertex(panel->document, s->outline, (size_t)s->index, point);
+}
+
+static void build_node(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->node_section;
+    *s = app_section_new(box, "Узел перегородок");
+    panel->node_point_name = app_section_value_label(s, "Точка");
+    panel->node_members = app_section_value_label(s, "Перегородок");
+    panel->node_x = spin_with(panel, -COORDINATE_LIMIT, COORDINATE_LIMIT, 1, 1, "мм", G_CALLBACK(on_node_coordinate));
+    gtk_widget_set_tooltip_text(panel->node_x, "Середина узла переносит его целиком — перегородки тянутся за ним;\n"
+                                               "угол узла меняет углы тел у узла, дальние концы остаются на месте;\n"
+                                               "примыкание скользит по боку, а за гранью становится узлом.\n"
+                                               "Delete на узле — убрать его: перегородка выпрямится");
+    app_section_row(s, "X", panel->node_x);
+    panel->node_y = spin_with(panel, -COORDINATE_LIMIT, COORDINATE_LIMIT, 1, 1, "мм", G_CALLBACK(on_node_coordinate));
+    app_section_row(s, "Y", panel->node_y);
+}
+
+static void build_vertex(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->vertex_section;
+    *s = app_section_new(box, "Угол дома");
+    panel->vertex_x = spin_with(panel, -COORDINATE_LIMIT, COORDINATE_LIMIT, 1, 1, "мм", G_CALLBACK(on_vertex_coordinate));
+    gtk_widget_set_tooltip_text(panel->vertex_x, "Внутренний угол стен; перегородки, упёртые в эти стены, следуют за ними");
+    app_section_row(s, "X", panel->vertex_x);
+    panel->vertex_y = spin_with(panel, -COORDINATE_LIMIT, COORDINATE_LIMIT, 1, 1, "мм", G_CALLBACK(on_vertex_coordinate));
+    app_section_row(s, "Y", panel->vertex_y);
+}
+
+static void refresh_node(AppPanel *panel)
+{
+    TlNode node;
+    TlTee tee;
+    const AppSelection *s = &panel->document->selection;
+    if (app_selection_tee(s, panel->document->project, &tee)) {
+        gtk_label_set_text(GTK_LABEL(panel->node_point_name), "примыкание к боку");
+        set_label(panel->node_members, "%.0f", 2.0);
+        set_spin(panel->node_x, tee.point.x);
+        set_spin(panel->node_y, tee.point.y);
+        return;
+    }
+    if (!app_selection_node(s, panel->document->project, &node))
+        return;
+    char name[64];
+    if (s->index == 0)
+        snprintf(name, sizeof name, "середина узла");
+    else
+        snprintf(name, sizeof name, "угол %d из %zu", s->index, node.count);
+    gtk_label_set_text(GTK_LABEL(panel->node_point_name), name);
+    set_label(panel->node_members, "%.0f", (double)node.count);
+    TlVec2 point = app_node_point(&node, s->index);
+    set_spin(panel->node_x, point.x);
+    set_spin(panel->node_y, point.y);
+}
+
 static void build_ruler(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->ruler_section;
@@ -957,10 +1060,18 @@ static void build_threshold(AppPanel *panel, AppSection *section)
     gtk_widget_set_tooltip_text(panel->threshold_gap, "Зазор между плиткой комнат по линии стыка — поровну в обе "
                                                       "стороны.\nОтступ плитки от стен у стыка не действует: "
                                                       "зазор там задаёт только шов");
-    GtkWidget *gap_caption = gtk_label_new("Шов");
-    gtk_label_set_xalign(GTK_LABEL(gap_caption), 0);
-    gtk_grid_attach(GTK_GRID(threshold.grid), gap_caption, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(threshold.grid), panel->threshold_gap, 1, 1, 1, 1);
+    panel->threshold_skew = spin_with(panel, -2000, 2000, 1, 0, "мм", G_CALLBACK(on_threshold_skew));
+    gtk_widget_set_tooltip_text(panel->threshold_skew, "Стык наискосок: на сколько у одного косяка он дальше, чем у "
+                                                       "другого (0 — параллельно полотну).\nКонцы стыка можно и "
+                                                       "потянуть мышью — у выделенного стыка");
+    const char *captions[] = {"Наклон", "Шов"};
+    GtkWidget *spins[] = {panel->threshold_skew, panel->threshold_gap};
+    for (int row = 0; row < 2; row++) {
+        GtkWidget *caption = gtk_label_new(captions[row]);
+        gtk_label_set_xalign(GTK_LABEL(caption), 0);
+        gtk_grid_attach(GTK_GRID(threshold.grid), caption, 0, row + 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(threshold.grid), spins[row], 1, row + 1, 1, 1);
+    }
     GtkWidget *presets = app_hbox(4);
     panel->threshold_to_left = threshold_button(panel, &ALL_TO_LEFT);
     panel->threshold_middle = threshold_button(panel, &HALVES);
@@ -1000,7 +1111,9 @@ static void refresh_threshold(AppPanel *panel, TlOpening *opening)
     gtk_label_set_text(GTK_LABEL(panel->threshold_depth_caption), caption);
     g_free(caption);
     gtk_spin_button_set_range(GTK_SPIN_BUTTON(panel->threshold_depth), 0, sides.depth);
-    set_spin(panel->threshold_depth, opening->threshold * sides.depth);
+    set_spin(panel->threshold_depth, (opening->threshold + opening->threshold_end) / 2 * sides.depth);
+    gtk_spin_button_set_range(GTK_SPIN_BUTTON(panel->threshold_skew), -sides.depth, sides.depth);
+    set_spin(panel->threshold_skew, (opening->threshold_end - opening->threshold) * sides.depth);
     set_spin(panel->threshold_gap, opening->threshold_gap);
     if (sides.outside) { /* стык у внутренней грани — пола под проёмом нет */
         gtk_button_set_label(GTK_BUTTON(panel->threshold_to_left), "Без пола");
@@ -1009,8 +1122,8 @@ static void refresh_threshold(AppPanel *panel, TlOpening *opening)
         label_threshold_button(panel->threshold_to_left, sides.left_room); /* стык у грани 0 */
     }
     label_threshold_button(panel->threshold_to_right, sides.right_room);
-    GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_gap, panel->threshold_to_left,
-                             panel->threshold_middle, panel->threshold_to_right};
+    GtkWidget *controls[] = {panel->threshold_depth, panel->threshold_skew, panel->threshold_gap,
+                             panel->threshold_to_left, panel->threshold_middle, panel->threshold_to_right};
     for (size_t i = 0; i < G_N_ELEMENTS(controls); i++)
         gtk_widget_set_sensitive(controls[i], !opening->locked);
 }
@@ -1322,6 +1435,8 @@ static void refresh(AppPanel *panel)
     gtk_widget_set_visible(panel->partition_section.frame, s->kind == APP_SELECT_PARTITION);
     gtk_widget_set_visible(panel->opening_section.frame, s->kind == APP_SELECT_OPENING);
     gtk_widget_set_visible(panel->ruler_section.frame, s->kind == APP_SELECT_RULER);
+    gtk_widget_set_visible(panel->node_section.frame, s->kind == APP_SELECT_NODE || s->kind == APP_SELECT_TEE);
+    gtk_widget_set_visible(panel->vertex_section.frame, s->kind == APP_SELECT_VERTEX);
     gtk_widget_set_visible(panel->expansion_joint_section.frame, s->kind == APP_SELECT_EXPANSION_JOINT);
     gtk_widget_set_visible(panel->hint, s->kind == APP_SELECT_NONE);
 
@@ -1337,6 +1452,12 @@ static void refresh(AppPanel *panel)
         refresh_partition(panel, s->partition);
     if (s->kind == APP_SELECT_OPENING)
         refresh_opening(panel, s->opening);
+    if (s->kind == APP_SELECT_NODE || s->kind == APP_SELECT_TEE)
+        refresh_node(panel);
+    if (s->kind == APP_SELECT_VERTEX) {
+        set_spin(panel->vertex_x, s->outline->inner.items[s->index].x);
+        set_spin(panel->vertex_y, s->outline->inner.items[s->index].y);
+    }
     if (s->kind == APP_SELECT_RULER) {
         set_label(panel->ruler_length, "%.0f мм", tl_ruler_length(s->ruler));
         set_label(panel->ruler_count, "%.0f", (double)document->project->rulers.count);
@@ -1380,6 +1501,8 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_partition(panel, box);
     build_opening(panel, box);
     build_expansion_joint(panel, box);
+    build_node(panel, box);
+    build_vertex(panel, box);
     build_ruler(panel, box);
     build_tile(panel, box);
     build_calc(panel, box);

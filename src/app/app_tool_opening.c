@@ -42,7 +42,7 @@ static void draw(AppCanvas *canvas, cairo_t *cr)
 {
     if (canvas->has_opening_preview)
         app_canvas_draw_opening_preview(canvas, cr, &canvas->opening_band, canvas->opening_along,
-                                        canvas->document->preferences.opening_width, APP_GREEN, true);
+                                        canvas->document->preferences.opening_width, NULL, APP_GREEN, true);
 }
 
 const AppTool APP_OPENING_TOOL = {

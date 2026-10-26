@@ -4,9 +4,11 @@
  * begin: запоминаем, какие концы перегородок лежат на каких гранях, какие
  * концы соединены в узлы, на какой стене и где вдоль неё стоит каждый проём,
  * и (при переносе дома) какие перегородки лежат внутри него.
- * end: переносим перегородки дома, концы узлов — за ведущей перегородкой,
- * концы на гранях — на новое положение граней (сохраняя направление
- * перегородки), проёмы — на свои стены; затем пересчитываем комнаты.
+ * apply: переносим перегородки дома, узлы — за ведущей перегородкой, концы на
+ * гранях — на новое положение граней (сохраняя направление перегородки),
+ * проёмы — на свои стены; затем пересчитываем комнаты.
+ * end: то же и в конце — tl_project_merge_straight_nodes (узел на прямой —
+ * снова одна перегородка).
  */
 #include "tl_project.h"
 
@@ -14,6 +16,7 @@
 
 #define ATTACH_TOLERANCE 1.0
 #define FOLLOW_PASSES 3 /* перегородки могут опираться друг на друга */
+#define STRAIGHT_SINE 0.02 /* два конца узла — одна прямая перегородка, поделённая в узле */
 
 typedef struct Attachment {
     TlPartition *partition;
@@ -45,7 +48,7 @@ TL_ARRAY_DEFINE(PartitionDirectionList, PartitionDirection, partition_direction_
 
 struct TlEditToken {
     AttachmentList attachments;
-    TlJointList joints;
+    TlNodeList nodes;
     OpeningAnchorList anchors;
     CarriedPartitionList carried;
     PartitionDirectionList directions;
@@ -110,7 +113,7 @@ TlEditToken *tl_project_begin_edit(TlProject *project, TlOutline *moving_outline
 {
     TlEditToken *token = TL_NEW(TlEditToken);
     remember_attachments(project, token);
-    token->joints = tl_project_joints(project);
+    token->nodes = tl_project_nodes(project);
     remember_openings(project, token);
     remember_carried(project, moving_outline, token);
     for (size_t i = 0; i < project->partitions.count; i++) {
@@ -126,7 +129,7 @@ void tl_edit_token_free(TlEditToken *token)
     if (!token)
         return;
     attachment_list_free(&token->attachments);
-    tl_joint_list_free(&token->joints);
+    tl_node_list_free(&token->nodes);
     opening_anchor_list_free(&token->anchors);
     carried_partition_list_free(&token->carried);
     partition_direction_list_free(&token->directions);
@@ -167,21 +170,68 @@ static void carry_partitions(TlEditToken *token, TlVec2 offset)
     }
 }
 
-/* Конец перегородки в узле следует за концом ведущей перегородки. */
+static TlVec2 away(const TlNodeEnd *end, const TlEditToken *token)
+{
+    TlVec2 direction = original_direction(token, end->partition);
+    return end->end == TL_PARTITION_START ? direction : tl_vec2_scale(direction, -1);
+}
+
+/* Два других конца узла на одной прямой — перегородка, поделённая в узле
+   примыканием: её дальние концы задают прямую, по которой узел скользит. */
+static bool straight_pair(const TlNode *node, const TlEditToken *token, const TlPartition *master,
+                          TlVec2 *point, TlVec2 *direction)
+{
+    for (size_t i = 0; i < node->count; i++)
+        for (size_t j = i + 1; j < node->count; j++) {
+            const TlNodeEnd *a = &node->ends[i], *b = &node->ends[j];
+            if (a->partition == master || b->partition == master)
+                continue;
+            TlVec2 da = away(a, token), db = away(b, token);
+            if (tl_vec2_dot(da, db) < 0 && fabs(tl_vec2_cross(da, db)) < STRAIGHT_SINE) {
+                *point = *tl_partition_other_end_point(a->partition, a->end);
+                *direction = tl_vec2_sub(*tl_partition_other_end_point(b->partition, b->end), *point);
+                return !tl_vec2_is_zero(*direction);
+            }
+        }
+    return false;
+}
+
+/* Узел следует за концом ведущей перегородки. Если узел на прямой из двух
+   других — он скользит по ней туда, где её пересекает ось ведущей. */
 static void follow_master(const TlEditToken *token, const TlEditOptions *options)
 {
     if (!options->master)
         return;
-    for (size_t i = 0; i < token->joints.count; i++) {
-        const TlJoint *joint = &token->joints.items[i];
-        if (options->has_translate && (was_carried(token, joint->first) || was_carried(token, joint->second)))
+    for (size_t n = 0; n < token->nodes.count; n++) {
+        const TlNode *node = &token->nodes.items[n];
+        const TlNodeEnd *lead = NULL;
+        for (size_t i = 0; i < node->count && !lead; i++)
+            if (node->ends[i].partition == options->master)
+                lead = &node->ends[i];
+        if (!lead)
             continue;
-        if (joint->first == options->master && joint->second != options->master && !joint->second->locked)
-            *tl_partition_end_point(joint->second, joint->second_end) =
-                *tl_partition_end_point(joint->first, joint->first_end);
-        else if (joint->second == options->master && joint->first != options->master && !joint->first->locked)
-            *tl_partition_end_point(joint->first, joint->first_end) =
-                *tl_partition_end_point(joint->second, joint->second_end);
+        if (options->has_translate) {
+            bool carried = false;
+            for (size_t i = 0; i < node->count; i++)
+                carried = carried || was_carried(token, node->ends[i].partition);
+            if (carried)
+                continue;
+        }
+        TlVec2 target = *tl_partition_end_point(lead->partition, lead->end);
+        TlVec2 line_point, line_direction, hit;
+        TlPartition *master = options->master;
+        if (straight_pair(node, token, master, &line_point, &line_direction) &&
+            tl_line_intersection(*tl_partition_other_end_point(master, lead->end),
+                                 tl_vec2_sub(target, *tl_partition_other_end_point(master, lead->end)), line_point,
+                                 line_direction, &hit))
+            target = hit;
+        for (size_t i = 0; i < node->count; i++) {
+            const TlNodeEnd *end = &node->ends[i];
+            if (end->partition == master && master != options->frozen)
+                *tl_partition_end_point(end->partition, end->end) = target;
+            else if (end->partition != master && !end->partition->locked)
+                *tl_partition_end_point(end->partition, end->end) = target;
+        }
     }
 }
 
@@ -192,9 +242,12 @@ static void follow_faces(TlProject *project, const TlEditToken *token, const TlE
     for (size_t i = 0; i < token->attachments.count; i++) {
         const Attachment *attachment = &token->attachments.items[i];
         TlPartition *partition = attachment->partition;
+        TlNode node;
         if (partition == options->frozen || partition->locked || !partition_exists(project, partition) ||
             (translating && was_carried(token, partition)))
             continue;
+        if (tl_project_node_of(project, partition, attachment->end, &node))
+            continue; /* конец в узле (например, перегородку поделили) — его держит узел */
         TlVec2 face_point, face_direction;
         if (!tl_project_face_line(project, attachment->host, attachment->side, &face_point, &face_direction))
             continue;
@@ -234,7 +287,8 @@ void tl_project_apply_edit(TlProject *project, TlEditToken *token, const TlEditO
         carry_partitions(token, options->translate);
     for (int pass = 0; pass < FOLLOW_PASSES; pass++) {
         follow_master(token, options);
-        follow_faces(project, token, options, options->has_translate);
+        if (!options->keep_ends)
+            follow_faces(project, token, options, options->has_translate);
     }
     restore_openings(project, token);
     if (!options->skip_space_update)
@@ -245,4 +299,7 @@ void tl_project_end_edit(TlProject *project, TlEditToken *token, const TlEditOpt
 {
     tl_project_apply_edit(project, token, options);
     tl_edit_token_free(token);
+    tl_project_merge_straight_nodes(project);
+    if (!options || !options->skip_space_update)
+        tl_project_update_spaces(project);
 }

@@ -20,7 +20,7 @@ static TlProject *two_rooms_with_door(double threshold)
     tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
     tl_project_add_partition(project, tl_partition_new(tl_vec2(2000, 0), tl_vec2(2000, 3000), 100));
     TlOpening *door = tl_opening_new(tl_vec2(2000, 1500), 800);
-    door->threshold = threshold;
+    tl_opening_set_threshold(door, threshold);
     tl_project_add_opening(project, door);
     tl_project_update_spaces(project);
     return project;
@@ -41,7 +41,7 @@ static TlProject *house_with_outer_door(double share)
     tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
     TlOpening *door = tl_opening_new(tl_vec2(2000, -100), 800);
     tl_project_add_opening(project, door);
-    door->threshold = share < 0 ? tl_project_default_threshold(project, door) : share;
+    tl_opening_set_threshold(door, share < 0 ? tl_project_default_threshold(project, door) : share);
     tl_project_update_spaces(project);
     return project;
 }
@@ -56,7 +56,7 @@ static TlProject *two_houses_with_door(void)
     tl_project_add_outline(project, tl_outline_new(lower, 4, 200));
     TlOpening *door = tl_opening_new(tl_vec2(2000, -100), 800);
     tl_project_add_opening(project, door);
-    door->threshold = tl_project_default_threshold(project, door);
+    tl_opening_set_threshold(door, tl_project_default_threshold(project, door));
     tl_project_update_spaces(project);
     return project;
 }
@@ -145,20 +145,39 @@ void spec_doorway(void)
             EXPECT_INT(project->spaces.count, 2);
             tl_project_free(project);
         }
+        IT("стык наискосок: у одного косяка на правом боку, у другого на левом — пол делится пополам")
+        {
+            TlProject *project = two_rooms_with_door(0.5);
+            TlOpening *door = project->openings.items[0];
+            door->threshold = 0;     /* у косяка y = 1100 — на правом боку (x = 2050) */
+            door->threshold_end = 1; /* у косяка y = 1900 — на левом (x = 1950) */
+            tl_project_update_spaces(project);
+            TlVec2 from, to;
+            EXPECT(tl_project_opening_threshold(project, door, &from, &to));
+            EXPECT_NEAR(from.x, 2050, 1e-9);
+            EXPECT_NEAR(to.x, 1950, 1e-9);
+            /* треугольники 100 × 800 / 2 — каждой комнате */
+            EXPECT_NEAR(area_of_room_at(project, 1000, 1500), 1950 * 3000 + 100 * 800 / 2, DIVIDER_LOSS);
+            EXPECT_NEAR(area_of_room_at(project, 3000, 1500), 1950 * 3000 + 100 * 800 / 2, DIVIDER_LOSS);
+            tl_project_free(project);
+        }
         IT("новый проём — со стыком посередине и без шва; стык и шов сохраняются в файле")
         {
             TlOpening *opening = tl_opening_new(tl_vec2(0, 0), 800);
             EXPECT_NEAR(opening->threshold, 0.5, 1e-12);
+            EXPECT_NEAR(opening->threshold_end, 0.5, 1e-12);
             EXPECT_NEAR(opening->threshold_gap, 0, 1e-12);
             tl_opening_free(opening);
             TlProject *project = two_rooms_with_door(0.2);
             project->openings.items[0]->threshold_gap = 3;
+            project->openings.items[0]->threshold_end = 0.7;
             char *text = tl_project_to_string(project);
             TlProject *loaded = tl_project_new();
             char error[128] = "";
             EXPECT(tl_project_from_string(loaded, text, error, sizeof error));
             EXPECT_NEAR(loaded->openings.items[0]->threshold, 0.2, 1e-12);
             EXPECT_NEAR(loaded->openings.items[0]->threshold_gap, 3, 1e-12);
+            EXPECT_NEAR(loaded->openings.items[0]->threshold_end, 0.7, 1e-12);
             free(text);
             tl_project_free(loaded);
             tl_project_free(project);
@@ -185,6 +204,16 @@ void spec_doorway(void)
             TlSpace *space = tl_project_space_at(project, tl_vec2(2000, 1500));
             EXPECT(space && tl_space_contains(space, tl_vec2(2000, -90)));
             EXPECT(space && !tl_space_contains(space, tl_vec2(2000, -110)));
+            tl_project_free(project);
+        }
+        IT("наружная дверь наискосок: пол комнаты — до косого полотна")
+        {
+            TlProject *project = house_with_outer_door(0.5);
+            TlOpening *door = project->openings.items[0];
+            door->threshold = 0;
+            door->threshold_end = 1; /* у одного косяка пола нет, у другого — на всю стену */
+            tl_project_update_spaces(project);
+            EXPECT_NEAR(area_of_room_at(project, 2000, 1500), room + 800 * 200 / 2, DIVIDER_LOSS);
             tl_project_free(project);
         }
         IT("весь проём наружной стены — пол до улицы")

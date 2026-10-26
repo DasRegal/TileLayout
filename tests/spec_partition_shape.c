@@ -22,15 +22,27 @@ static bool has_vertex(const TlPolygon *polygon, double x, double y)
     return false;
 }
 
-/* Уголок единственного узла проекта (пустой — если узла или уголка нет). */
-static TlPolygon joint_cap(TlProject *project)
+/* Углы единственного узла проекта; число углов (0 — узла нет). */
+static size_t node_corners(TlProject *project, TlNodeCorner *corners, TlNode *node)
 {
-    TlJointList joints = tl_project_joints(project);
-    TlPolygon cap = {0};
-    if (joints.count != 1 || !tl_project_joint_cap(&joints.items[0], &cap))
-        cap = (TlPolygon){0};
-    tl_joint_list_free(&joints);
-    return cap;
+    TlNodeList nodes = tl_project_nodes(project);
+    size_t count = 0;
+    if (nodes.count == 1) {
+        *node = nodes.items[0];
+        count = tl_node_corners(node, corners);
+    }
+    tl_node_list_free(&nodes);
+    return count;
+}
+
+static double bodies_area(TlProject *project)
+{
+    TlPolygonList bodies = tl_project_partition_bodies(project, 0);
+    double area = 0;
+    for (size_t i = 0; i < bodies.count; i++)
+        area += fabs(tl_polygon_signed_area(&bodies.items[i]));
+    tl_polygon_list_free_all(&bodies);
+    return area;
 }
 
 static double end_thickness_after_loading(const char *text)
@@ -167,39 +179,44 @@ void spec_partition_shape(void)
             tl_polygon_free(&body);
             tl_project_free(project);
         }
-        IT("угол «на ус» между перегородками следует за сдвинутым углом")
+        IT("угол «на ус» между перегородками следует за сдвинутым боком")
         {
             TlProject *project = tl_project_new();
             TlPartition *first = tl_partition_new(tl_vec2(0, 0), tl_vec2(1000, 0), 100);
             first->corner_offsets[TL_PARTITION_START_RIGHT] = 80;
             first->corner_offsets[TL_PARTITION_END_RIGHT] = 80; /* наружный бок — на 80 от оси */
             tl_project_add_partition(project, first);
-            tl_project_add_partition(project, tl_partition_new(tl_vec2(1000, 0), tl_vec2(1000, 1000), 100));
-            TlJointList joints = tl_project_joints(project);
-            TlPolygon cap = {0};
-            EXPECT_INT(joints.count, 1);
-            EXPECT(joints.count == 1 && tl_project_joint_cap(&joints.items[0], &cap));
-            EXPECT(has_vertex(&cap, 1050, -80));
-            tl_polygon_free(&cap);
-            tl_joint_list_free(&joints);
+            TlPartition *second = tl_partition_new(tl_vec2(1000, 0), tl_vec2(1000, 1000), 100);
+            tl_project_add_partition(project, second);
+            TlPolygon first_body = tl_project_partition_body(project, first, 0);
+            TlPolygon second_body = tl_project_partition_body(project, second, 0);
+            EXPECT(has_vertex(&first_body, 1050, -80) && has_vertex(&second_body, 1050, -80));
+            EXPECT(has_vertex(&first_body, 950, 50) && has_vertex(&second_body, 950, 50));
+            tl_polygon_free(&first_body);
+            tl_polygon_free(&second_body);
             tl_project_free(project);
         }
     }
 
     DESCRIBE("Угол «на ус» между двумя перегородками")
     {
-        IT("заполняет только наружную сторону поворота — до пересечения наружных боков")
+        IT("тела сходятся по линии от внутреннего угла к наружному — без щели и нахлёста")
         {
             TlProject *project = tl_project_new();
             tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 0), tl_vec2(1000, 0), 100));
             tl_project_add_partition(project, tl_partition_new(tl_vec2(1000, 0), tl_vec2(1000, 1000), 100));
-            TlPolygon cap = joint_cap(project);
-            EXPECT_NEAR(fabs(tl_polygon_signed_area(&cap)), 50 * 50, 1e-6);
-            EXPECT(has_vertex(&cap, 1050, -50));
-            tl_polygon_free(&cap);
+            TlNode node = {0};
+            TlNodeCorner corners[TL_NODE_MAX];
+            EXPECT_INT(node_corners(project, corners, &node), 2);
+            EXPECT(corners[0].joined && corners[1].joined);
+            /* Г из полос 100: 1050 × 100 + 100 × 950 */
+            EXPECT_NEAR(bodies_area(project), 1050 * 100 + 100 * 950, 1e-6);
+            TlPolygonList bodies = tl_project_partition_bodies(project, 0);
+            EXPECT_INT(bodies.count, 2); /* у двух перегородок середины узла нет */
+            tl_polygon_list_free_all(&bodies);
             tl_project_free(project);
         }
-        IT("при остром угле и сужающихся перегородках не выходит за наружные бока")
+        IT("при остром угле и сужающихся перегородках наружный угол не выходит за наружные бока")
         {
             TlProject *project = tl_project_new();
             TlVec2 joint = tl_vec2(3526, 2366);
@@ -209,36 +226,38 @@ void spec_partition_shape(void)
             tapered->corner_offsets[TL_PARTITION_END_LEFT] = tapered->corner_offsets[TL_PARTITION_END_RIGHT] = 60;
             tl_project_add_partition(project, slanted);
             tl_project_add_partition(project, tapered);
-            TlPolygon cap = joint_cap(project);
-            /* уголок — четырёхугольник: узел, два наружных угла тел и точка на пересечении наружных боков */
-            EXPECT_INT(cap.count, 4);
-            EXPECT(has_vertex(&cap, joint.x, joint.y));
-            /* наружная сторона поворота — слева и снизу от узла; внутрь (вправо и вверх) не заходит */
-            TlRect bounds = tl_polygon_bounds(&cap);
-            EXPECT(bounds.right <= joint.x + 1e-6);
-            EXPECT(bounds.top >= joint.y - 40);
-            tl_polygon_free(&cap);
+            TlNode node = {0};
+            TlNodeCorner corners[TL_NODE_MAX];
+            EXPECT_INT(node_corners(project, corners, &node), 2);
+            /* наружная сторона поворота — слева и снизу от узла: там один из углов, и внутрь он не заходит */
+            const TlNodeCorner *outer = corners[0].first.x < corners[1].first.x ? &corners[0] : &corners[1];
+            EXPECT(outer->first.x <= joint.x + 1e-6 && outer->second.x <= joint.x + 1e-6);
+            EXPECT(outer->first.y >= joint.y - 40 && outer->second.y >= joint.y - 40);
             tl_project_free(project);
         }
-        IT("очень острый угол срезается, а не тянется далеко за узел")
+        IT("очень острый угол не тянется далеко за узел")
         {
             TlProject *project = tl_project_new();
             tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 0), tl_vec2(1000, 0), 100));
             tl_project_add_partition(project, tl_partition_new(tl_vec2(1000, 0), tl_vec2(0, 100), 100));
-            TlPolygon cap = joint_cap(project);
-            for (size_t i = 0; i < cap.count; i++)
-                EXPECT(tl_distance(cap.items[i], tl_vec2(1000, 0)) < 3 * 100);
-            tl_polygon_free(&cap);
+            TlNode node = {0};
+            TlNodeCorner corners[TL_NODE_MAX];
+            size_t count = node_corners(project, corners, &node);
+            EXPECT_INT(count, 2);
+            for (size_t k = 0; k < count; k++)
+                EXPECT(tl_distance(corners[k].first, node.point) < 3 * 100 &&
+                       tl_distance(corners[k].second, node.point) < 3 * 100);
             tl_project_free(project);
         }
-        IT("все тела и уголки обходятся в одну сторону — иначе при заливке остаются дыры")
+        IT("все тела и середины узлов обходятся в одну сторону — иначе при заливке остаются дыры")
         {
             TlProject *project = tl_project_new();
             tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 0), tl_vec2(1000, 0), 100));
             tl_project_add_partition(project, tl_partition_new(tl_vec2(1000, 1000), tl_vec2(1000, 0), 100));
             tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 2000), tl_vec2(0, 0), 100));
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(1000, 0), tl_vec2(2000, 0), 100));
             TlPolygonList bodies = tl_project_partition_bodies(project, 0);
-            EXPECT_INT(bodies.count, 5); /* три тела и два уголка */
+            EXPECT_INT(bodies.count, 5); /* четыре тела и середина узла из трёх */
             for (size_t i = 0; i < bodies.count; i++)
                 EXPECT(tl_polygon_signed_area(&bodies.items[i]) > 0);
             tl_polygon_list_free_all(&bodies);

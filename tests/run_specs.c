@@ -13,6 +13,7 @@ int main(void)
     spec_ruler();
     spec_alignment();
     spec_partition_shape();
+    spec_nodes();
     spec_expansion_joint();
     spec_doorway();
     return spec_report() == 0 ? 0 : 1;

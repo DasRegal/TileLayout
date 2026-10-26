@@ -28,12 +28,21 @@ static bool hit_vertex(TlOutline **outlines, size_t count, TlVec2 world, double 
     return false;
 }
 
+static bool in_node(TlProject *project, TlPartition *partition, TlPartitionEnd end)
+{
+    TlNode node;
+    return tl_project_node_of(project, partition, end, &node);
+}
+
+/* Свободный конец перегородки (конец в узле двигают за середину узла). */
 static bool hit_partition_end(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
 {
     for (size_t i = 0; i < project->partitions.count; i++) {
         TlPartition *partition = project->partitions.items[i];
         int which = tl_distance(world, partition->start) < tolerance ? 1
                     : tl_distance(world, partition->end) < tolerance ? 2 : 0;
+        if (which && in_node(project, partition, which == 1 ? TL_PARTITION_START : TL_PARTITION_END))
+            which = 0;
         if (which) {
             *hit = (AppSelection){.kind = APP_SELECT_PARTITION, .partition = partition, .index = which};
             return true;
@@ -82,7 +91,60 @@ static bool hit_expansion_joint(TlProject *project, TlVec2 world, double end_tol
     return false;
 }
 
-/* Маркеры выделенной перегородки: концы и углы тела — ближайший к курсору. */
+/* Узел относится к выделению: выделен он сам или одна из его перегородок. */
+static bool node_is_selected(const TlNode *node, const AppSelection *current)
+{
+    if (!current || (current->kind != APP_SELECT_NODE && current->kind != APP_SELECT_PARTITION))
+        return false;
+    for (size_t i = 0; i < node->count; i++)
+        if (node->ends[i].partition == current->partition &&
+            (current->kind == APP_SELECT_PARTITION || node->ends[i].end == current->end))
+            return true;
+    return false;
+}
+
+/* Точки узлов: середину можно взять всегда, углы — у выделенного узла или узла
+   выделенной перегородки. Ближайшая к курсору. */
+static bool hit_node(TlProject *project, const AppSelection *current, TlVec2 world, double tolerance,
+                     AppSelection *hit)
+{
+    TlNodeList nodes = tl_project_nodes(project);
+    double best = tolerance;
+    for (size_t n = 0; n < nodes.count; n++) {
+        const TlNode *node = &nodes.items[n];
+        int points = node_is_selected(node, current) ? (int)node->count : 0;
+        for (int index = 0; index <= points; index++) {
+            double distance = tl_distance(world, app_node_point(node, index));
+            if (distance < best) {
+                best = distance;
+                *hit = (AppSelection){.kind = APP_SELECT_NODE, .partition = node->ends[0].partition,
+                                      .end = node->ends[0].end, .index = index};
+            }
+        }
+    }
+    tl_node_list_free(&nodes);
+    return best < tolerance;
+}
+
+/* Точки примыкания (конец перегородки на боку другой) — их можно взять всегда:
+   за них тянут примыкание вдоль перегородки или уводят в узел. */
+static bool hit_tee(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
+{
+    TlTeeList tees = tl_project_tees(project);
+    double best = tolerance;
+    for (size_t i = 0; i < tees.count; i++) {
+        double distance = tl_distance(world, tees.items[i].point);
+        if (distance < best) {
+            best = distance;
+            *hit = (AppSelection){.kind = APP_SELECT_TEE, .partition = tees.items[i].branch, .end = tees.items[i].end};
+        }
+    }
+    tl_tee_list_free(&tees);
+    return best < tolerance;
+}
+
+/* Маркеры выделенной перегородки: свободные концы и углы тела у них — ближайший
+   к курсору (у конца в узле — точки узла). */
 static bool hit_selected_partition_handle(TlProject *project, const AppSelection *current, TlVec2 world,
                                           double tolerance, AppSelection *hit)
 {
@@ -93,13 +155,16 @@ static bool hit_selected_partition_handle(TlProject *project, const AppSelection
     double best = tolerance;
     int index = -1;
     const TlVec2 ends[2] = {partition->start, partition->end};
+    const bool free_end[2] = {!in_node(project, partition, TL_PARTITION_START),
+                              !in_node(project, partition, TL_PARTITION_END)};
     for (int end = 0; end < 2; end++)
-        if (tl_distance(world, ends[end]) < best) {
+        if (free_end[end] && tl_distance(world, ends[end]) < best) {
             best = tl_distance(world, ends[end]);
             index = end + 1;
         }
     for (int corner = 0; corner < (int)body.count; corner++)
-        if (tl_distance(world, body.items[corner]) < best) {
+        if (free_end[tl_partition_corner_end((TlPartitionCorner)corner) == TL_PARTITION_START ? 0 : 1] &&
+            tl_distance(world, body.items[corner]) < best) {
             best = tl_distance(world, body.items[corner]);
             index = APP_PARTITION_FIRST_CORNER + corner;
         }
@@ -118,7 +183,8 @@ static bool near_polygon(const TlPolygon *polygon, TlVec2 world, double toleranc
 /* Стык комнат в проёме — узкой полосой у своей линии (не больше трети глубины
    проёма): щелчок по остальному проёму выделяет дверь, даже если стык лежит
    на её краю. */
-static bool hit_threshold(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
+static bool hit_threshold(TlProject *project, const AppSelection *current, TlVec2 world, double tolerance,
+                          double end_tolerance, AppSelection *hit)
 {
     for (size_t i = 0; i < project->openings.count; i++) {
         TlOpening *opening = project->openings.items[i];
@@ -126,6 +192,16 @@ static bool hit_threshold(TlProject *project, TlVec2 world, double tolerance, Ap
         if (!tl_project_opening_threshold(project, opening, &from, &to) ||
             !tl_project_opening_section(project, opening, &right, &left))
             continue;
+        /* у выделенного стыка концы тянутся по отдельности — стык наискосок */
+        if (current && current->kind == APP_SELECT_OPENING && current->opening == opening &&
+            current->index >= APP_OPENING_THRESHOLD) {
+            double to_from = tl_distance(world, from), to_to = tl_distance(world, to);
+            if (fmin(to_from, to_to) < end_tolerance) {
+                *hit = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening,
+                                      .index = to_from <= to_to ? APP_OPENING_THRESHOLD_FROM : APP_OPENING_THRESHOLD_TO};
+                return true;
+            }
+        }
         double band = fmin(tolerance, tl_distance(right, left) / 3);
         if (tl_point_segment_distance(world, from, to, NULL) < band) {
             *hit = (AppSelection){.kind = APP_SELECT_OPENING, .opening = opening, .index = APP_OPENING_THRESHOLD};
@@ -204,10 +280,13 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
     AppSelection hit = none();
     bool found = hit_ruler(project, world, vertex_tolerance, wall_tolerance, &hit) ||
                  hit_expansion_joint(project, world, vertex_tolerance, wall_tolerance, &hit) ||
+                 hit_node(project, current, world, vertex_tolerance, &hit) ||
+                 hit_tee(project, world, vertex_tolerance, &hit) ||
                  hit_selected_partition_handle(project, current, world, vertex_tolerance, &hit) ||
                  hit_vertex(outlines, outline_count, world, vertex_tolerance, &hit) ||
                  hit_partition_end(project, world, vertex_tolerance, &hit) ||
-                 hit_threshold(project, world, app_view_pixels_to_mm(view, APP_THRESHOLD_TOLERANCE_PX), &hit) ||
+                 hit_threshold(project, current, world, app_view_pixels_to_mm(view, APP_THRESHOLD_TOLERANCE_PX),
+                               vertex_tolerance, &hit) ||
                  hit_opening(project, world, app_view_pixels_to_mm(view, 3), &hit) ||
                  hit_partition_body(project, world, wall_tolerance, &hit) ||
                  hit_wall(outlines, outline_count, world, wall_tolerance, &hit);

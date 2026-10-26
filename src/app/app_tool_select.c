@@ -6,7 +6,10 @@
  *   перегородка за тело — только поперёк себя; за конец — вдоль своей оси,
  *     а если увести в сторону — поворачивается (с выравниванием по 0°/90°);
  *     за угол тела (у выделенной) — угол сдвигается поперёк оси, меняя форму;
- *   проём — вдоль своей стены; стык комнат в нём — поперёк стены;
+ *   узел перегородок за середину — целиком (перегородки тянутся за ним), за
+ *     угол — меняются углы тел у узла;
+ *   проём — вдоль своей стены; стык комнат в нём — поперёк стены, за конец у
+ *     косяка (у выделенного стыка) — только этот конец, стык наискосок;
  *   Ctrl — сетка плитки комнаты;
  *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием.
  * Двойной клик по стене дома добавляет угол.
@@ -17,6 +20,7 @@
 
 #include "app_commands.h"
 #include "app_hit.h"
+#include "app_render.h"
 #include "tl_align.h"
 #include "tl_layout.h"
 
@@ -50,6 +54,9 @@ static void remember_outline(AppDrag *drag, TlOutline *outline)
     drag->outline = outline;
     drag->original_corners = tl_polygon_copy(&outline->inner);
 }
+
+static double threshold_share_at(TlProject *project, const TlOpening *opening, int part, TlVec2 world,
+                                 double *depth);
 
 static void begin_drag(AppCanvas *canvas, const AppPointer *pointer, AppSelection hit)
 {
@@ -85,6 +92,39 @@ static void begin_drag(AppCanvas *canvas, const AppPointer *pointer, AppSelectio
             drag->original_corner_offset = hit.partition->corner_offsets[corner];
         drag->token = tl_project_begin_edit(project, NULL);
         break;
+    case APP_SELECT_NODE: {
+        TlNode node;
+        if (!app_selection_node(&hit, project, &node))
+            return;
+        for (size_t i = 0; i < node.count; i++)
+            if (node.ends[i].partition->locked) {
+                app_document_status(canvas->document, "Перегородка в узле заблокирована");
+                return;
+            }
+        drag->kind = APP_DRAG_NODE;
+        drag->partition = hit.partition;
+        drag->end = hit.end;
+        drag->original_point = app_node_point(&node, hit.index);
+        drag->original_node = node.point;
+        drag->token = tl_project_begin_edit(project, NULL);
+        break;
+    }
+    case APP_SELECT_TEE: {
+        TlTee tee;
+        if (!app_selection_tee(&hit, project, &tee))
+            return;
+        if (tee.branch->locked || tee.host->locked) {
+            app_document_status(canvas->document, "Перегородка заблокирована");
+            return;
+        }
+        drag->kind = APP_DRAG_TEE;
+        drag->partition = hit.partition;
+        drag->end = hit.end;
+        drag->frozen = tee.branch;
+        drag->original_point = tee.point;
+        drag->token = tl_project_begin_edit(project, NULL);
+        break;
+    }
     case APP_SELECT_RULER:
         drag->kind = APP_DRAG_RULER;
         drag->ruler = hit.ruler;
@@ -98,9 +138,12 @@ static void begin_drag(AppCanvas *canvas, const AppPointer *pointer, AppSelectio
         drag->original_end = hit.expansion_joint->end;
         break;
     case APP_SELECT_OPENING:
-        if (hit.index == APP_OPENING_THRESHOLD) {
+        if (hit.index >= APP_OPENING_THRESHOLD) {
             drag->kind = APP_DRAG_THRESHOLD;
             drag->opening = hit.opening;
+            drag->original_shares[0] = hit.opening->threshold;
+            drag->original_shares[1] = hit.opening->threshold_end;
+            drag->original_share = threshold_share_at(project, hit.opening, APP_OPENING_THRESHOLD, pointer->world, NULL);
             break;
         }
         if (!tl_project_opening_host(project, hit.opening, &drag->band))
@@ -173,32 +216,62 @@ static void drag_opening(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool fr
     tl_project_update_spaces(canvas->document->project); /* пол проёма переходит с ним */
 }
 
-/* Стык — поперёк стены или перегородки: доля глубины проёма. Притягивается к
-   граням и середине, иначе ставится на целые мм; Shift — точно за мышью. */
-static void drag_threshold(AppCanvas *canvas, AppDrag *drag, TlVec2 world, bool free)
+/* Доля глубины проёма под точкой: у косяка в начале, в конце или посередине
+   (линия целиком). depth — глубина проёма там, мм. */
+static double threshold_share_at(TlProject *project, const TlOpening *opening, int part, TlVec2 world,
+                                 double *depth)
+{
+    TlVec2 from_jamb[2], to_jamb[2];
+    if (!app_render_doorway_jambs(project, opening, from_jamb, to_jamb))
+        return 0;
+    TlVec2 right = part == APP_OPENING_THRESHOLD_FROM ? from_jamb[0]
+                   : part == APP_OPENING_THRESHOLD_TO ? to_jamb[0] : tl_vec2_midpoint(from_jamb[0], to_jamb[0]);
+    TlVec2 left = part == APP_OPENING_THRESHOLD_FROM ? from_jamb[1]
+                  : part == APP_OPENING_THRESHOLD_TO ? to_jamb[1] : tl_vec2_midpoint(from_jamb[1], to_jamb[1]);
+    TlVec2 across = tl_vec2_sub(left, right);
+    double length = tl_vec2_length(across);
+    if (depth)
+        *depth = length;
+    return length > 0 ? fmin(1, fmax(0, tl_vec2_dot(tl_vec2_sub(world, right), across) / (length * length))) : 0;
+}
+
+/* Притягивание доли к граням и середине, иначе — к целым мм; Shift — точно. */
+static double snap_share(AppCanvas *canvas, double share, double depth, bool free)
 {
     static const double STOPS[] = {0, 0.5, 1};
+    if (free || depth <= 0)
+        return share;
+    double tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX) / depth;
+    for (size_t i = 0; i < G_N_ELEMENTS(STOPS); i++)
+        if (fabs(share - STOPS[i]) < tolerance)
+            return STOPS[i];
+    return round(share * depth) / depth;
+}
+
+/* Стык — поперёк стены или перегородки: доля глубины проёма. За линию — целиком,
+   с прежним наклоном; за конец у косяка — только этот конец (стык наискосок). */
+static void drag_threshold(AppCanvas *canvas, AppDrag *drag, TlVec2 world, bool free)
+{
     TlProject *project = canvas->document->project;
-    TlVec2 right, left;
-    if (!tl_project_opening_section(project, drag->opening, &right, &left))
-        return;
-    TlVec2 across = tl_vec2_sub(left, right);
-    double depth = tl_vec2_length(across);
+    TlOpening *opening = drag->opening;
+    double depth;
+    double share = threshold_share_at(project, opening, drag->index, world, &depth);
     if (depth <= 0)
         return;
-    double share = fmin(1, fmax(0, tl_vec2_dot(tl_vec2_sub(world, right), across) / (depth * depth)));
-    if (!free) {
-        double tolerance = app_view_pixels_to_mm(&canvas->view, APP_SNAP_TOLERANCE_PX) / depth;
-        bool stopped = false;
-        for (size_t i = 0; i < G_N_ELEMENTS(STOPS) && !stopped; i++)
-            if (fabs(share - STOPS[i]) < tolerance) {
-                share = STOPS[i];
-                stopped = true;
-            }
-        if (!stopped)
-            share = round(share * depth) / depth;
+    if (drag->index == APP_OPENING_THRESHOLD_FROM) {
+        opening->threshold = snap_share(canvas, share, depth, free);
+    } else if (drag->index == APP_OPENING_THRESHOLD_TO) {
+        opening->threshold_end = snap_share(canvas, share, depth, free);
+    } else {
+        double middle = (drag->original_shares[0] + drag->original_shares[1]) / 2;
+        double shift = snap_share(canvas, middle + share - drag->original_share, depth, free) - middle;
+        /* наклон сохраняется: сдвиг не выводит ни один конец за грани */
+        double low = fmin(drag->original_shares[0], drag->original_shares[1]);
+        double high = fmax(drag->original_shares[0], drag->original_shares[1]);
+        shift = fmax(-low, fmin(1 - high, shift));
+        opening->threshold = drag->original_shares[0] + shift;
+        opening->threshold_end = drag->original_shares[1] + shift;
     }
-    drag->opening->threshold = share;
     tl_project_update_spaces(project);
 }
 
@@ -283,6 +356,48 @@ static void drag_partition(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool 
     tl_project_apply_edit(canvas->document->project, drag->token, &options);
 }
 
+/* Середина узла двигает узел целиком, угол — углы тел у узла; по сетке
+   (с Shift — точно за мышью). */
+static void drag_node(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
+{
+    TlProject *project = canvas->document->project;
+    TlNode node;
+    if (!tl_project_node_of(project, drag->partition, drag->end, &node))
+        return;
+    TlVec2 target = tl_vec2_add(drag->original_point, delta);
+    if (!free)
+        target = app_snap_grid(canvas->document->preferences.snap_step, target);
+    if (drag->index == 0)
+        tl_project_move_node(project, &node, tl_vec2_add(drag->original_node, tl_vec2_sub(target, drag->original_point)));
+    else
+        tl_project_set_node_corner(project, &node, (size_t)drag->index - 1, target);
+    TlEditOptions options = {.frozen = drag->frozen, .keep_ends = drag->frozen != NULL};
+    tl_project_apply_edit(project, drag->token, &options);
+}
+
+/* Точка примыкания: пока не дальше граней перегородки — скользит по её боку;
+   увели за грань — перегородка делится, и дальше тянется уже узел. */
+static void drag_tee(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
+{
+    TlProject *project = canvas->document->project;
+    TlTee tee;
+    if (!tl_project_tee_of(project, drag->partition, drag->end, &tee))
+        return;
+    TlVec2 target = tl_vec2_add(drag->original_point, delta);
+    if (!free)
+        target = app_snap_grid(canvas->document->preferences.snap_step, target);
+    bool became_node = tl_project_move_tee(project, &tee, target);
+    TlEditOptions options = {.frozen = drag->frozen, .keep_ends = true};
+    tl_project_apply_edit(project, drag->token, &options);
+    if (!became_node)
+        return;
+    drag->kind = APP_DRAG_NODE; /* дальше тянется узел: его точка — там, где курсор */
+    drag->index = 0;
+    drag->original_node = drag->original_point;
+    app_document_select(canvas->document, (AppSelection){.kind = APP_SELECT_NODE, .partition = drag->partition,
+                                                         .end = drag->end});
+}
+
 static void drag_outline(AppCanvas *canvas, AppDrag *drag, TlVec2 delta, bool free)
 {
     TlProject *project = canvas->document->project;
@@ -338,6 +453,10 @@ static void update_hover(AppCanvas *canvas, const AppPointer *pointer)
     bool end_of_line = (hover.kind == APP_SELECT_PARTITION || segment) && hover.index > 0;
     if (hover.kind == APP_SELECT_VERTEX || end_of_line)
         cursor = "crosshair";
+    else if (hover.kind == APP_SELECT_NODE)
+        cursor = hover.index == 0 ? "move" : "crosshair";
+    else if (hover.kind == APP_SELECT_TEE)
+        cursor = "move";
     else if (hover.kind == APP_SELECT_WALL || hover.kind == APP_SELECT_PARTITION || segment)
         cursor = "move";
     else if (hover.kind == APP_SELECT_OPENING)
@@ -367,6 +486,8 @@ void app_select_motion(AppCanvas *canvas, const AppPointer *pointer)
     case APP_DRAG_OPENING: drag_opening(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_THRESHOLD: drag_threshold(canvas, drag, pointer->world, pointer->shift); break;
     case APP_DRAG_PARTITION: drag_partition(canvas, drag, delta, pointer->shift); break;
+    case APP_DRAG_NODE: drag_node(canvas, drag, delta, pointer->shift); break;
+    case APP_DRAG_TEE: drag_tee(canvas, drag, delta, pointer->shift); break;
     case APP_DRAG_RULER:
         drag_segment(canvas, drag, &drag->ruler->start, &drag->ruler->end, TL_SNAP_TO_ALL, delta, pointer->shift);
         break;
@@ -380,10 +501,23 @@ void app_select_motion(AppCanvas *canvas, const AppPointer *pointer)
     app_document_commit(canvas->document);
 }
 
+/* Перетаскивание меняло стены или перегородки. */
+static bool changes_geometry(AppDragKind kind)
+{
+    return kind == APP_DRAG_PARTITION || kind == APP_DRAG_NODE || kind == APP_DRAG_TEE || kind == APP_DRAG_VERTEX ||
+           kind == APP_DRAG_WALL || kind == APP_DRAG_HOUSE;
+}
+
 void app_select_release(AppCanvas *canvas, const AppPointer *pointer)
 {
     if (canvas->drag.kind == APP_DRAG_NONE)
         return;
+    if (canvas->drag.moved && changes_geometry(canvas->drag.kind)) {
+        /* отпустили — узел, вернувшийся на прямую, снова одна перегородка */
+        tl_project_merge_straight_nodes(canvas->document->project);
+        tl_project_update_spaces(canvas->document->project);
+        app_document_commit(canvas->document);
+    }
     free_drag(&canvas->drag);
     canvas->measure_snap.kind = TL_SNAP_NONE;
     app_canvas_clear_guides(canvas);

@@ -57,6 +57,8 @@ typedef enum AppDragKind {
     APP_DRAG_TILES,
     APP_DRAG_RULER,
     APP_DRAG_EXPANSION_JOINT,
+    APP_DRAG_NODE, /* точка узла перегородок: середина или угол */
+    APP_DRAG_TEE,  /* точка примыкания: вдоль бока, а за грань — узел */
     APP_DRAG_THRESHOLD
 } AppDragKind;
 
@@ -76,6 +78,12 @@ typedef struct AppDrag {
     TlRuler *ruler;                 /* original_start/original_end — его концы */
     TlExpansionJoint *expansion_joint; /* и его */
     double original_corner_offset;  /* угол тела перегородки */
+    TlPartitionEnd end;             /* узел: конец partition в нём */
+    TlVec2 original_point;          /* узел: взятая точка */
+    TlVec2 original_node;           /* узел: его точка на осях */
+    TlPartition *frozen;            /* узел из примыкания: эта перегородка не возвращается на бок */
+    double original_shares[2];      /* стык: доли у косяков в начале и в конце проёма */
+    double original_share;          /* стык: доля под курсором при нажатии */
     TlBand band;
     double original_along;
     TlSpace *space;
@@ -141,9 +149,10 @@ void app_canvas_draw_dimension(AppCanvas *canvas, cairo_t *cr, TlVec2 a, TlVec2 
 void app_canvas_draw_cross(AppCanvas *canvas, cairo_t *cr, TlVec2 world);
 void app_canvas_draw_preview_polygon(AppCanvas *canvas, cairo_t *cr, const TlPolygon *polygon,
                                      bool closed);
-/* Прямоугольник проёма с расстояниями до концов стены. */
+/* Проём с расстояниями до ближайших точек разбивки грани (концы стены, грани
+   примкнувших перегородок, соседние проёмы); opening — сам проём (у будущего — NULL). */
 void app_canvas_draw_opening_preview(AppCanvas *canvas, cairo_t *cr, const TlBand *band, double along,
-                                     double width, const char *color, bool preview);
+                                     double width, const TlOpening *opening, const char *color, bool preview);
 void app_canvas_start_pan(AppCanvas *canvas, TlVec2 screen);
 
 /* Конец линейки или шва: с притягиванием к targets (если включено) и

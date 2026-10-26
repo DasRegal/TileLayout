@@ -47,15 +47,30 @@ typedef struct TlWallRef {
 TL_ARRAY_DEFINE(TlWallRefList, TlWallRef, tl_wall_ref_list)
 TL_ARRAY_DEFINE(TlBandList, TlBand, tl_band_list)
 
-/* Узел: совпадающие концы двух перегородок. */
-typedef struct TlJoint {
-    TlPartition *first;
-    TlPartitionEnd first_end;
-    TlPartition *second;
-    TlPartitionEnd second_end;
-} TlJoint;
+/* Узел: совпадающие концы двух и более перегородок (см. tl_project_nodes.c).
+ * Концы — против часовой стрелки по направлению от узла вдоль перегородки. */
+#define TL_NODE_MAX 8
 
-TL_ARRAY_DEFINE(TlJointList, TlJoint, tl_joint_list)
+typedef struct TlNodeEnd {
+    TlPartition *partition;
+    TlPartitionEnd end;
+} TlNodeEnd;
+
+typedef struct TlNode {
+    TlVec2 point;
+    TlNodeEnd ends[TL_NODE_MAX];
+    size_t count;
+} TlNode;
+
+TL_ARRAY_DEFINE(TlNodeList, TlNode, tl_node_list)
+
+/* Угол узла между концами k и k + 1: first — на левом боку перегородки k,
+   second — на правом боку k + 1. Обычно бока сходятся в одну точку (joined);
+   если они параллельны или сходятся слишком далеко — у каждой свой угол. */
+typedef struct TlNodeCorner {
+    TlVec2 first, second;
+    bool joined;
+} TlNodeCorner;
 
 /* Грань, к которой примыкают перегородки: внутренняя сторона стены дома
  * (side = 0) или бок перегородки (side = +1 / -1). */
@@ -75,6 +90,8 @@ typedef struct TlEditOptions {
     TlPartition *frozen;          /* концы этой перегородки не возвращать на грани */
     TlVec2 translate;             /* сдвиг перегородок внутри перемещаемого дома */
     bool has_translate;
+    bool keep_ends;               /* концы на гранях — на месте: перегородки поворачиваются вокруг них
+                                     (точку примыкания увели в узел — та ломается, а не едет) */
     bool skip_space_update;
 } TlEditOptions;
 
@@ -124,13 +141,52 @@ void tl_project_set_thickness(TlProject *project, TlOutline *outline, size_t wal
 
 /* ---- перегородки: узлы и тела -------------------------------------------- */
 
-TlJointList tl_project_joints(TlProject *project);
-/* Заполнение угла «на ус» между двумя перегородками узла (false — не нужно). */
-bool tl_project_joint_cap(const TlJoint *joint, TlPolygon *cap);
-/* Тело перегородки с торцами, срезанными точно по грани, в которую упирается
-   конец, — внутренней стороне стены дома или боку другой перегородки. */
+TlNodeList tl_project_nodes(TlProject *project);
+bool tl_project_node_of(TlProject *project, const TlPartition *partition, TlPartitionEnd end, TlNode *node);
+/* Углы узла: столько же, сколько концов; corners — не меньше TL_NODE_MAX. */
+size_t tl_node_corners(const TlNode *node, TlNodeCorner *corners);
+/* Середина узла — среднее его углов: за неё узел двигают. */
+TlVec2 tl_node_center(const TlNode *node);
+/* Углы тела у конца index в узле: левый и правый по направлению от узла. */
+void tl_node_end_corners(const TlNode *node, size_t index, TlVec2 *left, TlVec2 *right);
+/* Середина узла из трёх и больше перегородок (или клин у очень острого угла). */
+bool tl_node_core(const TlNode *node, TlPolygon *core);
+/* Все концы узла — в точку. */
+void tl_project_move_node(TlProject *project, const TlNode *node, TlVec2 point);
+/* Угол узла — в точку: меняются отступы у узла обоих боков, сходящихся в нём;
+   дальние углы тел остаются на месте. */
+void tl_project_set_node_corner(TlProject *project, const TlNode *node, size_t corner, TlVec2 point);
+/* ---- примыкания (см. tl_project_tees.c) ---------------------------------- */
+
+/* Конец branch упирается в бок host посередине; host цела. */
+typedef struct TlTee {
+    TlPartition *branch;
+    TlPartitionEnd end;
+    TlPartition *host;
+    int side;     /* бок host: +1 левый, −1 правый */
+    TlVec2 point; /* точка примыкания — конец branch на боку host */
+} TlTee;
+
+TL_ARRAY_DEFINE(TlTeeList, TlTee, tl_tee_list)
+
+TlTeeList tl_project_tees(TlProject *project);
+bool tl_project_tee_of(TlProject *project, const TlPartition *branch, TlPartitionEnd end, TlTee *tee);
+/* Точку примыкания — к target. Пока target не дальше граней host, конец branch
+   скользит по её боку; дальше — host делится в этом месте, и получается узел из
+   трёх в точке target. true — узел появился. */
+bool tl_project_move_tee(TlProject *project, const TlTee *tee, TlVec2 target);
+/* Узел, где две перегородки на одной прямой и тело не ломается, — снова одна
+   перегородка; остальные концы узла упираются в её бок. Вызывать при фиксации правки. */
+void tl_project_merge_straight_nodes(TlProject *project);
+/* Убрать узел: самая прямая пара его перегородок выпрямляется в одну, остальные
+   упираются в её бок. */
+bool tl_project_dissolve_node(TlProject *project, const TlNode *node);
+
+/* Тело перегородки. Торец в узле идёт по углам узла; свободный торец срезан
+   точно по грани, в которую упирается, — внутренней стороне стены дома или
+   боку другой перегородки. */
 TlPolygon tl_project_partition_body(TlProject *project, const TlPartition *partition, double extension);
-/* Тела всех перегородок и заполнения углов. */
+/* Тела всех перегородок и середины узлов. */
 TlPolygonList tl_project_partition_bodies(TlProject *project, double extension);
 
 /* ---- грани ---------------------------------------------------------------- */
@@ -184,5 +240,16 @@ void tl_project_remove_orphan_openings(TlProject *project);
 /* Самый длинный участок стены или перегородки, не закрытый проёмами (и
  * проёмами соседнего дома, проходящими сквозь неё): вдоль от *from до *to. */
 void tl_project_solid_stretch(TlProject *project, const TlBand *band, double *from, double *to);
+
+/* ---- разбивка граней для размеров --------------------------------------- */
+
+/* Точки вдоль оси band, где грань прерывается: её концы (у перегородки — с
+ * прямым продолжением через узлы), углы тел примкнувших перегородок, края
+ * проёмов (кроме exclude). side: у перегородки +1 — левый бок, −1 — правый; у
+ * стены — внутренняя грань. По возрастанию. */
+TlDoubleArray tl_project_face_breaks(TlProject *project, const TlBand *band, int side, const TlOpening *exclude);
+/* Ближайшие к проёму [from, to] точки разбивки грани: до него и после. */
+bool tl_project_opening_gaps(TlProject *project, const TlBand *band, int side, const TlOpening *exclude,
+                             double from, double to, double *before, double *after);
 
 #endif

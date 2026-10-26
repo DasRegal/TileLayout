@@ -132,9 +132,20 @@ static bool wall_passage(TlProject *project, const TlOpening *opening, WallPassa
     return true;
 }
 
-static double wall_split(const WallPassage *passage, const TlOpening *opening)
+/* Стык поперёк стены у косяка в начале (at_end = false) или в конце проёма. */
+static double wall_split(const WallPassage *passage, const TlOpening *opening, bool at_end)
 {
-    return opening->threshold * passage->depth;
+    return (at_end ? opening->threshold_end : opening->threshold) * passage->depth;
+}
+
+/* Четырёхугольник проёма от across_from до across_to (у каждого косяка своё). */
+static TlPolygon passage_quad(const WallPassage *passage, const double across_from[2], const double across_to[2])
+{
+    const TlVec2 corners[] = {tl_band_point(&passage->band, passage->from, across_from[0]),
+                              tl_band_point(&passage->band, passage->to, across_from[1]),
+                              tl_band_point(&passage->band, passage->to, across_to[1]),
+                              tl_band_point(&passage->band, passage->from, across_to[0])};
+    return tl_polygon_from_points(corners, 4);
 }
 
 /* Точка стыка на расстоянии along от начала перегородки: между её боками. */
@@ -161,10 +172,15 @@ bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, Tl
     WallPassage passage;
     if (!wall_passage(project, opening, &passage))
         return false;
-    double floor_to = passage.neighbour ? passage.depth : wall_split(&passage, opening);
-    if (floor_to < MIN_FLOOR_DEPTH)
+    const double zero[2] = {0, 0};
+    double floor_to[2] = {passage.depth, passage.depth};
+    if (!passage.neighbour) {
+        floor_to[0] = wall_split(&passage, opening, false);
+        floor_to[1] = wall_split(&passage, opening, true);
+    }
+    if (fmax(floor_to[0], floor_to[1]) < MIN_FLOOR_DEPTH)
         return false;
-    *doorway = tl_band_rect(&passage.band, passage.from, passage.to, 0, floor_to);
+    *doorway = passage_quad(&passage, zero, floor_to);
     return true;
 }
 
@@ -174,20 +190,22 @@ bool tl_project_opening_wall_floor(TlProject *project, const TlOpening *opening,
     WallPassage passage;
     if (!wall_passage(project, opening, &passage))
         return false;
-    double split = wall_split(&passage, opening);
-    double across_from, across_to;
-    if (house == passage.band.host.outline) {
-        across_from = -WALL_FLOOR_OVERLAP;
-        across_to = split;
-    } else if (house == passage.neighbour) {
-        across_from = split;
-        across_to = passage.depth + WALL_FLOOR_OVERLAP;
-    } else {
-        return false;
+    const double split[2] = {wall_split(&passage, opening, false), wall_split(&passage, opening, true)};
+    double across_from[2], across_to[2];
+    for (int e = 0; e < 2; e++) {
+        if (house == passage.band.host.outline) {
+            across_from[e] = -WALL_FLOOR_OVERLAP;
+            across_to[e] = split[e];
+        } else if (house == passage.neighbour) {
+            across_from[e] = split[e];
+            across_to[e] = passage.depth + WALL_FLOOR_OVERLAP;
+        } else {
+            return false;
+        }
     }
-    if (across_to - across_from < MIN_FLOOR_DEPTH + WALL_FLOOR_OVERLAP)
+    if (fmax(across_to[0] - across_from[0], across_to[1] - across_from[1]) < MIN_FLOOR_DEPTH + WALL_FLOOR_OVERLAP)
         return false;
-    *floor = tl_band_rect(&passage.band, passage.from, passage.to, across_from, across_to);
+    *floor = passage_quad(&passage, across_from, across_to);
     return true;
 }
 
@@ -197,14 +215,14 @@ bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, 
     double from_along, to_along;
     if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from_along, &to_along)) {
         *from = threshold_point(band.host.partition, from_along, opening->threshold);
-        *to = threshold_point(band.host.partition, to_along, opening->threshold);
+        *to = threshold_point(band.host.partition, to_along, opening->threshold_end);
         return true;
     }
     WallPassage passage;
     if (!wall_passage(project, opening, &passage))
         return false;
-    *from = tl_band_point(&passage.band, passage.from, wall_split(&passage, opening));
-    *to = tl_band_point(&passage.band, passage.to, wall_split(&passage, opening));
+    *from = tl_band_point(&passage.band, passage.from, wall_split(&passage, opening, false));
+    *to = tl_band_point(&passage.band, passage.to, wall_split(&passage, opening, true));
     return true;
 }
 
