@@ -235,12 +235,15 @@ static void render_outline_walls(cairo_t *cr, const AppView *view, const AppRend
     tl_polygon_free(&outer);
 }
 
-/* Рисовать дальше всюду, кроме этих многоугольников. */
+/* Рисовать дальше всюду, кроме этих многоугольников. «Всюду» — нынешняя
+   область рисования: огромный прямоугольник растровый Cairo не переварит (его
+   координаты — с фиксированной точкой, до ~8 млн), и вырез выйдет случайным. */
 static void clip_out(cairo_t *cr, const AppView *view, const TlPolygon *polygons, size_t count)
 {
-    const double everywhere = 1e7;
+    double left, top, right, bottom;
+    cairo_clip_extents(cr, &left, &top, &right, &bottom);
     cairo_new_path(cr);
-    cairo_rectangle(cr, -everywhere, -everywhere, 2 * everywhere, 2 * everywhere);
+    cairo_rectangle(cr, left - 1, top - 1, right - left + 2, bottom - top + 2);
     for (size_t i = 0; i < count; i++)
         app_path_polygon(cr, view, &polygons[i]);
     cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
