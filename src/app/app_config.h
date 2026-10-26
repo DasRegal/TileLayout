@@ -27,6 +27,9 @@ typedef struct AppConfig {
     char *path;
 } AppConfig;
 
+/* Папка, где лежит программа (NULL — не удалось узнать). */
+char *app_executable_directory(void);
+
 AppConfig *app_config_load(void);
 void app_config_save(AppConfig *config);
 void app_config_free(AppConfig *config);

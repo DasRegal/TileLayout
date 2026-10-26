@@ -1,6 +1,7 @@
 /*
  * Настройки раскладки плитки комнаты: плитка, шов, рисунок, смещение сетки,
- * запас, клей, СВП, использование обрезков, отступ от стен.
+ * запас, клей, СВП, использование обрезков, отступ от стен; рисунок плитки из
+ * каталога (texture — ссылка «каталог/плитка», пусто — только цвет).
  */
 #ifndef TL_TILE_SETTINGS_H
 #define TL_TILE_SETTINGS_H
@@ -8,7 +9,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define TL_COLOR_LENGTH 8 /* "#rrggbb" и завершающий ноль */
+#define TL_COLOR_LENGTH 8      /* "#rrggbb" и завершающий ноль */
+#define TL_TEXTURE_LENGTH 260 /* «каталог/группа/плитка» и завершающий ноль */
 
 typedef struct TlTileSettings {
     bool enabled;
@@ -19,7 +21,8 @@ typedef struct TlTileSettings {
     double row_shift;                /* сдвиг каждого ряда в долях плитки (0, 1/2, 1/3…) */
     double min_cut_width;            /* подрезки уже этого — «узкие», мм */
     double reserve_percent;          /* запас на бой и подрезку */
-    char color[TL_COLOR_LENGTH];
+    char color[TL_COLOR_LENGTH];     /* у плитки с рисунком — его средний цвет */
+    char texture[TL_TEXTURE_LENGTH]; /* «каталог/группа/плитка» (см. tl_catalog.h); пусто — только цвет */
     double glue_kg_per_m2_mm;        /* расход клея на 1 м² при слое 1 мм */
     double glue_layer_mm;
     double glue_bag_kg;
@@ -44,7 +47,13 @@ bool tl_tile_settings_equal(const TlTileSettings *a, const TlTileSettings *b);
 
 /* Описание полей для сохранения: ключ (как в файлах Python-версии), тип,
  * смещение в структуре и признак «запоминать для новых комнат». */
-typedef enum TlTileFieldType { TL_FIELD_BOOL, TL_FIELD_DOUBLE, TL_FIELD_INT, TL_FIELD_COLOR } TlTileFieldType;
+typedef enum TlTileFieldType {
+    TL_FIELD_BOOL,
+    TL_FIELD_DOUBLE,
+    TL_FIELD_INT,
+    TL_FIELD_COLOR,
+    TL_FIELD_TEXT /* строка до TL_TEXTURE_LENGTH */
+} TlTileFieldType;
 
 typedef struct TlTileField {
     const char *key;

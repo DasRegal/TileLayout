@@ -1,0 +1,445 @@
+{
+ "name": "Образцы TileLayout",
+ "tiles": [
+  {
+   "id": "marble-white",
+   "name": "Мрамор белый",
+   "width": 600,
+   "height": 300,
+   "image": "marble-white 600x300.jpg",
+   "color": "#e4e2dd"
+  },
+  {
+   "id": "marble-grey",
+   "name": "Мрамор серый",
+   "width": 600,
+   "height": 600,
+   "image": "marble-grey 600x600.jpg",
+   "color": "#a8aaae"
+  },
+  {
+   "id": "concrete",
+   "name": "Бетон",
+   "width": 600,
+   "height": 600,
+   "image": "concrete 600x600.jpg",
+   "color": "#969490"
+  },
+  {
+   "id": "anthracite",
+   "name": "Керамогранит антрацит",
+   "width": 600,
+   "height": 600,
+   "image": "anthracite 600x600.jpg",
+   "color": "#3e4044"
+  },
+  {
+   "id": "oak-light",
+   "name": "Дуб светлый",
+   "width": 1200,
+   "height": 200,
+   "image": "oak-light 1200x200.jpg",
+   "color": "#c39f6f"
+  },
+  {
+   "id": "oak-dark",
+   "name": "Дуб тёмный",
+   "width": 1200,
+   "height": 200,
+   "image": "oak-dark 1200x200.jpg",
+   "color": "#6f4d33"
+  },
+  {
+   "id": "terracotta",
+   "name": "Терракота",
+   "width": 300,
+   "height": 300,
+   "image": "terracotta 300x300.jpg",
+   "color": "#b0603e"
+  },
+  {
+   "id": "metro-white",
+   "name": "Кабанчик белый",
+   "width": 200,
+   "height": 100,
+   "image": "metro-white 200x100.jpg",
+   "color": "#ecece8"
+  },
+  {
+   "id": "metro-green",
+   "name": "Кабанчик зелёный",
+   "width": 200,
+   "height": 100,
+   "image": "metro-green 200x100.jpg",
+   "color": "#5e8d79"
+  },
+  {
+   "id": "slate",
+   "name": "Сланец",
+   "width": 600,
+   "height": 300,
+   "image": "slate 600x300.jpg",
+   "color": "#4c5054"
+  },
+  {
+   "id": "travertine",
+   "name": "Травертин",
+   "width": 600,
+   "height": 300,
+   "image": "travertine 600x300.jpg",
+   "color": "#d5c3a5"
+  },
+  {
+   "id": "cement-pattern",
+   "name": "Цементная с узором",
+   "width": 200,
+   "height": 200,
+   "image": "cement-pattern 200x200.jpg",
+   "color": "#929da4"
+  },
+  {
+   "id": "kg-60x60-concrete-grey",
+   "name": "Керамогранит 60×60 бетон серый",
+   "width": 600,
+   "height": 600,
+   "image": "kg-60x60-concrete-grey 600x600.jpg",
+   "color": "#969490"
+  },
+  {
+   "id": "kg-60x60-concrete-light",
+   "name": "Керамогранит 60×60 бетон светлый",
+   "width": 600,
+   "height": 600,
+   "image": "kg-60x60-concrete-light 600x600.jpg",
+   "color": "#c3bfb9"
+  },
+  {
+   "id": "kg-60x60-marble-white",
+   "name": "Керамогранит 60×60 мрамор белый",
+   "width": 600,
+   "height": 600,
+   "image": "kg-60x60-marble-white 600x600.jpg",
+   "color": "#e7e5e1"
+  },
+  {
+   "id": "kg-60x60-stone-beige",
+   "name": "Керамогранит 60×60 камень бежевый",
+   "width": 600,
+   "height": 600,
+   "image": "kg-60x60-stone-beige 600x600.jpg",
+   "color": "#d1bfa1"
+  },
+  {
+   "id": "kg-60x60-anthracite",
+   "name": "Керамогранит 60×60 антрацит",
+   "width": 600,
+   "height": 600,
+   "image": "kg-60x60-anthracite 600x600.jpg",
+   "color": "#3b3d41"
+  },
+  {
+   "id": "kg-60x120-marble-white",
+   "name": "Керамогранит 60×120 мрамор белый",
+   "width": 1200,
+   "height": 600,
+   "image": "kg-60x120-marble-white 1200x600.jpg",
+   "color": "#e7e5e2"
+  },
+  {
+   "id": "kg-60x120-marble-grey",
+   "name": "Керамогранит 60×120 мрамор серый",
+   "width": 1200,
+   "height": 600,
+   "image": "kg-60x120-marble-grey 1200x600.jpg",
+   "color": "#9c9ea2"
+  },
+  {
+   "id": "kg-60x120-concrete-grey",
+   "name": "Керамогранит 60×120 бетон серый",
+   "width": 1200,
+   "height": 600,
+   "image": "kg-60x120-concrete-grey 1200x600.jpg",
+   "color": "#8b8985"
+  },
+  {
+   "id": "kg-60x120-travertine",
+   "name": "Керамогранит 60×120 травертин",
+   "width": 1200,
+   "height": 600,
+   "image": "kg-60x120-travertine 1200x600.jpg",
+   "color": "#d9c9ab"
+  },
+  {
+   "id": "kg-80x80-marble-beige",
+   "name": "Керамогранит 80×80 мрамор бежевый",
+   "width": 800,
+   "height": 800,
+   "image": "kg-80x80-marble-beige 800x800.jpg",
+   "color": "#dfd2bc"
+  },
+  {
+   "id": "kg-30x60-slate",
+   "name": "Керамогранит 30×60 сланец",
+   "width": 600,
+   "height": 300,
+   "image": "kg-30x60-slate 600x300.jpg",
+   "color": "#535557"
+  },
+  {
+   "id": "kg-30x30-salt-pepper",
+   "name": "Керамогранит 30×30 технический соль-перец",
+   "width": 300,
+   "height": 300,
+   "image": "kg-30x30-salt-pepper 300x300.jpg",
+   "color": "#a7a7a5"
+  },
+  {
+   "id": "kg-30x30-beige",
+   "name": "Керамогранит 30×30 бежевый",
+   "width": 300,
+   "height": 300,
+   "image": "kg-30x30-beige 300x300.jpg",
+   "color": "#d0bea0"
+  },
+  {
+   "id": "wood-20x120-oak-light",
+   "name": "Керамогранит 20×120 дуб светлый",
+   "width": 1200,
+   "height": 200,
+   "image": "wood-20x120-oak-light 1200x200.jpg",
+   "color": "#c7a577"
+  },
+  {
+   "id": "wood-20x120-oak-natural",
+   "name": "Керамогранит 20×120 дуб натуральный",
+   "width": 1200,
+   "height": 200,
+   "image": "wood-20x120-oak-natural 1200x200.jpg",
+   "color": "#9f754d"
+  },
+  {
+   "id": "wood-20x120-oak-grey",
+   "name": "Керамогранит 20×120 дуб серый",
+   "width": 1200,
+   "height": 200,
+   "image": "wood-20x120-oak-grey 1200x200.jpg",
+   "color": "#958f87"
+  },
+  {
+   "id": "wood-20x60-walnut",
+   "name": "Керамогранит 20×60 орех",
+   "width": 600,
+   "height": 200,
+   "image": "wood-20x60-walnut 600x200.jpg",
+   "color": "#6d4b33"
+  },
+  {
+   "id": "wood-15x60-oak-white",
+   "name": "Керамогранит 15×60 дуб беленый",
+   "width": 600,
+   "height": 150,
+   "image": "wood-15x60-oak-white 600x150.jpg",
+   "color": "#d5cbbb"
+  },
+  {
+   "id": "wood-20x80-ash",
+   "name": "Керамогранит 20×80 ясень",
+   "width": 800,
+   "height": 200,
+   "image": "wood-20x80-ash 800x200.jpg",
+   "color": "#bb9f7b"
+  },
+  {
+   "id": "floor-33x33-grey",
+   "name": "Плитка напольная 33×33 серая",
+   "width": 330,
+   "height": 330,
+   "image": "floor-33x33-grey 330x330.jpg",
+   "color": "#949494"
+  },
+  {
+   "id": "floor-40x40-beige",
+   "name": "Плитка напольная 40×40 бежевая",
+   "width": 400,
+   "height": 400,
+   "image": "floor-40x40-beige 400x400.jpg",
+   "color": "#ceba98"
+  },
+  {
+   "id": "floor-42x42-brown",
+   "name": "Плитка напольная 42×42 коричневая",
+   "width": 420,
+   "height": 420,
+   "image": "floor-42x42-brown 420x420.jpg",
+   "color": "#84624a"
+  },
+  {
+   "id": "floor-45x45-grey",
+   "name": "Плитка напольная 45×45 серый камень",
+   "width": 450,
+   "height": 450,
+   "image": "floor-45x45-grey 450x450.jpg",
+   "color": "#80807e"
+  },
+  {
+   "id": "floor-30x30-terracotta",
+   "name": "Клинкер 30×30 терракота",
+   "width": 300,
+   "height": 300,
+   "image": "floor-30x30-terracotta 300x300.jpg",
+   "color": "#ae5c3a"
+  },
+  {
+   "id": "wall-20x30-white",
+   "name": "Плитка настенная 20×30 белая глянцевая",
+   "width": 300,
+   "height": 200,
+   "image": "wall-20x30-white 300x200.jpg",
+   "color": "#ebebe7"
+  },
+  {
+   "id": "wall-20x30-beige",
+   "name": "Плитка настенная 20×30 бежевая",
+   "width": 300,
+   "height": 200,
+   "image": "wall-20x30-beige 300x200.jpg",
+   "color": "#e7dfcd"
+  },
+  {
+   "id": "wall-25x40-white",
+   "name": "Плитка настенная 25×40 белая глянцевая",
+   "width": 400,
+   "height": 250,
+   "image": "wall-25x40-white 400x250.jpg",
+   "color": "#ecece8"
+  },
+  {
+   "id": "wall-25x40-marble",
+   "name": "Плитка настенная 25×40 мрамор бежевый",
+   "width": 400,
+   "height": 250,
+   "image": "wall-25x40-marble 400x250.jpg",
+   "color": "#e4dcc9"
+  },
+  {
+   "id": "wall-20x60-white",
+   "name": "Плитка настенная 20×60 белая глянцевая",
+   "width": 600,
+   "height": 200,
+   "image": "wall-20x60-white 600x200.jpg",
+   "color": "#ebebe7"
+  },
+  {
+   "id": "wall-30x60-marble-white",
+   "name": "Плитка настенная 30×60 мрамор белый",
+   "width": 600,
+   "height": 300,
+   "image": "wall-30x60-marble-white 600x300.jpg",
+   "color": "#e7e7e3"
+  },
+  {
+   "id": "wall-30x60-concrete",
+   "name": "Плитка настенная 30×60 бетон серый",
+   "width": 600,
+   "height": 300,
+   "image": "wall-30x60-concrete 600x300.jpg",
+   "color": "#aeaca8"
+  },
+  {
+   "id": "wall-25x75-marble",
+   "name": "Плитка настенная 25×75 мрамор белый",
+   "width": 750,
+   "height": 250,
+   "image": "wall-25x75-marble 750x250.jpg",
+   "color": "#eceae6"
+  },
+  {
+   "id": "wall-30x90-marble-grey",
+   "name": "Плитка настенная 30×90 мрамор серый",
+   "width": 900,
+   "height": 300,
+   "image": "wall-30x90-marble-grey 900x300.jpg",
+   "color": "#bfbfc1"
+  },
+  {
+   "id": "wall-15x15-white",
+   "name": "Плитка настенная 15×15 белая матовая",
+   "width": 150,
+   "height": 150,
+   "image": "wall-15x15-white 150x150.jpg",
+   "color": "#edede9"
+  },
+  {
+   "id": "wall-20x20-pattern",
+   "name": "Плитка 20×20 пэчворк",
+   "width": 200,
+   "height": 200,
+   "image": "wall-20x20-pattern 200x200.jpg",
+   "color": "#939ca6"
+  },
+  {
+   "id": "metro-7.5x15-white",
+   "name": "Кабанчик 7,5×15 белый",
+   "width": 150,
+   "height": 75,
+   "image": "metro-7.5x15-white 150x75.jpg",
+   "color": "#ebebe7"
+  },
+  {
+   "id": "metro-10x20-white",
+   "name": "Кабанчик 10×20 белый",
+   "width": 200,
+   "height": 100,
+   "image": "metro-10x20-white 200x100.jpg",
+   "color": "#ecece8"
+  },
+  {
+   "id": "metro-10x20-black",
+   "name": "Кабанчик 10×20 чёрный",
+   "width": 200,
+   "height": 100,
+   "image": "metro-10x20-black 200x100.jpg",
+   "color": "#2b2b2d"
+  },
+  {
+   "id": "metro-10x30-white",
+   "name": "Кабанчик 10×30 белый",
+   "width": 300,
+   "height": 100,
+   "image": "metro-10x30-white 300x100.jpg",
+   "color": "#ecece8"
+  },
+  {
+   "id": "metro-7.5x30-green",
+   "name": "Кабанчик 7,5×30 зелёный",
+   "width": 300,
+   "height": 75,
+   "image": "metro-7.5x30-green 300x75.jpg",
+   "color": "#588371"
+  },
+  {
+   "id": "mosaic-30x30-white",
+   "name": "Мозаика 30×30 белая (чип 2,5 см)",
+   "width": 300,
+   "height": 300,
+   "image": "mosaic-30x30-white 300x300.jpg",
+   "color": "#d6d6d2"
+  },
+  {
+   "id": "mosaic-30x30-blue",
+   "name": "Мозаика 30×30 голубая для бассейна (чип 2,5 см)",
+   "width": 300,
+   "height": 300,
+   "image": "mosaic-30x30-blue 300x300.jpg",
+   "color": "#508fb3"
+  },
+  {
+   "id": "mosaic-30x30-grey",
+   "name": "Мозаика 30×30 серый микс (чип 5 см)",
+   "width": 300,
+   "height": 300,
+   "image": "mosaic-30x30-grey 300x300.jpg",
+   "color": "#8f8f8f"
+  }
+ ]
+}

@@ -8,6 +8,7 @@
 #define APP_COMMANDS_H
 
 #include "app_document.h"
+#include "tl_catalog.h"
 
 /* Выделенное заблокировано от перемещения (у дома — если что-то в нём). */
 bool app_selection_is_locked(TlProject *project, const AppSelection *selection);
@@ -27,6 +28,10 @@ void app_command_set_vertex(AppDocument *document, TlOutline *outline, size_t in
 /* Точка выделенного узла — в точку: середина двигает узел целиком, угол меняет
    углы тел у узла. */
 void app_command_set_node_point(AppDocument *document, const AppSelection *selection, TlVec2 point);
+/* Плитка комнаты (у общего пола — комнаты-источника) из каталога: размер, рисунок,
+   цвет; catalog = NULL — убрать рисунок, оставив цвет. */
+void app_command_set_tile_texture(AppDocument *document, TlSpace *space, const TlCatalog *catalog,
+                                  const TlCatalogTile *tile);
 /* Точка выделенного примыкания — в точку: вдоль бока — скользит, за грань — узел. */
 void app_command_set_tee_point(AppDocument *document, const AppSelection *selection, TlVec2 point);
 

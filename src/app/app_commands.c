@@ -2,6 +2,7 @@
 
 #include <math.h>
 
+#include "app_catalogs.h"
 #include "tl_layout.h"
 
 static const char *LOCKED_MESSAGE = "Заблокировано от перемещения — снимите блокировку на панели";
@@ -299,6 +300,19 @@ void app_command_set_tee_point(AppDocument *document, const AppSelection *select
     TlEditOptions options = {.frozen = tee.branch, .keep_ends = true};
     app_document_end_geometry(document, token, &options);
     app_document_select(document, kept);
+}
+
+void app_command_set_tile_texture(AppDocument *document, TlSpace *space, const TlCatalog *catalog,
+                                  const TlCatalogTile *tile)
+{
+    TlTileSettings *settings = tl_space_effective_tile(space);
+    app_document_checkpoint(document, "");
+    if (catalog && tile)
+        app_catalogs_apply(catalog, tile, settings);
+    else
+        settings->texture[0] = '\0';
+    tl_tile_settings_remember_as_default(settings);
+    app_document_commit(document);
 }
 
 /* ---- удаление ---------------------------------------------------------------- */

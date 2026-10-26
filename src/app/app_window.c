@@ -3,6 +3,8 @@
 #include <string.h>
 
 #include "app_canvas.h"
+#include "app_catalog_dialog.h"
+#include "app_catalogs.h"
 #include "app_commands.h"
 #include "app_export.h"
 #include "app_file_dialog.h"
@@ -65,7 +67,9 @@ static const char *const HELP_SECTIONS[] = {
     "<b>Блокировка</b>: флажок у стены, перегородки и проёма — объект нельзя сдвинуть или удалить.\n\n"
     "<b>Пол</b>: своя раскладка или «как в комнате X» — общая сетка, плитка на стыке — одна.\n"
     "<b>Клей</b>: расход на 1 мм × толщина слоя × площадь. <b>СВП</b> — только в швах между плитками.\n"
-    "<b>Мин. ширина подрезки</b>: более узкие куски подсвечиваются красным.",
+    "<b>Мин. ширина подрезки</b>: более узкие куски подсвечиваются красным.\n"
+    "<b>Плитка из каталога</b> (Ctrl+K, меню «Плитка»): размер и рисунок плитки. Свои каталоги — папки с "
+    "картинками «Название 600x300.jpg» в папке своих каталогов.",
     NULL};
 
 typedef struct ToolEntry {
@@ -464,6 +468,38 @@ static void on_snap_changed(GtkComboBox *combo, AppWindow *self)
 
 /* ---- справка ------------------------------------------------------------------- */
 
+/* ---- плитка из каталогов ---------------------------------------------------------- */
+
+static void on_choose_tile(GtkMenuItem *item, AppWindow *self)
+{
+    app_catalog_dialog_for_selection(GTK_WINDOW(self->window), self->document);
+}
+
+static void on_tile_color_only(GtkMenuItem *item, AppWindow *self)
+{
+    const AppSelection *s = &self->document->selection;
+    if (s->kind != APP_SELECT_SPACE) {
+        app_document_status(self->document, "Выделите комнату");
+        return;
+    }
+    app_command_set_tile_texture(self->document, s->space, NULL, NULL);
+}
+
+static void on_open_catalogs(GtkMenuItem *item, AppWindow *self)
+{
+    char *uri = g_filename_to_uri(app_catalogs_user_directory(), NULL, NULL);
+    if (uri)
+        gtk_show_uri_on_window(GTK_WINDOW(self->window), uri, GDK_CURRENT_TIME, NULL);
+    g_free(uri);
+}
+
+static void on_reload_catalogs(GtkMenuItem *item, AppWindow *self)
+{
+    app_catalogs_reload();
+    app_document_notify(self->document, APP_CHANGED_MODEL); /* рисунки на плане и на панели — заново */
+    app_document_status(self->document, "Каталогов плитки: %zu", app_catalogs()->count);
+}
+
 #define HELP_WIDTH 640
 #define HELP_HEIGHT 560
 
@@ -590,6 +626,13 @@ static GtkWidget *build_menu(AppWindow *self)
         gtk_menu_shell_append(GTK_MENU_SHELL(view), item);
         self->view_items[i] = item;
     }
+
+    GtkWidget *tiles = submenu(bar, "_Плитка");
+    menu_item(self, tiles, "Выбрать из каталога…", "<Control>k", G_CALLBACK(on_choose_tile));
+    menu_item(self, tiles, "Только цвет, без рисунка", NULL, G_CALLBACK(on_tile_color_only));
+    separator(tiles);
+    menu_item(self, tiles, "Папка своих каталогов", NULL, G_CALLBACK(on_open_catalogs));
+    menu_item(self, tiles, "Обновить каталоги", NULL, G_CALLBACK(on_reload_catalogs));
 
     GtkWidget *help = submenu(bar, "_Справка");
     menu_item(self, help, "Управление", "F1", G_CALLBACK(on_help));

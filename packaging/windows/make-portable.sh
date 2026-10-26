@@ -70,7 +70,7 @@ copy_pixbuf_loaders() {
     step "Загрузчики картинок"
     local loaders="$package_dir/$pixbuf_version_dir/loaders"
     mkdir -p "$loaders"
-    find "$prefix/$pixbuf_version_dir/loaders" -name '*.dll' \( -name '*png*' -o -name '*svg*' \) \
+    find "$prefix/$pixbuf_version_dir/loaders" -name '*.dll' \( -name '*png*' -o -name '*svg*' -o -name '*jpeg*' \) \
         -exec cp {} "$loaders/" \;
     copy_dependencies "$loaders"/*.dll
     # Пути в кэше — относительно папки программы, как в самом MSYS2.
@@ -100,6 +100,13 @@ copy_icons() {
     cp "$prefix/share/icons/hicolor/index.theme" "$icons/hicolor/"
     gtk-update-icon-cache -q -f -t "$icons/Adwaita"
     gtk-update-icon-cache -q -f -t "$icons/hicolor"
+}
+
+# Встроенные каталоги плитки — там же, где их ищет программа (share/tilelayout рядом с exe).
+copy_catalogs() {
+    step "Каталоги плитки"
+    mkdir -p "$package_dir/share/tilelayout"
+    cp -r "$source_dir/data/catalogs" "$package_dir/share/tilelayout/"
 }
 
 copy_fonts_config() {
@@ -166,6 +173,7 @@ copy_dependencies "$package_dir/tilelayout.exe"
 copy_pixbuf_loaders
 copy_settings_schemas
 copy_icons
+copy_catalogs
 copy_fonts_config
 copy_licenses
 write_readme

@@ -46,6 +46,9 @@ static TlTileSettings tile_from_json(const TlJson *object)
         case TL_FIELD_COLOR:
             snprintf((char *)member, TL_COLOR_LENGTH, "%s", tl_json_string_or(value, (char *)member));
             break;
+        case TL_FIELD_TEXT:
+            snprintf((char *)member, TL_TEXTURE_LENGTH, "%s", tl_json_string_or(value, (char *)member));
+            break;
         }
     }
     return tile;

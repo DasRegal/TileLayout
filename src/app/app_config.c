@@ -49,7 +49,7 @@ static int read_int(GKeyFile *file, const char *group, const char *key, int fall
 
 /* ---- файл ------------------------------------------------------------------------ */
 
-static char *executable_directory(void)
+char *app_executable_directory(void)
 {
 #ifdef G_OS_WIN32
     wchar_t module[4096];
@@ -65,7 +65,7 @@ static char *executable_directory(void)
 
 static char *config_path(void)
 {
-    char *directory = executable_directory();
+    char *directory = app_executable_directory();
     char *portable = directory ? g_build_filename(directory, CONFIG_FILE, NULL) : NULL;
     g_free(directory);
     if (portable && g_file_test(portable, G_FILE_TEST_IS_REGULAR))
@@ -164,6 +164,13 @@ static void read_tile_defaults(GKeyFile *file)
             g_free(color);
             break;
         }
+        case TL_FIELD_TEXT: {
+            char *text = g_key_file_get_string(file, "tile", field->key, NULL);
+            if (text)
+                g_strlcpy((char *)member, text, TL_TEXTURE_LENGTH);
+            g_free(text);
+            break;
+        }
         }
     }
     tl_tile_settings_remember_as_default(&tile);
@@ -184,7 +191,8 @@ static void write_tile_defaults(GKeyFile *file)
         case TL_FIELD_BOOL: g_key_file_set_boolean(file, "tile", field->key, *(const bool *)member); break;
         case TL_FIELD_DOUBLE: g_key_file_set_double(file, "tile", field->key, *(const double *)member); break;
         case TL_FIELD_INT: g_key_file_set_integer(file, "tile", field->key, *(const int *)member); break;
-        case TL_FIELD_COLOR: g_key_file_set_string(file, "tile", field->key, (const char *)member); break;
+        case TL_FIELD_COLOR:
+        case TL_FIELD_TEXT: g_key_file_set_string(file, "tile", field->key, (const char *)member); break;
         }
     }
 }

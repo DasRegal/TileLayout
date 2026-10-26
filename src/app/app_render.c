@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 
+#include "app_catalogs.h"
 #include "app_draw.h"
 #include "app_icons.h"
 #include "tl_layout.h"
@@ -126,6 +127,24 @@ static AppColor tile_color(const TlTileSettings *tile, TlTileKind kind)
     return kind == TL_TILE_CUT ? app_color_darker(base, 1.12) : base;
 }
 
+/* Рисунок плитки на её прямоугольник (в осях раскладки). Картинка лежит вдоль
+   длинной стороны плитки: если плитка повёрнута к картинке поперёк — рисунок
+   поворачивается на 90°. */
+static void set_texture_source(cairo_t *cr, cairo_pattern_t *pattern, cairo_surface_t *image, TlRect rect)
+{
+    double image_width = cairo_image_surface_get_width(image), image_height = cairo_image_surface_get_height(image);
+    double width = tl_rect_width(rect), height = tl_rect_height(rect);
+    cairo_matrix_t to_image; /* из осей раскладки — в пиксели картинки */
+    if ((image_width >= image_height) == (width >= height) || fabs(width - height) < 0.5)
+        cairo_matrix_init(&to_image, image_width / width, 0, 0, image_height / height,
+                          -rect.left * image_width / width, -rect.top * image_height / height);
+    else
+        cairo_matrix_init(&to_image, 0, -image_height / width, image_width / height, 0,
+                          -rect.top * image_width / height, (rect.left + width) * image_height / width);
+    cairo_pattern_set_matrix(pattern, &to_image);
+    cairo_set_source(cr, pattern);
+}
+
 static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
                          TlSpace *space, TlLayout *layout)
 {
@@ -142,10 +161,26 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
 
     double pixel = 1.0 / view->scale; /* один логический пиксель в осях раскладки */
     bool thin_joints = tile->joint_width * view->scale < 1.2;
+    cairo_surface_t *image = app_draw_is_mono() ? NULL : app_catalogs_image(tile->texture);
+    cairo_pattern_t *texture = image ? cairo_pattern_create_for_surface(image) : NULL;
+    if (texture) {
+        /* рисунок ровно на плитку: продлевать незачем, а PAD в PDF растрируется по плитке */
+        cairo_pattern_set_extend(texture, CAIRO_EXTEND_NONE);
+        cairo_pattern_set_filter(texture, CAIRO_FILTER_GOOD);
+    }
     for (size_t i = 0; i < layout->tiles.count; i++) {
         const TlTile *t = &layout->tiles.items[i];
         cairo_rectangle(cr, t->rect.left, t->rect.top, tl_rect_width(t->rect), tl_rect_height(t->rect));
-        app_set_fill_color(cr, app_draw_is_mono() ? (AppColor){1, 1, 1, 1} : tile_color(tile, t->kind));
+        if (texture) { /* рисунок, подрезки чуть темнее, узкие — красным поверх */
+            set_texture_source(cr, texture, image, t->rect);
+            cairo_fill_preserve(cr);
+            if (t->kind == TL_TILE_NARROW)
+                app_set_fill_color(cr, app_color_rgba(232, 130, 110, 0.7)); /* как COLOR_NARROW, сквозь рисунок */
+            else
+                app_set_fill_color(cr, app_color_rgba(0, 0, 0, t->kind == TL_TILE_CUT ? 0.12 : 0));
+        } else {
+            app_set_fill_color(cr, app_draw_is_mono() ? (AppColor){1, 1, 1, 1} : tile_color(tile, t->kind));
+        }
         if (app_draw_is_mono() || thin_joints) {
             cairo_fill_preserve(cr);
             cairo_set_line_width(cr, (app_draw_is_mono() ? 0.5 : 0.6) * pixel);
@@ -155,6 +190,8 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
             cairo_fill(cr);
         }
     }
+    if (texture)
+        cairo_pattern_destroy(texture);
     if (options->show_clips && fmin(tile->tile_width, tile->tile_height) * view->scale > 24) {
         app_set_color(cr, app_color_hex(COLOR_CLIP));
         double size = 5 * pixel;

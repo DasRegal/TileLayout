@@ -68,7 +68,8 @@ if(TL_BUILD_APP)
         endif()
         add_executable(tilelayout WIN32 ${TL_APP_SOURCES})
         target_link_libraries(tilelayout PRIVATE tlcore PkgConfig::GTK3)
-        target_compile_definitions(tilelayout PRIVATE TL_VERSION="${PROJECT_VERSION}")
+        target_compile_definitions(tilelayout PRIVATE TL_VERSION="${PROJECT_VERSION}"
+                                   TL_SOURCE_CATALOGS="${CMAKE_SOURCE_DIR}/data/catalogs") # запуск из папки сборки
         install(TARGETS tilelayout RUNTIME DESTINATION bin)
     else()
         message(WARNING "GTK 3 для разработки не найден: собираются только ядро и спецификации.\n"
@@ -81,6 +82,7 @@ endif()
 if(TARGET tilelayout AND UNIX AND NOT APPLE)
     install(FILES packaging/linux/tilelayout.desktop DESTINATION share/applications)
     install(FILES packaging/linux/tilelayout.svg DESTINATION share/icons/hicolor/scalable/apps)
+    install(DIRECTORY data/catalogs/ DESTINATION share/tilelayout/catalogs)
     install(FILES CHANGELOG.md README.md packaging/linux/copyright DESTINATION share/doc/tilelayout)
 
     set(CPACK_GENERATOR DEB)

@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "app_calc_text.h"
+#include "app_catalog_dialog.h"
+#include "app_catalogs.h"
 #include "app_commands.h"
 #include "app_icons.h"
 #include "app_widgets.h"
@@ -70,7 +72,7 @@ struct AppPanel {
     GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap, *threshold_skew;
 
     AppSection tile_section, glue_section, clip_section;
-    GtkWidget *shared_note, *row_shift, *color_button;
+    GtkWidget *shared_note, *row_shift, *color_button, *texture_name;
     TileBinding tile_bindings[MAX_TILE_BINDINGS];
     size_t tile_binding_count;
 
@@ -143,6 +145,7 @@ static void commit_tile_field(AppPanel *panel, const TlTileField *field, const v
     case TL_FIELD_DOUBLE: *(double *)member = *(const double *)value; break;
     case TL_FIELD_INT: *(int *)member = (int)*(const double *)value; break;
     case TL_FIELD_COLOR: g_strlcpy(member, value, TL_COLOR_LENGTH); break;
+    case TL_FIELD_TEXT: g_strlcpy(member, value, TL_TEXTURE_LENGTH); break;
     }
     if (field->remembered_for_new_rooms)
         tl_tile_settings_remember_as_default(tile);
@@ -294,6 +297,23 @@ static void on_rotation_preset(GtkButton *button, AppPanel *panel)
     for (size_t i = 0; i < panel->tile_binding_count; i++)
         if (strcmp(panel->tile_bindings[i].field->key, "angle") == 0)
             set_spin(panel->tile_bindings[i].widget, GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "angle")));
+}
+
+static void on_choose_texture(GtkButton *button, AppPanel *panel)
+{
+    app_catalog_dialog_for_selection(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(button))), panel->document);
+}
+
+/* Название плитки из каталога: «Мрамор белый, 600 × 300»; без рисунка — «только цвет». */
+static void refresh_texture(AppPanel *panel, const TlTileSettings *tile)
+{
+    const TlCatalogTile *found = tile->texture[0] ? tl_catalog_find(app_catalogs(), tile->texture, NULL) : NULL;
+    char *text = !tile->texture[0] ? g_strdup("только цвет")
+                 : found         ? g_strdup(found->name)
+                                 : g_strdup_printf("нет в каталогах: %s", tile->texture);
+    gtk_label_set_text(GTK_LABEL(panel->texture_name), text);
+    gtk_widget_set_tooltip_text(panel->texture_name, text);
+    g_free(text);
 }
 
 static void on_color(GtkColorButton *button, AppPanel *panel)
@@ -1166,6 +1186,16 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     bind_tile(panel, "enabled", enabled);
     app_section_wide(s, enabled);
 
+    GtkWidget *texture = app_hbox(4);
+    panel->texture_name = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(panel->texture_name), 0);
+    gtk_label_set_ellipsize(GTK_LABEL(panel->texture_name), PANGO_ELLIPSIZE_END);
+    gtk_box_pack_start(GTK_BOX(texture), panel->texture_name, TRUE, TRUE, 0);
+    GtkWidget *choose = connect_button(gtk_button_new_with_label("Выбрать…"), G_CALLBACK(on_choose_texture), panel);
+    gtk_widget_set_tooltip_text(choose, "Плитка из каталога: размер и рисунок (Ctrl+K)");
+    gtk_box_pack_start(GTK_BOX(texture), choose, FALSE, FALSE, 0);
+    app_section_row(s, "Рисунок", texture);
+
     GtkWidget *length = app_hbox(4);
     gtk_box_pack_start(GTK_BOX(length), tile_spin(panel, "w", 10, 5000, 10, 0, "мм"), TRUE, TRUE, 0);
     GtkWidget *swap = small_button(panel, "⇄", G_CALLBACK(on_swap_tile), NULL, 0);
@@ -1338,6 +1368,7 @@ static void refresh_space(AppPanel *panel, TlSpace *space)
     GdkRGBA rgba;
     if (gdk_rgba_parse(&rgba, tile->color))
         gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(panel->color_button), &rgba);
+    refresh_texture(panel, tile);
 }
 
 static void refresh_wall(AppPanel *panel, TlOutline *outline, size_t wall)
