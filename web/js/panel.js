@@ -55,17 +55,23 @@ const TOOL_TITLES = {
   joint: 'Деформационный шов',
 };
 
-/* Предметы плана: заголовок, поле размера (если есть), подсказка, кнопка удаления. */
+/* Предметы плана: заголовок, поля (ключ — как в tl_web_object), подсказка, кнопка удаления. */
+const THICKNESS = { key: 'thickness', label: 'Толщина', min: 10, max: 1000, step: 10, unit: 'мм' };
 const OBJECTS = {
   partition: {
     title: 'Перегородка',
-    size: 'Толщина',
-    info: (o) => `Длина ${o.length} мм. Тяните за тело — поперёк, за конец — длина и поворот.`,
+    fields: [
+      THICKNESS,
+      { key: 'length', label: 'Длина', min: 10, max: 100000, step: 10, unit: 'мм' },
+      { key: 'angle', label: 'Угол', min: 0, max: 360, step: 5, unit: '°' },
+    ],
+    info: () =>
+      'Круг посередине — сдвиг поперёк, квадрат на конце — длина и поворот, ромб на углу — толщина у этого конца.',
     remove: 'Удалить',
   },
   opening: {
     title: 'Проём',
-    size: 'Ширина',
+    fields: [{ key: 'width', label: 'Ширина', min: 100, max: 10000, step: 10, unit: 'мм' }],
     info: (o) =>
       ({ wall: 'В основной стене.', partition: 'В перегородке.', none: 'Не на стене — сдвиньте или удалите.' })[o.host] +
       ' Тяните вдоль стены.',
@@ -73,7 +79,7 @@ const OBJECTS = {
   },
   wall: {
     title: 'Стена дома',
-    size: 'Толщина',
+    fields: [{ ...THICKNESS, max: 2000 }],
     info: (o) => `Длина ${o.length} мм. Тяните — стена двигается параллельно себе.`,
     remove: 'Удалить дом',
   },
@@ -94,7 +100,7 @@ const OBJECTS = {
   },
   joint: {
     title: 'Деформационный шов',
-    size: 'Ширина щели',
+    fields: [{ key: 'gap', label: 'Ширина щели', min: 1, max: 100, step: 1, unit: 'мм' }],
     info: (o) => `Длина ${o.length} мм. Режет плитку: куски по обе стороны — отдельные подрезки.`,
     remove: 'Удалить',
   },
@@ -114,7 +120,7 @@ const OBJECTS = {
  * Панель: build — один раз; после каждого изменения — show(комната, каталоги),
  * showTool(инструмент, настройки, подсказка), showObject(предмет).
  * actions: {setField(key, value), chooseTile(), colorOnly(), rename(name),
- *           align(mode), setSetting(key, value), setObjectSize(value), deleteObject()}.
+ *           align(mode), setSetting(key, value), setObjectField(key, value), deleteObject()}.
  */
 export class Panel {
   constructor(root, actions) {
@@ -152,11 +158,8 @@ export class Panel {
       });
     }
     this.objectSettings = this.root.querySelector('#object-settings');
-    this.objectSize = this.root.querySelector('#object-size');
-    this.objectSize.addEventListener('change', () => {
-      const value = Number(this.objectSize.value);
-      if (this.objectSize.value !== '' && Number.isFinite(value)) this.actions.setObjectSize(value);
-    });
+    this.objectFields = this.root.querySelector('#object-fields');
+    this.objectFieldsKind = null; // для какого вида предмета построены поля
     this.root.querySelector('#object-delete').addEventListener('click', () => this.actions.deleteObject());
     this.shared = this.root.querySelector('#room-shared');
     this.enabled = this.root.querySelector('#tile-enabled');
@@ -257,26 +260,54 @@ export class Panel {
       this.root.querySelector('#object-info').textContent = object.locked
         ? `${info} Заблокировано в настольной программе — менять нельзя.`
         : info;
-      const sizeRow = this.root.querySelector('#object-size-row');
-      sizeRow.hidden = !text.size;
-      if (text.size) {
-        this.root.querySelector('#object-size-caption').textContent = text.size;
-        const value = { opening: object.width, joint: object.gap }[object.kind] ?? object.thickness;
-        const limits = {
-          opening: { min: 100, max: 10000, step: 10 },
-          joint: { min: 1, max: 100, step: 1 },
-          wall: { min: 10, max: 2000, step: 10 },
-        }[object.kind] ?? { min: 10, max: 1000, step: 10 };
-        Object.assign(this.objectSize, limits);
-        if (document.activeElement !== this.objectSize) this.objectSize.value = String(Math.round(value * 10) / 10);
-        this.objectSize.disabled = object.locked;
-      }
+      this.showObjectFields(object, text.fields || []);
       const remove = this.root.querySelector('#object-delete');
       remove.hidden = !text.remove;
       remove.textContent = text.remove;
       remove.disabled = object.locked || (object.kind === 'vertex' && object.walls <= 3);
     }
     this.updateEmpty();
+  }
+
+  /** Поля предмета: строятся заново, только когда сменился его вид. */
+  showObjectFields(object, fields) {
+    if (this.objectFieldsKind !== object.kind) {
+      this.objectFieldsKind = object.kind;
+      this.objectFields.replaceChildren(...fields.map((field) => this.objectRow(field)));
+    }
+    for (const field of fields) {
+      const input = this.objectFields.querySelector(`[data-key="${field.key}"]`);
+      if (document.activeElement !== input) input.value = String(Math.round(object[field.key] * 10) / 10);
+      input.disabled = object.locked;
+    }
+  }
+
+  objectRow(field) {
+    const row = document.createElement('label');
+    row.className = 'row';
+    const caption = document.createElement('span');
+    caption.className = 'caption';
+    caption.textContent = field.label;
+    const control = document.createElement('span');
+    control.className = 'control';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.inputMode = 'decimal';
+    input.dataset.key = field.key;
+    input.id = `object-${field.key}`;
+    Object.assign(input, { min: field.min, max: field.max, step: field.step });
+    input.addEventListener('change', () => {
+      const value = Number(input.value);
+      if (input.value !== '' && Number.isFinite(value)) {
+        this.actions.setObjectField(field.key, Math.min(field.max, Math.max(field.min, value)));
+      }
+    });
+    const unit = document.createElement('span');
+    unit.className = 'unit';
+    unit.textContent = field.unit;
+    control.append(input, unit);
+    row.append(caption, control);
+    return row;
   }
 
   /** room — от ядра (tl_web_space_tile) или null; catalogs — для названия плитки. */

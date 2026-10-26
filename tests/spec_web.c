@@ -216,6 +216,65 @@ void spec_web(void)
             EXPECT_NEAR(answer_number(tl_web_object("wall", 0, 0, 0), "walls"), 3, 1e-9);
             EXPECT(!tl_web_delete("vertex", 0, 0, 0, 8)); /* у треугольника — нельзя */
         }
+        IT("маркеры перегородки: концы, углы тела, середина, точки узла; угол тела меняет толщину у конца")
+        {
+            tl_web_open("{\"version\": 4, \"outlines\": [], \"partitions\": [], \"spaces\": []}");
+            tl_web_add_contour("[0, 0, 6000, 0, 6000, 4000, 0, 4000]", 200, 100, 1);
+            int index = tl_web_add_partition(3000, 0, 3000, 2500, 100, 2);
+            TlJson *object = tl_json_parse(tl_web_object("partition", index, 0, 0), NULL, 0);
+            const TlJson *handles = tl_json_get(object, "handles");
+            int ends = 0, corners = 0, middles = 0, corner_part = -1;
+            for (size_t i = 0; i < tl_json_length(handles); i++) {
+                const char *shape = tl_json_string_or(tl_json_get(tl_json_at(handles, i), "shape"), "");
+                ends += strcmp(shape, "end") == 0;
+                middles += strcmp(shape, "middle") == 0;
+                if (strcmp(shape, "corner") == 0) {
+                    corners++;
+                    corner_part = (int)tl_json_number_or(tl_json_get(tl_json_get(tl_json_at(handles, i), "grab"), "part"), -1);
+                }
+            }
+            tl_json_free(object);
+            EXPECT_INT(ends, 2);    /* оба конца свободны: один на стене, другой в комнате */
+            EXPECT_INT(corners, 4); /* углы тела у обоих концов */
+            EXPECT_INT(middles, 1);
+            EXPECT(corner_part >= 3);
+            /* угол тела у конца (3000, 2500) с левой стороны — тянем дальше влево: перегородка толще */
+            object = tl_json_parse(tl_web_object("partition", index, 0, 0), NULL, 0);
+            handles = tl_json_get(object, "handles");
+            int left_corner = -1;
+            double corner_x = 0, corner_y = 0;
+            for (size_t i = 0; i < tl_json_length(handles); i++) {
+                const TlJson *handle = tl_json_at(handles, i);
+                const TlJson *point = tl_json_get(handle, "point");
+                double x = tl_json_number_or(tl_json_at(point, 0), 0), y = tl_json_number_or(tl_json_at(point, 1), 0);
+                if (strcmp(tl_json_string_or(tl_json_get(handle, "shape"), ""), "corner") == 0 && x < 3000 && y > 1000) {
+                    left_corner = (int)tl_json_number_or(tl_json_get(tl_json_get(handle, "grab"), "part"), -1);
+                    corner_x = x;
+                    corner_y = y;
+                }
+            }
+            tl_json_free(object);
+            EXPECT(left_corner >= 3);
+            EXPECT(tl_web_drag_begin("partition", index, left_corner, 0, corner_x, corner_y));
+            tl_web_drag_move(corner_x - 100, corner_y, 20, 10, false, 3);
+            tl_web_drag_end();
+            EXPECT_NEAR(answer_number(tl_web_object("partition", index, 0, 0), "thickness"), 200, 1e-9);
+            EXPECT(tl_web_set_partition_length(index, 2000, 3.5));
+            EXPECT_NEAR(answer_number(tl_web_object("partition", index, 0, 0), "length"), 2000, 1e-9);
+            EXPECT(tl_web_set_partition_angle(index, 300, 3.6)); /* вниз и вправо — внутрь дома */
+            EXPECT_NEAR(answer_number(tl_web_object("partition", index, 0, 0), "angle"), 300, 0.1);
+            EXPECT(!tl_web_set_partition_length(index, 1, 3.7));
+            EXPECT(tl_web_undo() && tl_web_undo()); /* угол и длина — назад */
+
+            tl_web_add_partition(3000, 2500, 6000, 2500, 100, 4); /* узел в конце */
+            object = tl_json_parse(tl_web_object("partition", index, 0, 0), NULL, 0);
+            handles = tl_json_get(object, "handles");
+            int nodes = 0;
+            for (size_t i = 0; i < tl_json_length(handles); i++)
+                nodes += strcmp(tl_json_string_or(tl_json_get(tl_json_at(handles, i), "shape"), ""), "node") == 0;
+            tl_json_free(object);
+            EXPECT_INT(nodes, 1);
+        }
         IT("линейка и шов: добавить, выбрать, протащить, ширина щели, удалить; стык полов в проёме")
         {
             tl_web_open("{\"version\": 4, \"outlines\": [], \"partitions\": [], \"spaces\": []}");

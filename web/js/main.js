@@ -68,17 +68,19 @@ const panel = new Panel(document.getElementById('panel'), {
     writeSettings(state.settings);
     requestDraw();
   },
-  setObjectSize: (value) => {
+  setObjectField: (key, value) => {
     const { kind, index, part } = state.selection;
-    const ok =
-      kind === 'partition'
-        ? state.core.setPartitionThickness(index, value)
-        : kind === 'wall'
-          ? state.core.setWallThickness(index, part, value)
-          : kind === 'joint'
-            ? state.core.setJointGap(index, value)
-            : state.core.setOpeningWidth(index, value);
-    if (ok) changed();
+    const core = state.core;
+    const setters = {
+      'partition.thickness': () => core.setPartitionThickness(index, value),
+      'partition.length': () => core.setPartitionLength(index, value),
+      'partition.angle': () => core.setPartitionAngle(index, value),
+      'wall.thickness': () => core.setWallThickness(index, part, value),
+      'opening.width': () => core.setOpeningWidth(index, value),
+      'joint.gap': () => core.setJointGap(index, value),
+    };
+    const set = setters[`${kind}.${key}`];
+    if (set && set()) changed();
     else say('Значение не подходит.');
   },
   deleteObject: () => deleteSelection(),
@@ -117,18 +119,41 @@ function highlightOf(object) {
   return object ? object.outline : [];
 }
 
-/** Маркеры выделенного (углы, концы, узлы) и линии выравнивания — в пикселях экрана. */
+const HANDLE_PX = 10; // маркер выделенного предмета ловится в стольких пикселях
+
+const sameItem = (a, b) => a && b && a.kind === b.kind && a.index === b.index && (a.part ?? 0) === (b.part ?? 0) && (a.end ?? 0) === (b.end ?? 0);
+
+/** Маркеры выделенного (концы, углы, середина, узлы) и линии выравнивания — в пикселях экрана. */
 function drawHandles(c) {
   const object = state.object;
   if (object) {
-    object.handles.forEach(([x, y], i) => {
-      const [sx, sy] = view.toScreen(x, y);
-      c.fillStyle = object.kind === 'vertex' && i === object.part ? '#2563eb' : '#ffffff'; // взятый угол — залит
+    for (const handle of object.handles) {
+      const [sx, sy] = view.toScreen(...handle.point);
+      const active = sameItem(handle.grab, state.selection) && handle.shape !== 'middle';
+      c.fillStyle = active ? '#2563eb' : '#ffffff';
       c.strokeStyle = '#2563eb';
       c.lineWidth = 1.5;
-      c.fillRect(sx - 4, sy - 4, 8, 8);
-      c.strokeRect(sx - 4, sy - 4, 8, 8);
-    });
+      c.beginPath();
+      if (handle.shape === 'corner') { // ромб: угол тела или узла
+        c.moveTo(sx, sy - 5);
+        c.lineTo(sx + 5, sy);
+        c.lineTo(sx, sy + 5);
+        c.lineTo(sx - 5, sy);
+        c.closePath();
+      } else if (handle.shape === 'middle' || handle.shape === 'node') { // круг: тянуть целиком
+        c.arc(sx, sy, handle.shape === 'middle' ? 6 : 5, 0, 2 * Math.PI);
+      } else {
+        c.rect(sx - 4, sy - 4, 8, 8);
+      }
+      c.fill();
+      c.stroke();
+      if (handle.shape === 'middle') { // стрелки «тянуть»
+        c.beginPath();
+        c.arc(sx, sy, 2, 0, 2 * Math.PI);
+        c.fillStyle = '#2563eb';
+        c.fill();
+      }
+    }
   }
   const far = 100000; // линия — через весь экран
   for (const [x, y, vertical] of state.guides) {
@@ -257,7 +282,8 @@ async function pickTile() {
 }
 
 function select(world) {
-  const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  const handle = handleAt(world);
+  const hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
   state.selection = hit.kind === 'none' ? null : hit;
   refresh();
   say('');
@@ -267,7 +293,8 @@ function select(world) {
  *  целиком, с Ctrl — сетка плитки; иначе комната и пустое место — сдвиг вида. */
 function startDrag(world, event) {
   if (!state.core || tools.drawing) return null;
-  const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  const handle = handleAt(world);
+  const hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
   let target = DRAGGABLE.has(hit.kind) ? hit : null;
   if (hit.kind === 'space') {
     if (event.ctrlKey || event.metaKey) target = { kind: 'tiles' };
@@ -293,9 +320,31 @@ function startDrag(world, event) {
   };
 }
 
+/** Маркер выделенного предмета под точкой (ближайший) или null. */
+function handleAt(world) {
+  if (!state.object) return null;
+  const [x, y] = view.toScreen(...world);
+  let best = null;
+  let bestDistance = HANDLE_PX;
+  for (const handle of state.object.handles) {
+    const [hx, hy] = view.toScreen(...handle.point);
+    const distance = Math.hypot(hx - x, hy - y);
+    if (distance < bestDistance) {
+      best = handle;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
 function updateCursor(world) {
   if (tools.drawing) {
     canvas.style.cursor = '';
+    return;
+  }
+  const handle = handleAt(world);
+  if (handle) {
+    canvas.style.cursor = handle.shape === 'middle' || handle.shape === 'node' ? 'move' : 'crosshair';
     return;
   }
   const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);

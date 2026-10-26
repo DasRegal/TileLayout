@@ -239,6 +239,8 @@ static bool on_opening(TlProject *project, const TlOpening *opening, TlVec2 poin
            across <= fmax(band.near, band.far) + tolerance;
 }
 
+static const TlPartitionEnd ENDS[2] = {TL_PARTITION_START, TL_PARTITION_END};
+
 static bool end_in_node(TlProject *project, TlPartition *partition, TlPartitionEnd end)
 {
     TlNode node;
@@ -304,13 +306,13 @@ static bool pick_handle(TlProject *project, TlVec2 point, double tolerance, Item
         return true;
     for (size_t i = 0; i < project->partitions.count; i++) {
         TlPartition *partition = project->partitions.items[i];
-        const TlVec2 ends[2] = {partition->start, partition->end};
         for (int e = 0; e < 2; e++)
-            if (tl_distance(point, ends[e]) < reach && !end_in_node(project, partition, (TlPartitionEnd)e)) {
+            if (tl_distance(point, *tl_partition_end_point(partition, ENDS[e])) < reach &&
+                !end_in_node(project, partition, ENDS[e])) {
                 TlTee tee;
-                if (tl_project_tee_of(project, partition, (TlPartitionEnd)e, &tee))
+                if (tl_project_tee_of(project, partition, ENDS[e], &tee))
                     continue; /* конец на боку другой — его тянут как примыкание */
-                *item = (Item){"partition", (int)i, e + 1, 0, 0};
+                *item = (Item){"partition", (int)i, e == 0 ? TL_DRAG_PARTITION_START : TL_DRAG_PARTITION_END, 0, 0};
                 return true;
             }
     }
@@ -402,7 +404,23 @@ static TlOutline *house_at(int index)
 
 static bool is(const char *kind, const char *expected) { return strcmp(kind, expected) == 0; }
 
-static void add_point(TlJson *array, TlVec2 p) { tl_json_array_push(array, point_json(p)); }
+/* Маркер выделенного предмета: точка, вид ("end" — конец, "corner" — угол тела или
+   узла, "middle" — середина, "node" — середина узла, "point" — точка примыкания,
+   угол дома, конец стыка) и что за него тянут (как от tl_web_pick). */
+static void add_handle(TlJson *handles, TlVec2 point, const char *shape, Item grab)
+{
+    TlJson *handle = tl_json_object();
+    tl_json_object_set(handle, "point", point_json(point));
+    tl_json_object_set(handle, "shape", tl_json_string(shape));
+    tl_json_object_set(handle, "grab", item_object(grab));
+    tl_json_array_push(handles, handle);
+}
+
+/* Середина отрезка — маркер, за который тянут предмет целиком. */
+static void add_middle(TlJson *handles, TlVec2 a, TlVec2 b, Item grab)
+{
+    add_handle(handles, tl_vec2_midpoint(a, b), "middle", grab);
+}
 
 static void add_outline(TlJson *outlines, const TlPolygon *polygon) { tl_json_array_push(outlines, tl_web_polygon(polygon)); }
 
@@ -414,6 +432,57 @@ static bool node_locked(const TlNode *node)
     return false;
 }
 
+static int index_of_house(const TlOutline *house)
+{
+    TlProject *project = tl_web_project();
+    for (size_t i = 0; i < project->outlines.count; i++)
+        if (project->outlines.items[i] == house)
+            return (int)i;
+    return -1;
+}
+
+/* Точки узла: середина тянет узел целиком, углы — углы тел у узла. */
+static void add_node_handles(TlJson *handles, const TlNode *node, int partition_index, int end)
+{
+    TlNodeCorner corners[TL_NODE_MAX];
+    size_t count = tl_node_corners(node, corners);
+    for (size_t k = 0; k < count; k++)
+        add_handle(handles, corners[k].first, "corner", (Item){"node", partition_index, (int)k + 1, end, 0});
+    add_handle(handles, tl_node_center(node), "node", (Item){"node", partition_index, 0, end, 0});
+}
+
+/* Маркеры перегородки: свободный конец и углы тела у него, у конца в узле —
+   точки узла, точки примыканий, середина. */
+static void add_partition_handles(TlProject *project, TlJson *handles, TlPartition *partition, int index)
+{
+    TlPolygon body = tl_project_partition_body(project, partition, 0);
+    for (int e = 0; e < 2; e++) {
+        TlPartitionEnd end = ENDS[e];
+        TlNode node;
+        if (tl_project_node_of(project, partition, end, &node)) {
+            add_node_handles(handles, &node, index, (int)end);
+            continue;
+        }
+        TlTee tee;
+        if (tl_project_tee_of(project, partition, end, &tee))
+            continue; /* конец на боку другой — точка примыкания ниже */
+        for (size_t corner = 0; corner < body.count; corner++)
+            if (tl_partition_corner_end((TlPartitionCorner)corner) == end)
+                add_handle(handles, body.items[corner], "corner",
+                           (Item){"partition", index, TL_DRAG_PARTITION_FIRST_CORNER + (int)corner, 0, 0});
+        add_handle(handles, *tl_partition_end_point(partition, end), "end",
+                   (Item){"partition", index, e == 0 ? TL_DRAG_PARTITION_START : TL_DRAG_PARTITION_END, 0, 0});
+    }
+    tl_polygon_free(&body);
+    TlTeeList tees = tl_project_tees(project);
+    for (size_t i = 0; i < tees.count; i++)
+        if (tees.items[i].branch == partition || tees.items[i].host == partition)
+            add_handle(handles, tees.items[i].point, "point",
+                       (Item){"tee", index_of_partition(project, tees.items[i].branch), 0, (int)tees.items[i].end, 0});
+    tl_tee_list_free(&tees);
+    add_middle(handles, partition->start, partition->end, (Item){"partition", index, TL_DRAG_PARTITION_BODY, 0, 0});
+}
+
 /* Свойства дома: подсветка — обе стороны стен, маркеры — углы. */
 static void house_properties(TlJson *json, TlOutline *house, TlJson *outlines, TlJson *handles)
 {
@@ -421,7 +490,7 @@ static void house_properties(TlJson *json, TlOutline *house, TlJson *outlines, T
     add_outline(outlines, &outer);
     add_outline(outlines, &house->inner);
     for (size_t i = 0; i < house->inner.count; i++)
-        add_point(handles, house->inner.items[i]);
+        add_handle(handles, house->inner.items[i], "point", (Item){"vertex", index_of_house(house), (int)i, 0, 0});
     tl_json_object_set(json, "walls", tl_json_number((double)tl_outline_wall_count(house)));
     tl_json_object_set(json, "locked", tl_json_bool(tl_outline_any_locked(house)));
     tl_polygon_free(&outer);
@@ -440,12 +509,10 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         TlPolygon body = tl_project_partition_body(project, partition, 0);
         add_outline(outlines, &body);
         tl_polygon_free(&body);
-        if (!end_in_node(project, partition, TL_PARTITION_START))
-            add_point(handles, partition->start);
-        if (!end_in_node(project, partition, TL_PARTITION_END))
-            add_point(handles, partition->end);
+        add_partition_handles(project, handles, partition, index);
         tl_json_object_set(json, "thickness", tl_json_number(tl_partition_max_thickness(partition)));
         tl_json_object_set(json, "length", tl_json_number(round(tl_partition_length(partition))));
+        tl_json_object_set(json, "angle", tl_json_number(round(tl_partition_angle(partition) * 10) / 10));
         tl_json_object_set(json, "locked", tl_json_bool(partition->locked));
     } else if (is(kind, "opening") && opening) {
         TlBand band;
@@ -478,8 +545,9 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         tl_polygon_push(&line, ruler->end);
         add_outline(outlines, &line);
         tl_polygon_free(&line);
-        add_point(handles, ruler->start);
-        add_point(handles, ruler->end);
+        add_handle(handles, ruler->start, "end", (Item){"ruler", index, 1, 0, 0});
+        add_handle(handles, ruler->end, "end", (Item){"ruler", index, 2, 0, 0});
+        add_middle(handles, ruler->start, ruler->end, (Item){"ruler", index, 0, 0, 0});
         tl_json_object_set(json, "length", tl_json_number(round(tl_ruler_length(ruler))));
         tl_json_object_set(json, "locked", tl_json_bool(false));
     } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
@@ -487,8 +555,9 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         TlPolygon strip = tl_expansion_joint_strip(joint);
         add_outline(outlines, &strip);
         tl_polygon_free(&strip);
-        add_point(handles, joint->start);
-        add_point(handles, joint->end);
+        add_handle(handles, joint->start, "end", (Item){"joint", index, 1, 0, 0});
+        add_handle(handles, joint->end, "end", (Item){"joint", index, 2, 0, 0});
+        add_middle(handles, joint->start, joint->end, (Item){"joint", index, 0, 0, 0});
         tl_json_object_set(json, "gap", tl_json_number(joint->gap));
         tl_json_object_set(json, "length", tl_json_number(round(tl_expansion_joint_length(joint))));
         tl_json_object_set(json, "locked", tl_json_bool(false));
@@ -502,8 +571,9 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
             tl_polygon_push(&line, to);
             add_outline(outlines, &line);
             tl_polygon_free(&line);
-            add_point(handles, from);
-            add_point(handles, to);
+            add_handle(handles, from, "point", (Item){"threshold", index, TL_DRAG_THRESHOLD_FROM, 0, 0});
+            add_handle(handles, to, "point", (Item){"threshold", index, TL_DRAG_THRESHOLD_TO, 0, 0});
+            add_middle(handles, from, to, (Item){"threshold", index, TL_DRAG_THRESHOLD_LINE, 0, 0});
             tl_json_object_set(json, "locked", tl_json_bool(opening->locked));
         }
     } else if ((is(kind, "node") || is(kind, "tee")) && partition) {
@@ -515,14 +585,14 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
                 add_outline(outlines, &body);
                 tl_polygon_free(&body);
             }
-            add_point(handles, tl_node_center(&node));
+            add_node_handles(handles, &node, index, end);
             tl_json_object_set(json, "count", tl_json_number((double)node.count));
             tl_json_object_set(json, "locked", tl_json_bool(node_locked(&node)));
         } else if (is(kind, "tee") && tl_project_tee_of(project, partition, (TlPartitionEnd)end, &tee)) {
             TlPolygon body = tl_project_partition_body(project, tee.branch, 0);
             add_outline(outlines, &body);
             tl_polygon_free(&body);
-            add_point(handles, tee.point);
+            add_handle(handles, tee.point, "point", (Item){"tee", index, 0, end, 0});
             tl_json_object_set(json, "locked", tl_json_bool(tee.branch->locked || tee.host->locked));
         } else {
             found = false;
@@ -543,18 +613,43 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
 
 /* ---- изменение и удаление -------------------------------------------------------- */
 
-bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds)
+/* Правка перегородки как ведущей: узлы и примыкания следуют за ней. */
+typedef void (*PartitionChange)(TlPartition *partition, double value);
+
+/* own_ends — концы заданы правкой (длина, угол): не возвращать их на грани,
+   к которым были привязаны (иначе перегородка съезжает вдоль стены). */
+static bool change_partition(int index, double value, const char *merge_key, PartitionChange change, bool own_ends,
+                             double now_seconds)
 {
     TlPartition *partition = partition_at(index);
-    if (!partition || partition->locked || !(thickness >= 10 && thickness <= 1000))
+    if (!partition || partition->locked)
         return false;
     TlProject *project = tl_web_project();
-    tl_web_checkpoint("pthick", now_seconds);
+    tl_web_checkpoint(merge_key, now_seconds);
     TlEditToken *token = tl_project_begin_edit(project, NULL);
-    tl_partition_set_thickness(partition, thickness);
-    TlEditOptions options = {.master = partition};
+    change(partition, value);
+    TlEditOptions options = {.master = partition, .frozen = own_ends ? partition : NULL};
     tl_project_end_edit(project, token, &options);
+    tl_project_merge_straight_nodes(project);
+    tl_project_update_spaces(project);
     return true;
+}
+
+bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds)
+{
+    return thickness >= 10 && thickness <= 1000 &&
+           change_partition(index, thickness, "pthick", tl_partition_set_thickness, false, now_seconds);
+}
+
+bool tl_web_set_partition_length(int index, double length, double now_seconds)
+{
+    return length >= 10 && length <= 100000 &&
+           change_partition(index, length, "plen", tl_partition_set_length, true, now_seconds);
+}
+
+bool tl_web_set_partition_angle(int index, double degrees, double now_seconds)
+{
+    return isfinite(degrees) && change_partition(index, degrees, "pangle", tl_partition_set_angle, true, now_seconds);
 }
 
 bool tl_web_set_opening_width(int index, double width, double now_seconds)
@@ -660,7 +755,7 @@ bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x,
         if (!target.partition)
             return false;
         if (target.kind == TL_DRAG_NODE)
-            target.index = 0; /* за середину — узел целиком */
+            target.index = part; /* 0 — середина (узел целиком), 1… — угол узла */
     } else if (is(kind, "opening") || is(kind, "threshold")) {
         target.kind = is(kind, "opening") ? TL_DRAG_OPENING : TL_DRAG_THRESHOLD;
         target.opening = opening_at(index);

@@ -89,15 +89,23 @@ const char *tl_web_measure_point(double x, double y, bool has_anchor, double anc
     "index": номер (у угла и стены — дома; у узла и примыкания — перегородки; у стыка — проёма),
     "part": угол или стена дома; у перегородки, линейки, шва 0 — тело, 1 — начало, 2 — конец;
             у стыка 1 — целиком, 2 — конец у косяка в начале проёма, 3 — в конце,
-    "end": конец перегородки в узле или примыкании (0 — начало, 1 — конец), "space": id комнаты} */
+    "end": конец перегородки в узле или примыкании (TlPartitionEnd: 1 — начало, 2 — конец),
+    "space": id комнаты} */
 const char *tl_web_pick(double x, double y, double tolerance);
 /* Свойства предмета (как от tl_web_pick) для панели и подсветки; null — нет такого.
-   Общее: "outline" — контуры для подсветки, "handles" — точки маркеров, "locked";
-   перегородка — "thickness", "length"; проём — "width", "host"; стена — "thickness",
+   Общее: "outline" — контуры для подсветки, "locked", "handles" — маркеры
+   [{"point": [x, y], "shape": "end" | "corner" | "middle" | "node" | "point",
+     "grab": предмет для tl_web_drag_begin}] (у перегородки — концы, углы тела, точки
+   узлов и примыканий, середина);
+   перегородка — "thickness", "length", "angle"; проём — "width", "host"; стена — "thickness",
    "length", "walls"; угол — "walls"; узел — "count" (перегородок); линейка — "length";
    шов — "gap", "length". */
 const char *tl_web_object(const char *kind, int index, int part, int end);
 bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds);
+/* Длина (конец «начало + длина») и угол перегородки (0° — вправо, против часовой),
+   как поля на панели программы. */
+bool tl_web_set_partition_length(int index, double length, double now_seconds);
+bool tl_web_set_partition_angle(int index, double degrees, double now_seconds);
 bool tl_web_set_opening_width(int index, double width, double now_seconds);
 /* Толщина стены дома (вместе со смежной стеной соседнего дома). */
 bool tl_web_set_wall_thickness(int house, int wall, double thickness, double now_seconds);

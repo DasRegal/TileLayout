@@ -64,6 +64,8 @@ export async function loadCore() {
       return withString(kind, (k) => JSON.parse(text(module._tl_web_object(k, index, part, end))));
     },
     setPartitionThickness: (index, value) => module._tl_web_set_partition_thickness(index, value, now()) !== 0,
+    setPartitionLength: (index, value) => module._tl_web_set_partition_length(index, value, now()) !== 0,
+    setPartitionAngle: (index, value) => module._tl_web_set_partition_angle(index, value, now()) !== 0,
     setOpeningWidth: (index, value) => module._tl_web_set_opening_width(index, value, now()) !== 0,
     addRuler: (a, b) => module._tl_web_add_ruler(a[0], a[1], b[0], b[1], now()),
     addJoint: (a, b, gap) => module._tl_web_add_joint(a[0], a[1], b[0], b[1], gap, now()),
