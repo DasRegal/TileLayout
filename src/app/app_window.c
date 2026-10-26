@@ -452,15 +452,31 @@ static void on_snap_changed(GtkComboBox *combo, AppWindow *self)
 
 /* ---- справка ------------------------------------------------------------------- */
 
+#define HELP_WIDTH 640
+#define HELP_HEIGHT 560
+
+/* Справка — с разметкой (жирные заголовки) и прокруткой: целиком она выше экрана. */
 static void on_help(GtkMenuItem *item, AppWindow *self)
 {
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Управление", GTK_WINDOW(self->window), GTK_DIALOG_MODAL,
+                                                    "Закрыть", GTK_RESPONSE_CLOSE, NULL);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), HELP_WIDTH, HELP_HEIGHT);
     char *help = g_strjoinv("", (char **)HELP_SECTIONS);
-    GtkWidget *dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(self->window), GTK_DIALOG_MODAL, GTK_MESSAGE_INFO,
-                                                           GTK_BUTTONS_OK, "%s", help);
-    gtk_window_set_title(GTK_WINDOW(dialog), "Управление");
+    GtkWidget *text = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(text), help);
+    gtk_label_set_line_wrap(GTK_LABEL(text), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(text), 0);
+    gtk_label_set_yalign(GTK_LABEL(text), 0);
+    g_object_set(text, "margin", 16, NULL);
+    g_free(help);
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(scrolled), text);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_box_pack_start(GTK_BOX(content), scrolled, TRUE, TRUE, 0);
+    gtk_widget_show_all(dialog);
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
-    g_free(help);
 }
 
 static void on_about(GtkMenuItem *item, AppWindow *self)
