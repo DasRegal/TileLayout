@@ -20,6 +20,21 @@
       <button type="button" data-action="redo" title="Повторить (Ctrl+Shift+Z)" disabled>Повторить</button>
       <span class="divider" aria-hidden="true"></span>
       <button type="button" data-action="fit" title="Весь план в окне">Вписать</button>
+      <button type="button" data-action="house" title="Новый дом или квартира по внутренним размерам">Дом по размерам…</button>
+      <details class="view-menu">
+        <summary title="Что показывать на плане">Вид</summary>
+        <div class="view-menu-body">
+          <label><input type="checkbox" data-layer="tiles"> Плитка</label>
+          <label><input type="checkbox" data-layer="numbers"> Номера плиток</label>
+          <label><input type="checkbox" data-layer="dims"> Размеры</label>
+          <label><input type="checkbox" data-layer="clips"> СВП</label>
+          <label><input type="checkbox" data-layer="labels"> Подписи комнат</label>
+          <label><input type="checkbox" data-layer="joints"> Деформационные швы</label>
+          <label><input type="checkbox" data-layer="rulers"> Линейки</label>
+        </div>
+      </details>
+      <button type="button" data-action="png" title="Картинка плана, как на экране">PNG</button>
+      <button type="button" data-action="print" title="Печать и PDF (Ctrl+P)">Печать / PDF…</button>
     </nav>
     <nav class="tools tool-modes" aria-label="Инструменты">
       <button type="button" data-tool="select" title="Выбор (V)" aria-pressed="true">Выбор</button>
@@ -66,6 +81,9 @@
 
         <div id="room-settings" hidden>
           <input type="text" id="room-name" class="room-name" aria-label="Название комнаты" maxlength="120">
+          <p id="room-info" class="hint"></p>
+          <label class="row"><span class="caption">Пол</span>
+            <span class="control"><select id="floor-source"></select></span></label>
           <p id="room-shared" class="hint" hidden></p>
           <label class="row check"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка в комнате</span></label>
           <div class="texture">
@@ -76,6 +94,7 @@
             </div>
             <div class="texture-buttons">
               <button type="button" id="choose-tile" title="Плитка из каталога (Ctrl+K)">Выбрать…</button>
+              <button type="button" id="swap-tile" title="Поменять длину и ширину плитки">Длина ⇄ ширина</button>
               <button type="button" id="color-only" title="Убрать рисунок: плитка — просто цветом">Только цвет</button>
             </div>
           </div>
@@ -103,8 +122,8 @@
       </section>
       <footer class="note">
         Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Файлы — те же, что у
-        <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программы</a>: в ней есть
-        ещё печать и PDF с чертежами подрезок.
+        <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программы</a>; свои каталоги
+        плитки (папки с фото) — пока только в ней.
       </footer>
     </aside>
   </main>
@@ -125,6 +144,38 @@
         <button value="cancel">Отмена</button>
         <button value="choose" data-action="choose" class="primary">Выбрать</button>
       </footer>
+    </form>
+  </dialog>
+
+  <dialog id="house-dialog" class="small-dialog">
+    <form method="dialog">
+      <h2>Новый дом / квартира</h2>
+      <p class="hint">По внутренним размерам; встанет справа от существующих.</p>
+      <label class="row"><span class="caption">Ширина (внутр.)</span>
+        <span class="control"><input type="number" id="house-width" min="100" max="1000000" step="10" value="6000"><span class="unit">мм</span></span></label>
+      <label class="row"><span class="caption">Длина (внутр.)</span>
+        <span class="control"><input type="number" id="house-height" min="100" max="1000000" step="10" value="4000"><span class="unit">мм</span></span></label>
+      <label class="row"><span class="caption">Толщина стен</span>
+        <span class="control"><input type="number" id="house-thickness" min="0" max="2000" step="10" value="200"><span class="unit">мм</span></span></label>
+      <footer><span class="spacer"></span><button value="cancel">Отмена</button><button value="ok" class="primary">Добавить</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="print-dialog" class="small-dialog">
+    <form method="dialog">
+      <h2>Печать / PDF</h2>
+      <p class="hint">Листы A4. Чтобы получить PDF, в окне печати браузера выберите «Сохранить как PDF».</p>
+      <label class="row check"><input type="checkbox" id="print-tiles" checked> <span class="caption">План с плиткой</span></label>
+      <label class="row check"><input type="checkbox" id="print-dims" checked> <span class="caption">Размеры</span></label>
+      <label class="row check"><input type="checkbox" id="print-clips" checked> <span class="caption">СВП на плане</span></label>
+      <label class="row check"><input type="checkbox" id="print-cuts" checked> <span class="caption">План с номерами и чертежи подрезок</span></label>
+      <label class="row check"><input type="checkbox" id="print-calc" checked> <span class="caption">Лист расчёта</span></label>
+      <label class="row check"><input type="checkbox" id="print-mono"> <span class="caption">Чёрно-белая печать</span></label>
+      <label class="row"><span class="caption">Лист</span>
+        <span class="control"><select id="print-orientation"><option value="landscape">A4 альбомный</option><option value="portrait">A4 книжный</option></select></span></label>
+      <label class="row"><span class="caption">Масштаб плана</span>
+        <span class="control"><select id="print-scale"></select></span></label>
+      <footer><span class="spacer"></span><button value="cancel">Отмена</button><button value="ok" class="primary">Печать…</button></footer>
     </form>
   </dialog>
 

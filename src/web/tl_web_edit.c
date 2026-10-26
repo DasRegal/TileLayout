@@ -329,17 +329,20 @@ static int segment_part(TlVec2 start, TlVec2 end, TlVec2 point, double end_toler
     return tl_point_segment_distance(point, start, end, NULL) < line_tolerance ? 0 : -1;
 }
 
-/* Стык полов в проёме под точкой: 2/3 — конец у косяка, 1 — линия, 0 — мимо. */
+/* Стык полов в проёме под точкой: 2/3 — конец у косяка, 1 — линия, 0 — мимо.
+   Полоса у линии — не шире трети глубины проёма: остальной проём — сама дверь. */
 static int threshold_part(TlProject *project, const TlOpening *opening, TlVec2 point, double tolerance)
 {
-    TlVec2 from, to;
-    if (!tl_project_opening_threshold(project, opening, &from, &to))
+    TlVec2 from, to, right, left;
+    if (!tl_project_opening_threshold(project, opening, &from, &to) ||
+        !tl_project_opening_section(project, opening, &right, &left))
         return 0;
-    if (tl_distance(point, from) < tolerance)
+    double band = fmin(tolerance * 0.6, tl_distance(right, left) / 6);
+    if (tl_distance(point, from) < band * 1.5)
         return TL_DRAG_THRESHOLD_FROM;
-    if (tl_distance(point, to) < tolerance)
+    if (tl_distance(point, to) < band * 1.5)
         return TL_DRAG_THRESHOLD_TO;
-    return tl_point_segment_distance(point, from, to, NULL) < tolerance * 0.6 ? TL_DRAG_THRESHOLD_LINE : 0;
+    return tl_point_segment_distance(point, from, to, NULL) < band ? TL_DRAG_THRESHOLD_LINE : 0;
 }
 
 const char *tl_web_pick(double x, double y, double tolerance)
@@ -424,14 +427,6 @@ static void add_middle(TlJson *handles, TlVec2 a, TlVec2 b, Item grab)
 
 static void add_outline(TlJson *outlines, const TlPolygon *polygon) { tl_json_array_push(outlines, tl_web_polygon(polygon)); }
 
-static bool node_locked(const TlNode *node)
-{
-    for (size_t i = 0; i < node->count; i++)
-        if (node->ends[i].partition->locked)
-            return true;
-    return false;
-}
-
 static int index_of_house(const TlOutline *house)
 {
     TlProject *project = tl_web_project();
@@ -496,6 +491,28 @@ static void house_properties(TlJson *json, TlOutline *house, TlJson *outlines, T
     tl_polygon_free(&outer);
 }
 
+#define ROOM_PROBE_MM 5.0 /* насколько за грань проёма искать комнату */
+
+/* Стык: глубина проёма, мм до стыка у комнаты справа (по середине), наклон, комнаты. */
+static void threshold_properties(TlProject *project, const TlOpening *opening, TlJson *json)
+{
+    TlVec2 right, left;
+    if (!tl_project_opening_section(project, opening, &right, &left))
+        return;
+    TlVec2 across = tl_vec2_sub(left, right);
+    double depth = tl_vec2_length(across);
+    TlVec2 step = tl_vec2_scale(tl_vec2_normalized(across), ROOM_PROBE_MM);
+    TlSpace *right_room = tl_project_space_at(project, tl_vec2_sub(right, step));
+    TlSpace *left_room = tl_project_space_at(project, tl_vec2_add(left, step));
+    bool outside = tl_project_opening_outside(project, opening);
+    double middle = (opening->threshold + opening->threshold_end) / 2;
+    tl_json_object_set(json, "depth", tl_json_number(round(depth)));
+    tl_json_object_set(json, "right", tl_json_number(round(middle * depth)));
+    tl_json_object_set(json, "skew", tl_json_number(round((opening->threshold_end - opening->threshold) * depth)));
+    tl_json_object_set(json, "right_room", tl_json_string(right_room ? right_room->name : "комната"));
+    tl_json_object_set(json, "left_room", tl_json_string(outside ? "" : left_room ? left_room->name : "комната"));
+}
+
 const char *tl_web_object(const char *kind, int index, int part, int end)
 {
     TlProject *project = tl_web_project();
@@ -522,6 +539,14 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
             add_outline(outlines, &cut);
         tl_polygon_free(&cut);
         tl_json_object_set(json, "width", tl_json_number(opening->width));
+        double span_start, span_end;
+        if (hosted && tl_project_opening_span(project, opening, &span_start, &span_end)) {
+            double along;
+            tl_band_local(&band, opening->center, &along, NULL);
+            tl_json_object_set(json, "from_start",
+                               tl_json_number(round((along - opening->width / 2 - span_start) * 10) / 10));
+            tl_json_object_set(json, "to_end", tl_json_number(round((span_end - along - opening->width / 2) * 10) / 10));
+        }
         tl_json_object_set(json, "host", tl_json_string(!hosted ? "none"
                                                         : band.host.kind == TL_HOST_PARTITION ? "partition"
                                                                                               : "wall"));
@@ -534,8 +559,11 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
             tl_json_object_set(json, "length", tl_json_number(round(tl_distance(
                                                    tl_outline_wall_start(house, (size_t)part),
                                                    tl_outline_wall_end(house, (size_t)part)))));
+            tl_json_object_set(json, "outer_length", tl_json_number(round(tl_outline_outer_length(house, (size_t)part))));
             tl_json_object_set(json, "locked", tl_json_bool(house->locked.items[part]));
         } else if (is(kind, "vertex")) {
+            tl_json_object_set(json, "x", tl_json_number(round(house->inner.items[part].x * 10) / 10));
+            tl_json_object_set(json, "y", tl_json_number(round(house->inner.items[part].y * 10) / 10));
             tl_json_object_set(json, "locked", tl_json_bool(tl_outline_vertex_locked(house, (size_t)part)));
         }
     } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
@@ -571,6 +599,7 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
             tl_polygon_push(&line, to);
             add_outline(outlines, &line);
             tl_polygon_free(&line);
+            threshold_properties(project, opening, json);
             add_handle(handles, from, "point", (Item){"threshold", index, TL_DRAG_THRESHOLD_FROM, 0, 0});
             add_handle(handles, to, "point", (Item){"threshold", index, TL_DRAG_THRESHOLD_TO, 0, 0});
             add_middle(handles, from, to, (Item){"threshold", index, TL_DRAG_THRESHOLD_LINE, 0, 0});
@@ -586,13 +615,18 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
                 tl_polygon_free(&body);
             }
             add_node_handles(handles, &node, index, end);
+            TlVec2 point = tl_node_point(&node, part);
+            tl_json_object_set(json, "x", tl_json_number(round(point.x * 10) / 10));
+            tl_json_object_set(json, "y", tl_json_number(round(point.y * 10) / 10));
             tl_json_object_set(json, "count", tl_json_number((double)node.count));
-            tl_json_object_set(json, "locked", tl_json_bool(node_locked(&node)));
+            tl_json_object_set(json, "locked", tl_json_bool(tl_node_locked(&node)));
         } else if (is(kind, "tee") && tl_project_tee_of(project, partition, (TlPartitionEnd)end, &tee)) {
             TlPolygon body = tl_project_partition_body(project, tee.branch, 0);
             add_outline(outlines, &body);
             tl_polygon_free(&body);
             add_handle(handles, tee.point, "point", (Item){"tee", index, 0, end, 0});
+            tl_json_object_set(json, "x", tl_json_number(round(tee.point.x * 10) / 10));
+            tl_json_object_set(json, "y", tl_json_number(round(tee.point.y * 10) / 10));
             tl_json_object_set(json, "locked", tl_json_bool(tee.branch->locked || tee.host->locked));
         } else {
             found = false;
@@ -676,6 +710,128 @@ bool tl_web_set_wall_thickness(int house_index, int wall, double thickness, doub
     return true;
 }
 
+const char *tl_web_set_point(const char *kind, int index, int part, int end, double x, double y, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlVec2 point = tl_vec2(x, y);
+    TlPartition *partition = partition_at(index);
+    TlOutline *house = house_at(index);
+    if (is(kind, "vertex") && house && part >= 0) {
+        tl_web_checkpoint("", now_seconds);
+        if (!tl_project_set_vertex(project, house, (size_t)part, point))
+            return "null";
+        return item_json((Item){"vertex", index, part, 0, 0});
+    }
+    if (is(kind, "node") && partition) {
+        TlNode node;
+        if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node))
+            return "null";
+        tl_web_checkpoint("", now_seconds);
+        if (!tl_project_set_node_point(project, &node, part, point))
+            return "null";
+        return item_json((Item){"node", index_of_partition(project, partition), part, end, 0});
+    }
+    if (is(kind, "tee") && partition) {
+        bool became_node = false;
+        tl_web_checkpoint("", now_seconds);
+        if (!tl_project_set_tee_point(project, partition, (TlPartitionEnd)end, point, &became_node))
+            return "null";
+        return item_json((Item){became_node ? "node" : "tee", index_of_partition(project, partition), 0, end, 0});
+    }
+    return "null";
+}
+
+bool tl_web_set_wall_length(int house_index, int wall, double length, bool outer, bool keep_angles, double now_seconds)
+{
+    TlOutline *house = house_at(house_index);
+    if (!house || wall < 0 || (size_t)wall >= tl_outline_wall_count(house))
+        return false;
+    /* наружная: разница с внутренней при сохранении углов не меняется */
+    double inner = outer ? length - (tl_outline_outer_length(house, (size_t)wall) - tl_outline_inner_length(house, (size_t)wall))
+                         : length;
+    if (inner <= 1)
+        return false;
+    tl_web_checkpoint(outer ? "len_outer" : "len_inner", now_seconds);
+    return tl_project_set_wall_length(tl_web_project(), house, (size_t)wall, inner, keep_angles, true);
+}
+
+bool tl_web_place_opening(int index, double distance, bool from_end, double now_seconds)
+{
+    TlOpening *opening = opening_at(index);
+    if (!opening || !(distance >= 0))
+        return false;
+    tl_web_checkpoint("opos", now_seconds);
+    return tl_project_place_opening_at(tl_web_project(), opening, distance, from_end);
+}
+
+bool tl_web_set_threshold(int index, double right, double skew, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlOpening *opening = opening_at(index);
+    TlVec2 a, b;
+    if (!opening || !tl_project_opening_section(project, opening, &a, &b))
+        return false;
+    double depth = tl_distance(a, b);
+    if (depth <= 0 || !isfinite(right) || !isfinite(skew))
+        return false;
+    tl_web_checkpoint("threshold", now_seconds);
+    return tl_project_set_threshold(project, opening, right / depth, skew / depth);
+}
+
+bool tl_web_set_locked(const char *kind, int index, int part, bool locked, double now_seconds)
+{
+    TlPartition *partition = partition_at(index);
+    TlOpening *opening = opening_at(index);
+    TlOutline *house = house_at(index);
+    bool *flag = is(kind, "partition") && partition ? &partition->locked
+                 : is(kind, "opening") && opening   ? &opening->locked
+                 : is(kind, "wall") && house && part >= 0 && (size_t)part < tl_outline_wall_count(house)
+                     ? &house->locked.items[part]
+                     : NULL;
+    if (!flag)
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    *flag = locked;
+    return true;
+}
+
+bool tl_web_insert_vertex(int house_index, int wall, double x, double y, double grid, double now_seconds)
+{
+    TlOutline *house = house_at(house_index);
+    if (!house || wall < 0 || (size_t)wall >= tl_outline_wall_count(house) || house->locked.items[wall])
+        return false;
+    TlVec2 a = tl_outline_wall_start(house, (size_t)wall), b = tl_outline_wall_end(house, (size_t)wall);
+    double t;
+    tl_point_segment_distance(tl_vec2(x, y), a, b, &t);
+    TlVec2 on_grid = tl_snap_grid(grid, tl_vec2_lerp(a, b, t));
+    tl_point_segment_distance(on_grid, a, b, &t); /* точка должна остаться на стене */
+    if (!(t > 0 && t < 1))
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    tl_outline_insert_vertex(house, (size_t)wall, tl_vec2_lerp(a, b, t));
+    tl_project_update_spaces(tl_web_project());
+    return true;
+}
+
+int tl_web_add_house(double width, double height, double thickness, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (!(width >= 100 && height >= 100 && thickness >= 0 && thickness <= 2000))
+        return 0;
+    double x = 0; /* справа от существующих, через 1,5 м */
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlPolygon outer = tl_outline_outer(project->outlines.items[o]);
+        for (size_t i = 0; i < outer.count; i++)
+            x = fmax(x, outer.items[i].x + 1500 + thickness);
+        tl_polygon_free(&outer);
+    }
+    const TlVec2 corners[] = {{x, 0}, {x + width, 0}, {x + width, height}, {x, height}};
+    tl_web_checkpoint("", now_seconds);
+    tl_project_add_contour(project, corners, 4, thickness, 100);
+    TlSpace *space = tl_project_space_at(project, tl_vec2(x + width / 2, height / 2));
+    return space ? space->id : 0;
+}
+
 bool tl_web_set_joint_gap(int index, double gap, double now_seconds)
 {
     TlProject *project = tl_web_project();
@@ -718,7 +874,7 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
         tl_project_delete_expansion_joint(project, project->expansion_joints.items[index]);
     } else if (is(kind, "node") && partition) {
         TlNode node;
-        if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node) || node_locked(&node))
+        if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node) || tl_node_locked(&node))
             return false;
         tl_web_checkpoint("", now_seconds);
         tl_project_dissolve_node(project, &node);

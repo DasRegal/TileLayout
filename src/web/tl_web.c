@@ -124,6 +124,21 @@ const char *tl_web_space_tile(int space_id)
     tl_json_object_set(result, "name", tl_json_string(space->name));
     tl_json_object_set(result, "source", tl_space_has_shared_floor(space) ? tl_json_string(space->layout_source->name)
                                                                           : tl_json_null());
+    tl_json_object_set(result, "source_id", tl_json_number(space->source_id));
+    TlJson *sources = tl_json_array();
+    TlProject *project = tl_web_project();
+    for (size_t i = 0; i < project->spaces.count; i++) {
+        const TlSpace *other = project->spaces.items[i];
+        if (other == space || other->layout_source != other) /* только комнаты со своей раскладкой */
+            continue;
+        TlJson *source = tl_json_object();
+        tl_json_object_set(source, "id", tl_json_number(other->id));
+        tl_json_object_set(source, "name", tl_json_string(other->name));
+        tl_json_array_push(sources, source);
+    }
+    tl_json_object_set(result, "sources", sources);
+    tl_json_object_set(result, "area", tl_json_number(round(tl_space_area(space) / 1e4) / 100));
+    tl_json_object_set(result, "perimeter", tl_json_number(round(tl_space_perimeter(space))));
     tl_json_object_set(result, "tile", tl_web_tile_json(tl_space_effective_tile(space)));
     return tl_web_keep(&web.tile, result);
 }
@@ -295,6 +310,18 @@ bool tl_web_set_space_name(int space_id, const char *name, double now_seconds)
         return false;
     tl_web_checkpoint("", now_seconds);
     tl_space_set_name(space, name);
+    return true;
+}
+
+bool tl_web_set_space_source(int space_id, int source_id, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlSpace *space = tl_project_space_by_id(project, space_id);
+    if (!space || source_id == space_id || (source_id && !tl_project_space_by_id(project, source_id)))
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    space->source_id = source_id;
+    tl_project_update_spaces(project);
     return true;
 }
 

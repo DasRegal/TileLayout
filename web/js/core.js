@@ -44,6 +44,22 @@ export async function loadCore() {
     /** Раскладка комнаты по правилу (от угла, по центру, минимум плиток) → {ok, message}. */
     alignTiles: (id, mode) => withString(mode, (m) => JSON.parse(text(module._tl_web_align_tiles(id, m, now())))),
     setSpaceName: (id, name) => withString(name, (n) => module._tl_web_set_space_name(id, n, now())) !== 0,
+    setSpaceSource: (id, source) => module._tl_web_set_space_source(id, source, now()) !== 0,
+    /** Точка угла дома, узла или примыкания → предмет после правки или null. */
+    setPoint(target, x, y) {
+      const { kind, index, part, end } = item(target);
+      return withString(kind, (k) => JSON.parse(text(module._tl_web_set_point(k, index, part, end, x, y, now()))));
+    },
+    setWallLength: (house, wall, length, outer, keepAngles) =>
+      module._tl_web_set_wall_length(house, wall, length, outer ? 1 : 0, keepAngles ? 1 : 0, now()) !== 0,
+    placeOpening: (index, distance, fromEnd) => module._tl_web_place_opening(index, distance, fromEnd ? 1 : 0, now()) !== 0,
+    setThreshold: (index, right, skew) => module._tl_web_set_threshold(index, right, skew, now()) !== 0,
+    setLocked(target, locked) {
+      const { kind, index, part } = item(target);
+      return withString(kind, (k) => module._tl_web_set_locked(k, index, part, locked ? 1 : 0, now())) !== 0;
+    },
+    insertVertex: (house, wall, x, y, grid) => module._tl_web_insert_vertex(house, wall, x, y, grid, now()) !== 0,
+    addHouse: (width, height, thickness) => module._tl_web_add_house(width, height, thickness, now()),
 
     // ---- правка плана: предметы — {kind, index, part, end} (tl_web_pick); tolerance и grid — в мм
     snap: (x, y, start, refs, tolerance, grid, free) =>
@@ -90,6 +106,8 @@ export async function loadCore() {
     dragEnd: () => JSON.parse(text(module._tl_web_drag_end())),
 
     summary: () => JSON.parse(text(module._tl_web_summary())),
+    tileNumbers: () => JSON.parse(text(module._tl_web_tile_numbers())),
+    cutCards: () => JSON.parse(text(module._tl_web_cut_cards())),
     undo: () => module._tl_web_undo() !== 0,
     redo: () => module._tl_web_redo() !== 0,
     canUndo: () => module._tl_web_undo_count() > 0,

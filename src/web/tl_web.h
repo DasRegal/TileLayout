@@ -32,7 +32,9 @@ int tl_web_space_at(double x, double y);
 /* ---- плитка комнаты ------------------------------------------------------- */
 
 /* Настройки плитки комнаты (у общего пола — комнаты-источника):
-   {"space": id, "name": "...", "source": "..." | null, "tile": {ключ: значение}}.
+   {"space": id, "name": "...", "source": "..." | null, "source_id": id или 0 — «своя раскладка»,
+    "sources": [{"id", "name"}] — с кем можно сделать общий пол, "area": м², "perimeter": мм,
+    "tile": {ключ: значение}}.
    Ключи — как в файле проекта (tl_tile_settings_fields). */
 const char *tl_web_space_tile(int space_id);
 /* Поле плитки комнаты; value — JSON-значение (число, true/false, строка).
@@ -48,6 +50,8 @@ bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds
    Ответ — {"ok": bool, "message": "что получилось"}. */
 const char *tl_web_align_tiles(int space_id, const char *mode, double now_seconds);
 bool tl_web_set_space_name(int space_id, const char *name, double now_seconds);
+/* Пол комнаты как у другой (общая сетка) или свой (source_id 0). */
+bool tl_web_set_space_source(int space_id, int source_id, double now_seconds);
 
 /* ---- правка плана (tl_web_edit.c) ---------------------------------------------
  * Предметы плана — {"kind": "partition" | "opening" | "house", "index": номер в
@@ -97,8 +101,10 @@ const char *tl_web_pick(double x, double y, double tolerance);
    [{"point": [x, y], "shape": "end" | "corner" | "middle" | "node" | "point",
      "grab": предмет для tl_web_drag_begin}] (у перегородки — концы, углы тела, точки
    узлов и примыканий, середина);
-   перегородка — "thickness", "length", "angle"; проём — "width", "host"; стена — "thickness",
-   "length", "walls"; угол — "walls"; узел — "count" (перегородок); линейка — "length";
+   перегородка — "thickness", "length", "angle"; проём — "width", "host", "from_start",
+   "to_end" (мм от краёв стены); стена — "thickness", "length" (внутр.), "outer_length",
+   "walls"; стык — "depth", "right", "skew" (мм), "right_room", "left_room" ("" — улица);
+   угол и узел — "x", "y"; угол — "walls"; узел — "count" (перегородок); линейка — "length";
    шов — "gap", "length". */
 const char *tl_web_object(const char *kind, int index, int part, int end);
 bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds);
@@ -109,6 +115,25 @@ bool tl_web_set_partition_angle(int index, double degrees, double now_seconds);
 bool tl_web_set_opening_width(int index, double width, double now_seconds);
 /* Толщина стены дома (вместе со смежной стеной соседнего дома). */
 bool tl_web_set_wall_thickness(int house, int wall, double thickness, double now_seconds);
+/* Точка предмета — в (x, y): угол дома ("vertex"), узел ("node": part 0 — середина,
+   1… — угол), примыкание ("tee"). Ответ — предмет после правки (примыкание за
+   гранью становится узлом) или null — нельзя. */
+const char *tl_web_set_point(const char *kind, int index, int part, int end, double x, double y, double now_seconds);
+/* Длина стены дома: внутренняя или наружная (outer); keep_angles — углы между
+   стенами сохраняются (сдвигается соседняя стена). */
+bool tl_web_set_wall_length(int house, int wall, double length, bool outer, bool keep_angles, double now_seconds);
+/* Проём — на distance мм от начала стены (from_end — от конца) до своего края. */
+bool tl_web_place_opening(int index, double distance, bool from_end, double now_seconds);
+/* Стык полов: right — мм глубины проёма у комнаты справа (по середине стыка),
+   skew — на сколько мм конец у косяка в конце дальше, чем в начале. */
+bool tl_web_set_threshold(int index, double right, double skew, double now_seconds);
+/* Заблокировать от перемещения: стену ("wall"), перегородку, проём. */
+bool tl_web_set_locked(const char *kind, int index, int part, bool locked, double now_seconds);
+/* Новый угол дома на стене wall в точке (x, y) (она проецируется на стену; по сетке grid). */
+bool tl_web_insert_vertex(int house, int wall, double x, double y, double grid, double now_seconds);
+/* Новый дом по внутренним размерам — справа от существующих. Ответ — id его комнаты. */
+int tl_web_add_house(double width, double height, double thickness, double now_seconds);
+
 /* Удалить: перегородку, проём, дом (kind "wall" или "house"), угол дома (если углов
    больше трёх), узел (сломанная перегородка выпрямляется), линейку, шов.
    Заблокированное — нельзя. */
@@ -122,6 +147,13 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
 bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x, double y);
 const char *tl_web_drag_move(double x, double y, double tolerance, double grid, bool free, double now_seconds);
 const char *tl_web_drag_end(void);
+
+/* ---- печать (tl_web_print.c) ----------------------------------------------------- */
+
+/* Сквозные номера плиток по комнатам — для плана с номерами. */
+const char *tl_web_tile_numbers(void);
+/* Карточки чертежей подрезок. */
+const char *tl_web_cut_cards(void);
 
 /* ---- расчёт и отмена ---------------------------------------------------------- */
 

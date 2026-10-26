@@ -49,7 +49,7 @@ button.primary:hover:not(:disabled) { background: #1a4387; }
 .bar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   min-height: var(--bar-height);
   padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px));
   background: var(--surface);
@@ -67,7 +67,8 @@ button.primary:hover:not(:disabled) { background: #1a4387; }
   text-decoration: none;
 }
 
-.tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.bar button { padding: 5px 9px; font-size: 13.5px; }
 .divider { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
 
 /* ---- план и панель ---- */
@@ -256,6 +257,18 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
 .tile-card.selected { border-color: var(--accent); background: var(--accent-soft); }
 .catalog-grid .empty { grid-column: 1 / -1; color: var(--muted); }
 .catalog-dialog footer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+
+.small-dialog {
+  width: min(380px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+  box-shadow: 0 20px 60px rgba(20, 24, 32, 0.25);
+}
+.small-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+.small-dialog h2 { margin: 0 0 4px; font-size: 16px; }
+.small-dialog footer { display: flex; gap: 8px; margin-top: 14px; }
+#room-info { margin: -2px 0 6px 6px; font-size: 12px; }
 .spacer { flex: 1; }
 
 /* ---- узкий экран: план сверху, панель снизу ---- */
@@ -267,4 +280,72 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
   .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); }
   .catalog-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .catalog-tree { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+
+/* ---- меню «Вид» ---- */
+
+.view-menu { position: relative; }
+.view-menu summary {
+  list-style: none;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.view-menu summary::-webkit-details-marker { display: none; }
+.view-menu[open] summary { border-color: var(--accent); }
+.view-menu-body {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 210px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(20, 24, 32, 0.15);
+}
+.view-menu-body label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+
+/* ---- печать: на бумагу — только листы ---- */
+
+#print-root { display: none; }
+
+@media print {
+  body > *:not(#print-root) { display: none !important; }
+  body { display: block; background: #ffffff; }
+  #print-root { display: block; }
+  #print-root .sheet {
+    box-sizing: border-box;
+    padding: 10mm;
+    overflow: hidden;
+    break-after: page;
+    color: #000000;
+  }
+  #print-root .sheet:last-child { break-after: auto; }
+  #print-root .sheet > header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    height: 26px;
+    border-bottom: 0.8px solid #000000;
+    margin-bottom: 0;
+    font-size: 12px;
+  }
+  #print-root .sheet > header strong { font-size: 14px; }
+  #print-root canvas { display: block; }
+  #print-root .sheet.calculation { height: auto !important; font-size: 12.5px; }
+  #print-root .calculation h1 { font-size: 20px; margin: 0 0 6px; }
+  #print-root .calculation h2 { font-size: 16px; margin: 14px 0 6px; }
+  #print-root .calculation table { width: 100%; border-collapse: collapse; }
+  #print-root .calculation th, #print-root .calculation td { border-bottom: 0.5px solid #888888; padding: 4px; text-align: left; vertical-align: top; }
+  #print-root .calculation .n { text-align: right; }
+  #print-root .calculation tr { break-inside: avoid; }
+  #print-root .calculation thead { display: table-header-group; }
 }

@@ -3,7 +3,8 @@
 import { Catalogs, chooseTile } from './catalogs.js';
 import { loadCore } from './core.js';
 import { Panel, showSummary } from './panel.js';
-import { drawScene } from './render.js';
+import { PRINT_SCALES, printProject } from './print.js';
+import { DEFAULT_LAYERS, drawScene } from './render.js';
 import { acceptDroppedFiles, downloadFile, pickFile, readDraft, readSettings, writeDraft, writeSettings } from './storage.js';
 import { TOOL_HINTS, Tools } from './tools.js';
 import { attachViewControls, View } from './view.js';
@@ -23,8 +24,21 @@ const state = {
   object: null, // свойства выделенного предмета (tl_web_object)
   guides: [], // линии выравнивания при перетаскивании
   fileName: 'plan.tilelayout.json',
-  settings: { houseThickness: 200, partitionThickness: 100, openingWidth: 800, grid: 10, jointGap: 10, ...readSettings() },
+  settings: {
+    houseThickness: 200,
+    partitionThickness: 100,
+    openingWidth: 800,
+    grid: 10,
+    jointGap: 10,
+    keepAngles: true,
+    house: { width: 6000, height: 4000 },
+    print: { tiles: true, dims: true, clips: true, cuts: true, calc: true, mono: false, landscape: true, scale: 0 },
+    ...readSettings(),
+  },
+  numbers: null, // номера плиток (tl_web_tile_numbers), когда слой включён
 };
+
+state.settings.layers = { ...DEFAULT_LAYERS, ...state.settings.layers };
 
 const canvas = document.getElementById('plan');
 const ctx = canvas.getContext('2d');
@@ -69,19 +83,46 @@ const panel = new Panel(document.getElementById('panel'), {
     requestDraw();
   },
   setObjectField: (key, value) => {
-    const { kind, index, part } = state.selection;
+    const selection = state.selection;
+    const { kind, index, part } = selection;
+    const object = state.object;
     const core = state.core;
+    const point = (x, y) => {
+      const result = core.setPoint(selection, x, y);
+      if (result) state.selection = result;
+      return Boolean(result);
+    };
     const setters = {
       'partition.thickness': () => core.setPartitionThickness(index, value),
       'partition.length': () => core.setPartitionLength(index, value),
       'partition.angle': () => core.setPartitionAngle(index, value),
       'wall.thickness': () => core.setWallThickness(index, part, value),
+      'wall.length': () => core.setWallLength(index, part, value, false, state.settings.keepAngles),
+      'wall.outer_length': () => core.setWallLength(index, part, value, true, state.settings.keepAngles),
       'opening.width': () => core.setOpeningWidth(index, value),
+      'opening.from_start': () => core.placeOpening(index, value, false),
+      'opening.to_end': () => core.placeOpening(index, value, true),
+      'threshold.right': () => core.setThreshold(index, value, object.skew),
+      'threshold.skew': () => core.setThreshold(index, object.right, value),
       'joint.gap': () => core.setJointGap(index, value),
+      x: () => point(value, object.y),
+      y: () => point(object.x, value),
+      locked: () => core.setLocked(selection, value),
     };
-    const set = setters[`${kind}.${key}`];
+    if (key === 'keep_angles') {
+      state.settings.keepAngles = value;
+      writeSettings(state.settings);
+      refresh();
+      return;
+    }
+    const set = setters[`${kind}.${key}`] || ((key === 'x' || key === 'y' || key === 'locked') && setters[key]);
     if (set && set()) changed();
-    else say('Значение не подходит.');
+    else say(key === 'locked' ? 'Не удалось.' : 'Значение не подходит или предмет заблокирован.');
+  },
+  setFloorSource: (id) => editRoom(() => state.core.setSpaceSource(selectedSpace(), id)),
+  swapTile: () => {
+    const tile = state.core.spaceTile(selectedSpace()).tile;
+    editRoom(() => state.core.setTileFields(selectedSpace(), { w: tile.h, h: tile.w }));
   },
   deleteObject: () => deleteSelection(),
 });
@@ -107,6 +148,8 @@ function draw() {
     highlight: highlightOf(state.object),
     image: (ref) => catalogs.image(ref),
     dpr,
+    layers: state.settings.layers,
+    numbers: state.numbers,
     overlay: (c) => {
       drawHandles(c);
       tools.draw(c);
@@ -193,6 +236,8 @@ function refresh() {
     state.selection = null;
   }
   state.object = state.selection && state.selection.kind !== 'space' ? core.object(state.selection) : null;
+  if (state.object?.kind === 'wall') state.object.keep_angles = state.settings.keepAngles;
+  state.numbers = state.settings.layers.numbers ? core.tileNumbers() : null;
   if (state.selection && state.selection.kind !== 'space' && !state.object) state.selection = null;
   panel.show(selectedSpace() ? core.spaceTile(selectedSpace()) : null, catalogs);
   panel.showObject(state.object);
@@ -378,7 +423,120 @@ const commands = {
   },
   fit: fitView,
   catalog: pickTile,
+  house: addHouse,
+  png: exportPng,
+  print: openPrintDialog,
 };
+
+// ---- вид, PNG, печать ------------------------------------------------------------
+
+function bindLayers() {
+  for (const input of document.querySelectorAll('[data-layer]')) {
+    input.checked = state.settings.layers[input.dataset.layer];
+    input.addEventListener('change', () => {
+      state.settings.layers[input.dataset.layer] = input.checked;
+      writeSettings(state.settings);
+      if (state.core) refresh();
+    });
+  }
+}
+
+const baseName = () => state.fileName.replace(/\.tilelayout\.json$|\.json$/i, '') || 'plan';
+
+/** Весь план картинкой: слои — как на экране, длинная сторона — 3000 px. */
+async function exportPng() {
+  const scene = state.core.scene();
+  await catalogs.loadImages(scene);
+  const [left, top, right, bottom] = scene.bounds;
+  const longest = 3000;
+  const margin = 80;
+  const scale = (longest - 2 * margin) / Math.max(right - left, bottom - top, 1);
+  const image = document.createElement('canvas');
+  image.width = Math.round((right - left) * scale + 2 * margin);
+  image.height = Math.round((bottom - top) * scale + 2 * margin);
+  const pngView = new View();
+  pngView.scale = scale;
+  pngView.panX = margin - left * scale;
+  pngView.panY = margin - top * scale;
+  drawScene(image.getContext('2d'), scene, pngView, {
+    dpr: 1,
+    printing: true,
+    image: (ref) => catalogs.image(ref),
+    layers: state.settings.layers,
+    numbers: state.settings.layers.numbers ? state.core.tileNumbers() : null,
+  });
+  image.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${baseName()}.png`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    say(`Картинка сохранена: ${baseName()}.png — в папке загрузок браузера.`);
+  }, 'image/png');
+}
+
+function openPrintDialog() {
+  const dialog = document.getElementById('print-dialog');
+  const options = state.settings.print;
+  const checks = ['tiles', 'dims', 'clips', 'cuts', 'calc', 'mono'];
+  for (const key of checks) dialog.querySelector(`#print-${key}`).checked = options[key];
+  dialog.querySelector('#print-orientation').value = options.landscape ? 'landscape' : 'portrait';
+  const scale = dialog.querySelector('#print-scale');
+  scale.replaceChildren(new Option('По размеру листа', '0'), ...PRINT_SCALES.map((n) => new Option(`1:${n}`, String(n))));
+  scale.value = String(options.scale);
+  dialog.onclose = async () => {
+    if (dialog.returnValue !== 'ok') return;
+    for (const key of checks) options[key] = dialog.querySelector(`#print-${key}`).checked;
+    options.landscape = dialog.querySelector('#print-orientation').value === 'landscape';
+    options.scale = Number(scale.value);
+    writeSettings(state.settings);
+    say('Готовлю листы…');
+    const result = await printProject({
+      core: state.core,
+      title: baseName(),
+      options,
+      image: (ref) => catalogs.image(ref),
+      loadImages: (scene) => catalogs.loadImages(scene),
+    });
+    say(`Листов: ${result.pages}, план 1:${result.scale}. PDF — «Сохранить как PDF» в окне печати.`);
+  };
+  dialog.returnValue = '';
+  dialog.showModal();
+}
+
+/** «Дом по размерам…»: окно с внутренними размерами и толщиной стен. */
+function addHouse() {
+  const dialog = document.getElementById('house-dialog');
+  const inputs = {
+    width: dialog.querySelector('#house-width'),
+    height: dialog.querySelector('#house-height'),
+    thickness: dialog.querySelector('#house-thickness'),
+  };
+  inputs.width.value = state.settings.house.width;
+  inputs.height.value = state.settings.house.height;
+  inputs.thickness.value = state.settings.houseThickness;
+  dialog.onclose = () => {
+    if (dialog.returnValue !== 'ok') return;
+    const [width, height, thickness] = [inputs.width, inputs.height, inputs.thickness].map((input) => Number(input.value));
+    const space = state.core.addHouse(width, height, thickness);
+    if (!space) {
+      say('Размеры не подходят: ширина и длина — от 100 мм.');
+      return;
+    }
+    state.settings.house = { width, height };
+    state.settings.houseThickness = thickness;
+    writeSettings(state.settings);
+    state.selection = { kind: 'space', space };
+    changed();
+    fitView();
+    say('Дом добавлен.');
+  };
+  dialog.returnValue = '';
+  dialog.showModal();
+}
 
 const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', l: 'ruler' };
 
@@ -387,7 +545,7 @@ function onKey(event) {
   if (document.querySelector('dialog[open]')) return;
   if (event.ctrlKey || event.metaKey) {
     const key = event.key.toLowerCase();
-    const command = { z: event.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', k: 'catalog' }[key];
+    const command = { z: event.shiftKey ? 'redo' : 'undo', y: 'redo', o: 'open', s: 'save', k: 'catalog', p: 'print' }[key];
     if (!command || (typing && (key === 'z' || key === 'y'))) return;
     event.preventDefault();
     commands[command]();
@@ -415,6 +573,7 @@ function onKey(event) {
 }
 
 function bindCommands() {
+  bindLayers();
   for (const button of document.querySelectorAll('[data-action]')) {
     const command = commands[button.dataset.action];
     if (command) button.addEventListener('click', () => command());
@@ -444,9 +603,20 @@ function bindCommands() {
     },
     onDragStart: (world, event) => startDrag(world, event),
   });
-  canvas.addEventListener('dblclick', () => {
-    tools.doubleClick();
-    requestDraw();
+  canvas.addEventListener('dblclick', (event) => {
+    if (tools.drawing) {
+      tools.doubleClick();
+      requestDraw();
+      return;
+    }
+    const box = canvas.getBoundingClientRect();
+    const [x, y] = view.toWorld(event.clientX - box.left, event.clientY - box.top);
+    const hit = state.core.pick(x, y, PICK_PX / view.scale);
+    if (hit.kind === 'wall' && state.core.insertVertex(hit.index, hit.part, x, y, state.settings.grid)) {
+      state.selection = { kind: 'vertex', index: hit.index, part: hit.part + 1, end: 0 };
+      changed();
+      say('Новый угол на стене — тяните его.');
+    }
   });
   acceptDroppedFiles(document.body, openProject);
   new ResizeObserver(requestDraw).observe(canvas);

@@ -5,7 +5,8 @@
  *  "types": [{"name": "600×300 мм", "tile": {настройки}, "rooms": ["Кухня", ...],
  *             "count": плиток без запаса, "whole": целых, "to_buy": с запасом,
  *             "area": м², "shared_saving": шт., "offcut_saving": шт.}],
- *  "rooms": [{"id", "name", "count", "glue_kg", "clips"}],
+ *  "rooms": [{"id", "name", "count", "glue_kg", "clips", "floor_area", "tiled_area", "tiled",
+ *             "tile_name", "color", "texture", "source": "имя" | null, "rotated", "shared_tiles"}],
  *  "glue": {"total_kg": кг, "packs": [{"size": кг в мешке, "count": мешков}]},
  *  "clips": {"total": шт., "packs": [{"size": шт. в упаковке, "count": упаковок}]}}
  */
@@ -58,6 +59,20 @@ static TlJson *room_json(const TlRoomSummary *room)
     tl_json_object_set(json, "count", tl_json_number(counted ? tl_layout_total(room->layout) : 0));
     tl_json_object_set(json, "glue_kg", rounded(room->glue_kg, 0.1));
     tl_json_object_set(json, "clips", tl_json_number(room->clip_count));
+    tl_json_object_set(json, "floor_area", rounded(tl_space_area(room->space) / 1e6, 0.01));
+    tl_json_object_set(json, "tiled_area", rounded(counted ? room->layout->floor_area / 1e6 : 0, 0.01));
+    tl_json_object_set(json, "tiled", tl_json_bool(room->tiled));
+    const TlTileSettings *tile = tl_space_effective_tile(room->space);
+    char name[64];
+    tl_report_tile_name(tile, name, sizeof name);
+    tl_json_object_set(json, "tile_name", tl_json_string(name));
+    tl_json_object_set(json, "color", tl_json_string(tile->color));
+    tl_json_object_set(json, "texture", tl_json_string(tile->texture));
+    tl_json_object_set(json, "source", tl_space_has_shared_floor(room->space)
+                                           ? tl_json_string(room->space->layout_source->name)
+                                           : tl_json_null());
+    tl_json_object_set(json, "rotated", tl_json_bool(tile->rotation_degrees != 0));
+    tl_json_object_set(json, "shared_tiles", tl_json_number(room->shared_tiles));
     return json;
 }
 

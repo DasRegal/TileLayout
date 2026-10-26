@@ -51,6 +51,22 @@ export class Catalogs {
     return null;
   }
 
+  /** Обещание: загружены рисунки всех плиток сцены (для печати). */
+  loadImages(scene) {
+    const references = new Set(scene.spaces.map((space) => space.tile.texture).filter(Boolean));
+    return Promise.all(
+      [...references].map((reference) => {
+        if (this.image(reference)) return null;
+        const image = this.images.get(reference);
+        if (!image) return null;
+        return new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+      }),
+    );
+  }
+
   /** Настройки комнаты от плитки: размер, рисунок, цвет (нет в описании — средний по рисунку). */
   async fieldsFor(catalog, tile) {
     let color = tile.color;

@@ -22,6 +22,34 @@ const COLOR = {
   jointGap: '#fbfaf6',
 };
 
+/* Ч/б печать: без заливок цветом, линии — чёрные. */
+const MONO = {
+  ...COLOR,
+  background: '#ffffff',
+  wall: '#d4d4d4',
+  wallEdge: '#000000',
+  grout: '#000000',
+  narrow: '#ffffff',
+  gap: '#ffffff',
+  openingFloor: '#ffffff',
+  openingEdge: '#000000',
+  clip: '#000000',
+  innerDim: '#000000',
+  outerDim: '#000000',
+  openingDim: '#000000',
+  threshold: '#000000',
+  ruler: '#000000',
+  joint: '#000000',
+  jointGap: '#ffffff',
+};
+
+/* Слои плана: что показывать (меню «Вид», настройки печати). */
+export const DEFAULT_LAYERS = {
+  tiles: true, numbers: false, dims: true, clips: true, labels: true, joints: true, rulers: true,
+};
+
+let C = COLOR; // палитра текущей отрисовки
+
 const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
 
@@ -29,43 +57,83 @@ const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
  * Нарисовать сцену. options: {selected — id комнаты, highlight — контуры
  * выделенного предмета (плоские массивы, мм), image(reference) — картинка плитки
  * или null (ещё грузится / нет), dpr — плотность пикселей, overlay(ctx) —
- * рисование инструмента поверх, в пикселях экрана}.
+ * рисование инструмента поверх, в пикселях экрана, layers — слои (DEFAULT_LAYERS),
+ * numbers — номера плиток (tl_web_tile_numbers), printing — лист печати (белый
+ * фон, без выделения), mono — ч/б}.
  */
 export function drawScene(ctx, scene, view, options) {
   const { width, height } = ctx.canvas;
   const dpr = options.dpr;
+  const layers = { ...DEFAULT_LAYERS, ...options.layers };
   const world = () => ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.panX, dpr * view.panY);
   const screen = () => ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const px = (pixels) => pixels / view.scale; // пиксели экрана — в мм
+  C = options.mono ? MONO : COLOR;
+  const image = options.mono ? () => null : options.image;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = COLOR.background;
+  ctx.fillStyle = options.printing ? '#ffffff' : C.background;
   ctx.fillRect(0, 0, width, height);
   if (!scene) return;
 
   world();
-  for (const space of scene.spaces) drawFloor(ctx, space, view, px, options);
-  for (const joint of scene.joints) drawJoint(ctx, joint, px);
-  drawWalls(ctx, scene, view, px, dpr);
+  for (const space of scene.spaces) drawFloor(ctx, space, view, px, { ...options, image, layers });
+  if (layers.joints) for (const joint of scene.joints) drawJoint(ctx, joint, px);
+  drawWalls(ctx, scene, view, px, dpr, options.mono);
   drawOpenings(ctx, scene, view, px);
   const selected = scene.spaces.find((space) => space.id === options.selected);
-  const outlines = selected ? [selected.outline, ...selected.holes] : options.highlight || [];
+  const outlines = options.printing ? [] : selected ? [selected.outline, ...selected.holes] : options.highlight || [];
   if (outlines.length) {
     ctx.beginPath();
     for (const outline of outlines) polygonPath(ctx, outline, false);
     ctx.lineWidth = px(2.5);
-    ctx.strokeStyle = COLOR.selection;
+    ctx.strokeStyle = C.selection;
     ctx.setLineDash([px(8), px(5)]);
     ctx.stroke();
     ctx.setLineDash([]);
   }
   screen();
-  for (const dimension of scene.dimensions) drawOuterDimension(ctx, dimension, view);
-  for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view);
-  for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
-  for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
-  for (const ruler of scene.rulers) drawRuler(ctx, ruler, view);
+  if (layers.numbers && options.numbers) drawTileNumbers(ctx, scene, options.numbers, view, options.printing);
+  if (layers.dims) {
+    for (const dimension of scene.dimensions) drawOuterDimension(ctx, dimension, view);
+    for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view);
+    for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
+  }
+  if (layers.labels) for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
+  if (layers.rulers) for (const ruler of scene.rulers) drawRuler(ctx, ruler, view);
   if (options.overlay) options.overlay(ctx);
+}
+
+/** Номера плиток: в центре куска, узкая полоса — вдоль неё (как в программе). */
+function drawTileNumbers(ctx, scene, numbers, view, printing) {
+  const size = printing ? 8.7 : 10;
+  ctx.font = `600 ${size}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const room of numbers) {
+    const space = scene.spaces.find((s) => s.id === room.space);
+    if (!space || !space.layout || !space.tile.enabled) continue;
+    if (!printing && Math.min(space.tile.w, space.tile.h) * view.scale < 18) continue;
+    const list = room.numbers;
+    for (let i = 0; i < list.length; i += 5) {
+      const [x, y] = view.toScreen(list[i], list[i + 1]);
+      const text = String(list[i + 2]);
+      const boxW = list[i + 3] * view.scale;
+      const boxH = list[i + 4] * view.scale;
+      const textW = ctx.measureText(text).width;
+      let angle = room.rotation;
+      if (textW + 4 > boxW && boxH > boxW) angle += 90; // узкая полоса — вдоль неё
+      angle = ((((angle + 90) % 180) + 180) % 180) - 90;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((-angle * Math.PI) / 180);
+      ctx.fillStyle = printing ? '#ffffff' : 'rgba(255, 255, 255, 0.67)';
+      ctx.fillRect(-textW / 2 - 2, -size / 2 - 1, textW + 4, size + 2);
+      ctx.fillStyle = '#20242a';
+      ctx.fillText(text, 0, 0.5);
+      ctx.restore();
+    }
+  }
 }
 
 // ---- контуры -----------------------------------------------------------------
@@ -117,7 +185,7 @@ function drawFloor(ctx, space, view, px, options) {
   polygonPath(ctx, space.outline, true);
   for (const hole of space.holes) polygonPath(ctx, hole, false);
   const layout = space.layout;
-  if (!layout) {
+  if (!layout || !options.layers.tiles) {
     ctx.fillStyle = '#ffffff';
     ctx.fill('evenodd');
     ctx.restore();
@@ -131,7 +199,7 @@ function drawFloor(ctx, space, view, px, options) {
     return;
   }
   if (tile.wall_gap > 0) {
-    ctx.fillStyle = COLOR.gap;
+    ctx.fillStyle = C.gap;
     ctx.fill('evenodd');
   }
   const [a, b, c, d, tx, ty] = layout.matrix;
@@ -139,17 +207,17 @@ function drawFloor(ctx, space, view, px, options) {
   polygonPath(ctx, layout.floor, true);
   for (const hole of layout.holes) polygonPath(ctx, hole, false);
   ctx.clip('evenodd');
-  ctx.fillStyle = COLOR.grout;
+  ctx.fillStyle = C.grout;
   ctx.fill('evenodd');
-  drawTiles(ctx, space, view, px, options.image(tile.texture));
+  drawTiles(ctx, space, view, px, options.image(tile.texture), options);
   ctx.restore();
 }
 
-function drawTiles(ctx, space, view, px, image) {
+function drawTiles(ctx, space, view, px, image, options) {
   const tile = space.tile;
   const tiles = space.layout.tiles;
-  const thinJoints = tile.gap * view.scale < 1.2;
-  const colors = [tile.color, darker(tile.color, 1.12), COLOR.narrow];
+  const thinJoints = options.mono || tile.gap * view.scale < 1.2; // в ч/б — контур каждой плитки
+  const colors = options.mono ? ['#ffffff', '#ffffff', '#ffffff'] : [tile.color, darker(tile.color, 1.12), C.narrow];
   for (let i = 0; i < tiles.length; i += 5) {
     const left = tiles[i];
     const top = tiles[i + 1];
@@ -167,15 +235,15 @@ function drawTiles(ctx, space, view, px, image) {
       ctx.fillRect(left, top, w, h);
     }
     if (thinJoints) {
-      ctx.lineWidth = px(0.6);
-      ctx.strokeStyle = darker(tile.color, 1.5);
+      ctx.lineWidth = px(options.mono ? 0.5 : 0.6);
+      ctx.strokeStyle = options.mono ? '#000000' : darker(tile.color, 1.5);
       ctx.strokeRect(left, top, w, h);
     }
   }
-  if (Math.min(tile.w, tile.h) * view.scale > 24) {
+  if (options.layers.clips && Math.min(tile.w, tile.h) * view.scale > 24) {
     const clips = space.layout.clips;
     const size = px(5);
-    ctx.fillStyle = COLOR.clip;
+    ctx.fillStyle = C.clip;
     for (let i = 0; i < clips.length; i += 2) ctx.fillRect(clips[i] - size / 2, clips[i + 1] - size / 2, size, size);
   }
 }
@@ -220,7 +288,7 @@ function hatch(ctx, view, dpr) {
 }
 
 /** Сначала все обводки вдвое толще, затем заливки поверх — стыки скрываются. */
-function drawWalls(ctx, scene, view, px, dpr) {
+function drawWalls(ctx, scene, view, px, dpr, mono) {
   ctx.save();
   clipOut(ctx, view, scene.doorways);
   ctx.beginPath();
@@ -232,10 +300,10 @@ function drawWalls(ctx, scene, view, px, dpr) {
   ctx.lineJoin = 'miter';
   ctx.miterLimit = 1.5;
   ctx.lineWidth = px(2.8);
-  ctx.strokeStyle = COLOR.wallEdge;
+  ctx.strokeStyle = C.wallEdge;
   ctx.stroke();
 
-  const pattern = hatch(ctx, view, dpr);
+  const pattern = mono ? null : hatch(ctx, view, dpr);
   ctx.beginPath();
   for (const wall of scene.walls) {
     polygonPath(ctx, wall.outer, false);
@@ -249,8 +317,9 @@ function drawWalls(ctx, scene, view, px, dpr) {
 }
 
 function fillWithHatch(ctx, pattern, rule) {
-  ctx.fillStyle = COLOR.wall;
+  ctx.fillStyle = C.wall;
   ctx.fill(rule);
+  if (!pattern) return;
   ctx.fillStyle = pattern;
   ctx.fill(rule);
 }
@@ -265,26 +334,26 @@ function drawOpenings(ctx, scene, view, px) {
       ctx.save();
       if (opening.threshold) clipOut(ctx, view, scene.doorways); // пол под проёмом не закрашиваем
       polygonPath(ctx, cut, true);
-      ctx.fillStyle = COLOR.openingFloor;
+      ctx.fillStyle = C.openingFloor;
       ctx.fill();
       ctx.beginPath();
       line(ctx, [cut[0], cut[1], cut[2], cut[3]]); // линии порога
       line(ctx, [cut[6], cut[7], cut[4], cut[5]]);
-      stroke(ctx, COLOR.openingEdge, px(1), [px(4), px(4)]);
+      stroke(ctx, C.openingEdge, px(1), [px(4), px(4)]);
       ctx.restore();
       ctx.beginPath();
       line(ctx, [cut[2], cut[3], cut[4], cut[5]]); // откосы
       line(ctx, [cut[6], cut[7], cut[0], cut[1]]);
-      stroke(ctx, COLOR.wallEdge, px(1.4));
+      stroke(ctx, C.wallEdge, px(1.4));
     } else {
       ctx.beginPath();
       for (const jamb of opening.jambs) line(ctx, jamb);
-      stroke(ctx, COLOR.wallEdge, px(1.4));
+      stroke(ctx, C.wallEdge, px(1.4));
     }
     if (opening.threshold) {
       ctx.beginPath();
       line(ctx, opening.threshold);
-      stroke(ctx, COLOR.threshold, px(2), [px(5), px(5)]);
+      stroke(ctx, C.threshold, px(2), [px(5), px(5)]);
     }
   }
 }
@@ -294,7 +363,7 @@ function drawOpeningWidth(ctx, opening, view) {
   const a = view.toScreen(...opening.from);
   const b = view.toScreen(...opening.to);
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 22) {
-    textAlong(ctx, String(Math.round(opening.width)), a, b, [0, 0], 0, COLOR.openingDim, true);
+    textAlong(ctx, String(Math.round(opening.width)), a, b, [0, 0], 0, C.openingDim, true);
   }
 }
 
@@ -321,16 +390,16 @@ function drawJoint(ctx, joint, px) {
   ctx.lineTo(x1 - nx, y1 - ny);
   ctx.lineTo(x0 - nx, y0 - ny);
   ctx.closePath();
-  ctx.fillStyle = COLOR.jointGap;
+  ctx.fillStyle = C.jointGap;
   ctx.fill();
-  stroke(ctx, COLOR.joint, px(1));
+  stroke(ctx, C.joint, px(1));
   ctx.beginPath();
   line(ctx, joint.line);
-  stroke(ctx, COLOR.joint, px(1), [px(4), px(4)]);
+  stroke(ctx, C.joint, px(1), [px(4), px(4)]);
 }
 
 /** Линейка: отрезок с засечками и длиной (в пикселях экрана). */
-export function drawRuler(ctx, ruler, view, color = COLOR.ruler) {
+export function drawRuler(ctx, ruler, view, color = C.ruler) {
   const a = view.toScreen(ruler.line[0], ruler.line[1]);
   const b = view.toScreen(ruler.line[2], ruler.line[3]);
   const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -403,8 +472,8 @@ function drawOuterDimension(ctx, dimension, view) {
     ctx.moveTo(end[0] - tick[0], end[1] - tick[1]);
     ctx.lineTo(end[0] + tick[0], end[1] + tick[1]);
   }
-  stroke(ctx, COLOR.outerDim, 1);
-  textAlong(ctx, String(dimension.length), da, db, [0, 0], 0, COLOR.outerDim);
+  stroke(ctx, C.outerDim, 1);
+  textAlong(ctx, String(dimension.length), da, db, [0, 0], 0, C.outerDim);
 }
 
 /** Точка внутри многоугольника (плоский массив). */
@@ -433,7 +502,7 @@ function drawRoomLengths(ctx, space, view) {
     if (!inside(room, (x0 + x1) / 2 + normal[0] * probe, (y0 + y1) / 2 + normal[1] * probe)) {
       normal = [-normal[0], -normal[1]];
     }
-    textAlong(ctx, length.toFixed(0), a, b, normal, 11, COLOR.innerDim);
+    textAlong(ctx, length.toFixed(0), a, b, normal, 11, C.innerDim);
   }
 }
 

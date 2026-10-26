@@ -57,6 +57,11 @@ const TOOL_TITLES = {
 
 /* Предметы плана: заголовок, поля (ключ — как в tl_web_object), подсказка, кнопка удаления. */
 const THICKNESS = { key: 'thickness', label: 'Толщина', min: 10, max: 1000, step: 10, unit: 'мм' };
+const COORDINATES = [
+  { key: 'x', label: 'X', min: -1e7, max: 1e7, step: 10, unit: 'мм' },
+  { key: 'y', label: 'Y', min: -1e7, max: 1e7, step: 10, unit: 'мм' },
+];
+const LOCK = { key: 'locked', label: 'Заблокировать от перемещения', check: true, always: true };
 const OBJECTS = {
   partition: {
     title: 'Перегородка',
@@ -64,6 +69,7 @@ const OBJECTS = {
       THICKNESS,
       { key: 'length', label: 'Длина', min: 10, max: 100000, step: 10, unit: 'мм' },
       { key: 'angle', label: 'Угол', min: 0, max: 360, step: 5, unit: '°' },
+      LOCK,
     ],
     info: () =>
       'Круг посередине — сдвиг поперёк, квадрат на конце — длина и поворот, ромб на углу — толщина у этого конца.',
@@ -71,7 +77,12 @@ const OBJECTS = {
   },
   opening: {
     title: 'Проём',
-    fields: [{ key: 'width', label: 'Ширина', min: 100, max: 10000, step: 10, unit: 'мм' }],
+    fields: [
+      { key: 'width', label: 'Ширина', min: 100, max: 10000, step: 10, unit: 'мм' },
+      { key: 'from_start', label: 'От начала стены', min: 0, max: 1e6, step: 10, unit: 'мм' },
+      { key: 'to_end', label: 'До конца стены', min: 0, max: 1e6, step: 10, unit: 'мм' },
+      LOCK,
+    ],
     info: (o) =>
       ({ wall: 'В основной стене.', partition: 'В перегородке.', none: 'Не на стене — сдвиньте или удалите.' })[o.host] +
       ' Тяните вдоль стены.',
@@ -79,17 +90,25 @@ const OBJECTS = {
   },
   wall: {
     title: 'Стена дома',
-    fields: [{ ...THICKNESS, max: 2000 }],
-    info: (o) => `Длина ${o.length} мм. Тяните — стена двигается параллельно себе.`,
+    fields: [
+      { ...THICKNESS, max: 2000 },
+      { key: 'length', label: 'Длина внутр.', min: 10, max: 1e6, step: 10, unit: 'мм' },
+      { key: 'outer_length', label: 'Длина наружн.', min: 10, max: 1e6, step: 10, unit: 'мм' },
+      { key: 'keep_angles', label: 'Сохранять углы (сдвигать соседние стены)', check: true, always: true },
+      LOCK,
+    ],
+    info: () => 'Тяните — стена двигается параллельно себе. Двойной щелчок по стене — новый угол.',
     remove: 'Удалить дом',
   },
   vertex: {
     title: 'Угол дома',
+    fields: COORDINATES,
     info: () => 'Тяните, чтобы переместить; угол притягивается к сетке и выравнивается по соседним.',
     remove: 'Удалить угол',
   },
   node: {
     title: 'Узел перегородок',
+    fields: COORDINATES,
     info: (o) => `Перегородок в узле: ${o.count}. Тяните — узел двигается целиком. «Убрать узел» выпрямляет перегородку.`,
     remove: 'Убрать узел',
   },
@@ -106,11 +125,18 @@ const OBJECTS = {
   },
   threshold: {
     title: 'Стык полов в проёме',
-    info: () => 'Тяните поперёк стены; за конец у косяка — только этот конец (стык наискосок).',
+    fields: [
+      { key: 'right', label: 'У комнаты справа', min: 0, max: 10000, step: 5, unit: 'мм' },
+      { key: 'skew', label: 'Наклон', min: -10000, max: 10000, step: 5, unit: 'мм' },
+    ],
+    info: (o) =>
+      `Глубина проёма ${o.depth} мм: справа — «${o.right_room}», слева — ${o.left_room ? `«${o.left_room}»` : 'улица'}. ` +
+      'Тяните поперёк стены; за конец у косяка — только этот конец (стык наискосок).',
     remove: '',
   },
   tee: {
     title: 'Примыкание',
+    fields: COORDINATES,
     info: () => 'Конец перегородки на боку другой. Тяните вдоль неё; за её грань — станет узлом.',
     remove: '',
   },
@@ -120,7 +146,8 @@ const OBJECTS = {
  * Панель: build — один раз; после каждого изменения — show(комната, каталоги),
  * showTool(инструмент, настройки, подсказка), showObject(предмет).
  * actions: {setField(key, value), chooseTile(), colorOnly(), rename(name),
- *           align(mode), setSetting(key, value), setObjectField(key, value), deleteObject()}.
+ *           align(mode), setSetting(key, value), setObjectField(key, value), deleteObject(),
+ *           setFloorSource(id), swapTile()}.
  */
 export class Panel {
   constructor(root, actions) {
@@ -162,6 +189,10 @@ export class Panel {
     this.objectFieldsKind = null; // для какого вида предмета построены поля
     this.root.querySelector('#object-delete').addEventListener('click', () => this.actions.deleteObject());
     this.shared = this.root.querySelector('#room-shared');
+    this.roomInfo = this.root.querySelector('#room-info');
+    this.floorSource = this.root.querySelector('#floor-source');
+    this.floorSource.addEventListener('change', () => this.actions.setFloorSource(Number(this.floorSource.value)));
+    this.root.querySelector('#swap-tile').addEventListener('click', () => this.actions.swapTile());
     this.enabled = this.root.querySelector('#tile-enabled');
     this.enabled.addEventListener('change', () => this.actions.setField('enabled', this.enabled.checked));
     this.textureName = this.root.querySelector('#texture-name');
@@ -277,14 +308,29 @@ export class Panel {
     }
     for (const field of fields) {
       const input = this.objectFields.querySelector(`[data-key="${field.key}"]`);
-      if (document.activeElement !== input) input.value = String(Math.round(object[field.key] * 10) / 10);
-      input.disabled = object.locked;
+      const value = object[field.key];
+      input.closest('.row').hidden = value === undefined;
+      if (field.check) input.checked = Boolean(value);
+      else if (document.activeElement !== input && value !== undefined) input.value = String(Math.round(value * 10) / 10);
+      input.disabled = object.locked && !field.always;
     }
   }
 
   objectRow(field) {
     const row = document.createElement('label');
-    row.className = 'row';
+    row.className = field.check ? 'row check' : 'row';
+    if (field.check) {
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.dataset.key = field.key;
+      box.id = `object-${field.key}`;
+      box.addEventListener('change', () => this.actions.setObjectField(field.key, box.checked));
+      const caption = document.createElement('span');
+      caption.className = 'caption';
+      caption.textContent = field.label;
+      row.append(box, caption);
+      return row;
+    }
     const caption = document.createElement('span');
     caption.className = 'caption';
     caption.textContent = field.label;
@@ -316,6 +362,13 @@ export class Panel {
     this.updateEmpty();
     if (!room) return;
     if (document.activeElement !== this.roomName) this.roomName.value = room.name;
+    this.roomInfo.textContent = `${room.area.toFixed(2).replace('.', ',')} м², периметр ${room.perimeter} мм`;
+    this.floorSource.replaceChildren(
+      new Option('Своя раскладка', '0'),
+      ...room.sources.map((source) => new Option(`Как в «${source.name}» (общая сетка)`, String(source.id))),
+    );
+    this.floorSource.value = String(room.source_id);
+    if (this.floorSource.selectedIndex < 0) this.floorSource.value = '0';
     this.shared.hidden = !room.source;
     this.shared.textContent = room.source ? `Пол общий с комнатой «${room.source}»: настройки — её.` : '';
     const tile = room.tile;
