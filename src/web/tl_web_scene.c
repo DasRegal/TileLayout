@@ -12,6 +12,8 @@
  *                "threshold": [x0, y0, x1, y1] | null,   стык полов
  *                "width": мм, "from": [x, y], "to": [x, y]}],  подпись ширины — вдоль from→to
  *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм}],  снаружи дома
+ *  "rulers": [{"line": [x0, y0, x1, y1], "length": мм}],
+ *  "joints": [{"line": [x0, y0, x1, y1], "gap": мм}],         деформационные швы
  *  "spaces": [{"id", "name", "outline": [...], "holes": [[...]], "room": [...],      room — для длин стен
  *              "label": [x, y], "area": м², "source": "имя" | null,
  *              "tile": {настройки, ключи как в файле},
@@ -84,17 +86,6 @@ static TlJson *doorways(TlProject *project)
     return json;
 }
 
-/* Косяки двери в перегородке: края проёма по обе стороны стыка (from[i]—to[i]
-   поперёк перегородки: from — правый край, to — левый). */
-static bool door_jambs(TlProject *project, const TlOpening *opening, TlVec2 from[2], TlVec2 to[2])
-{
-    TlOpening right_side = *opening, left_side = *opening;
-    tl_opening_set_threshold(&right_side, 0);
-    tl_opening_set_threshold(&left_side, 1);
-    return tl_project_opening_threshold(project, &right_side, &from[0], &to[0]) &&
-           tl_project_opening_threshold(project, &left_side, &from[1], &to[1]);
-}
-
 /* Стык полов под проёмом; у основной стены — только если под проёмом пол. */
 static TlJson *threshold(TlProject *project, const TlOpening *opening, bool door)
 {
@@ -120,7 +111,7 @@ static TlJson *opening_json(TlProject *project, const TlOpening *opening)
     TlVec2 width_from, width_to;
     if (door) {
         TlVec2 from[2], to[2];
-        if (!door_jambs(project, opening, from, to)) {
+        if (!tl_project_opening_jambs(project, opening, from, to)) {
             tl_json_free(jambs);
             tl_json_free(json);
             return NULL;
@@ -283,6 +274,23 @@ const char *tl_web_scene(void)
     tl_json_object_set(json, "doorways", doorways(project));
     tl_json_object_set(json, "openings", openings(project));
     tl_json_object_set(json, "dimensions", dimensions(project));
+    TlJson *rulers = tl_json_array();
+    for (size_t i = 0; i < project->rulers.count; i++) {
+        TlJson *ruler = tl_json_object();
+        tl_json_object_set(ruler, "line", segment(project->rulers.items[i]->start, project->rulers.items[i]->end));
+        tl_json_object_set(ruler, "length", tl_json_number(round(tl_ruler_length(project->rulers.items[i]))));
+        tl_json_array_push(rulers, ruler);
+    }
+    tl_json_object_set(json, "rulers", rulers);
+    TlJson *joints = tl_json_array();
+    for (size_t i = 0; i < project->expansion_joints.count; i++) {
+        const TlExpansionJoint *item = project->expansion_joints.items[i];
+        TlJson *joint = tl_json_object();
+        tl_json_object_set(joint, "line", segment(item->start, item->end));
+        tl_json_object_set(joint, "gap", tl_json_number(item->gap));
+        tl_json_array_push(joints, joint);
+    }
+    tl_json_object_set(json, "joints", joints);
     TlJson *spaces = tl_json_array();
     for (size_t s = 0; s < project->spaces.count; s++)
         tl_json_array_push(spaces, space_json(project->spaces.items[s]));

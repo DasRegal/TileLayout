@@ -17,6 +17,9 @@ const COLOR = {
   openingDim: '#6b3fa0',
   threshold: '#a0522d',
   selection: '#2563eb',
+  ruler: '#5f6b7a',
+  joint: '#37414d',
+  jointGap: '#fbfaf6',
 };
 
 const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
@@ -42,6 +45,7 @@ export function drawScene(ctx, scene, view, options) {
 
   world();
   for (const space of scene.spaces) drawFloor(ctx, space, view, px, options);
+  for (const joint of scene.joints) drawJoint(ctx, joint, px);
   drawWalls(ctx, scene, view, px, dpr);
   drawOpenings(ctx, scene, view, px);
   const selected = scene.spaces.find((space) => space.id === options.selected);
@@ -60,6 +64,7 @@ export function drawScene(ctx, scene, view, options) {
   for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view);
   for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
   for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
+  for (const ruler of scene.rulers) drawRuler(ctx, ruler, view);
   if (options.overlay) options.overlay(ctx);
 }
 
@@ -299,6 +304,47 @@ function stroke(ctx, color, width, dash = []) {
   ctx.setLineDash(dash);
   ctx.stroke();
   ctx.setLineDash([]);
+}
+
+// ---- деформационные швы и линейки -------------------------------------------------
+
+/** Шов: щель шириной gap (не уже 3 px) и пунктир по оси. */
+function drawJoint(ctx, joint, px) {
+  const [x0, y0, x1, y1] = joint.line;
+  const length = Math.hypot(x1 - x0, y1 - y0);
+  if (length < px(1)) return;
+  const half = Math.max(joint.gap, px(3)) / 2;
+  const [nx, ny] = [(-(y1 - y0) / length) * half, ((x1 - x0) / length) * half];
+  ctx.beginPath();
+  ctx.moveTo(x0 + nx, y0 + ny);
+  ctx.lineTo(x1 + nx, y1 + ny);
+  ctx.lineTo(x1 - nx, y1 - ny);
+  ctx.lineTo(x0 - nx, y0 - ny);
+  ctx.closePath();
+  ctx.fillStyle = COLOR.jointGap;
+  ctx.fill();
+  stroke(ctx, COLOR.joint, px(1));
+  ctx.beginPath();
+  line(ctx, joint.line);
+  stroke(ctx, COLOR.joint, px(1), [px(4), px(4)]);
+}
+
+/** Линейка: отрезок с засечками и длиной (в пикселях экрана). */
+export function drawRuler(ctx, ruler, view, color = COLOR.ruler) {
+  const a = view.toScreen(ruler.line[0], ruler.line[1]);
+  const b = view.toScreen(ruler.line[2], ruler.line[3]);
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (length < 1) return;
+  const normal = [-(b[1] - a[1]) / length, (b[0] - a[0]) / length];
+  ctx.beginPath();
+  ctx.moveTo(...a);
+  ctx.lineTo(...b);
+  for (const end of [a, b]) {
+    ctx.moveTo(end[0] - normal[0] * 4, end[1] - normal[1] * 4);
+    ctx.lineTo(end[0] + normal[0] * 4, end[1] + normal[1] * 4);
+  }
+  stroke(ctx, color, 1);
+  textAlong(ctx, String(ruler.length), a, b, normal, 9, color);
 }
 
 // ---- подписи (в пикселях экрана) ---------------------------------------------------

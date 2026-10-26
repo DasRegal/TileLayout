@@ -1,7 +1,9 @@
 // Инструменты рисования плана — как в настольной программе: прямоугольник и
 // контур (на пустом месте — дом, внутри дома — комната из перегородок),
-// перегородка двумя щелчками, проём щелчком по стене. Точки притягиваются ядром
-// (tl_snap: углы, концы перегородок, грани стен, сетка, выравнивание).
+// перегородка двумя щелчками, проём щелчком по стене, линейка и деформационный
+// шов двумя щелчками. Точки притягиваются ядром (tl_snap: углы, концы
+// перегородок, грани стен, сетка, выравнивание; у линейки и шва —
+// tl_measure_point: грани, оси стен, швы плитки).
 
 const SNAP_PX = 10; // допуск притягивания, пиксели экрана
 const CLOSE_PX = 9; // щелчок у первой точки контура замыкает его
@@ -9,13 +11,18 @@ const GREEN = '#0b8043';
 const GUIDE = '#1a73e8';
 
 export const TOOL_HINTS = {
-  select: 'Щёлкните комнату, перегородку, проём или стену дома. Delete — удалить выделенное.',
+  select:
+    'Щёлкните комнату, перегородку, проём или стену дома и тяните. Выделенная комната тянет весь дом, с Ctrl — сетку плитки. Delete — удалить.',
   rect: 'Прямоугольник: щёлкните угол, затем противоположный угол. На пустом месте — дом, внутри дома — комната.',
   contour:
     'Контур: щёлкайте углы; замкнуть — щелчок по первой точке, двойной щелчок или Enter. Backspace — убрать точку, Esc — отмена.',
   partition: 'Перегородка: щёлкните начало и конец. Точки притягиваются к стенам и углам; Shift — без привязок.',
   opening: 'Проём: щёлкните по стене или перегородке.',
+  ruler: 'Линейка: щёлкните начало и конец. Концы притягиваются к граням и осям стен и к швам плитки.',
+  joint: 'Деформационный шов: щёлкните начало и конец. Шов режет плитку щелью заданной ширины.',
 };
+
+const MEASURE_TARGETS = { ruler: 'all', joint: 'walls' };
 
 export class Tools {
   /**
@@ -51,6 +58,10 @@ export class Tools {
   snap(world, free) {
     const { core, settings } = this.env;
     const start = this.points.length ? this.points[this.points.length - 1] : null;
+    if (MEASURE_TARGETS[this.tool]) {
+      const result = core.measurePoint(world[0], world[1], start, MEASURE_TARGETS[this.tool], this.tolerance(), free);
+      return { point: result.point, guides: result.guides, face: null, snapped: result.snapped };
+    }
     return core.snap(world[0], world[1], start, this.points.flat(), this.tolerance(), settings.grid, free);
   }
 
@@ -78,6 +89,18 @@ export class Tools {
       return;
     }
     const point = this.snap(world, free).point;
+    if (MEASURE_TARGETS[this.tool]) {
+      if (!this.points.length) {
+        this.points = [point];
+        return;
+      }
+      const start = this.points[0];
+      this.points = [];
+      const index = this.tool === 'ruler' ? core.addRuler(start, point) : core.addJoint(start, point, settings.jointGap);
+      if (index < 0) this.env.say('Слишком коротко.');
+      else this.env.edited({ kind: this.tool, index, part: 0, end: 0 });
+      return;
+    }
     if (this.tool === 'partition') {
       if (!this.points.length) {
         this.points = [point];
@@ -209,8 +232,9 @@ export class Tools {
     if (points.length >= 2) {
       ctx.beginPath();
       points.forEach((p, i) => (i ? ctx.lineTo(...screen(p)) : ctx.moveTo(...screen(p))));
-      if (this.tool === 'partition') {
-        ctx.lineWidth = Math.max(2, this.env.settings.partitionThickness * view.scale);
+      if (this.tool === 'partition' || this.tool === 'joint') {
+        const width = this.tool === 'joint' ? this.env.settings.jointGap : this.env.settings.partitionThickness;
+        ctx.lineWidth = Math.max(2, width * view.scale);
         ctx.strokeStyle = 'rgba(11, 128, 67, 0.47)';
         ctx.lineCap = 'butt';
         ctx.stroke();
@@ -228,6 +252,7 @@ export class Tools {
     }
     for (const p of this.points) dot(ctx, screen(p), GREEN, 4);
     if (cursor) cross(ctx, screen(cursor));
+    if (cursor && this.cursor.snapped) dot(ctx, screen(cursor), '#c2410c', 4); // притянулось к стене или шву
     ctx.restore();
   }
 }

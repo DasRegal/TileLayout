@@ -156,6 +156,50 @@ int tl_web_add_opening(double x, double y, double width, double tolerance, doubl
     return opening ? index_of_opening(project, opening) : -1;
 }
 
+int tl_web_add_ruler(double x0, double y0, double x1, double y1, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (tl_distance(tl_vec2(x0, y0), tl_vec2(x1, y1)) < 1)
+        return -1;
+    tl_web_checkpoint("", now_seconds);
+    tl_project_add_ruler(project, tl_ruler_new(tl_vec2(x0, y0), tl_vec2(x1, y1)));
+    return (int)project->rulers.count - 1;
+}
+
+int tl_web_add_joint(double x0, double y0, double x1, double y1, double gap, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (tl_distance(tl_vec2(x0, y0), tl_vec2(x1, y1)) < 1 || !(gap > 0 && gap <= 100))
+        return -1;
+    tl_web_checkpoint("", now_seconds);
+    tl_project_add_expansion_joint(project, tl_expansion_joint_new(tl_vec2(x0, y0), tl_vec2(x1, y1), gap));
+    tl_project_update_spaces(project);
+    return (int)project->expansion_joints.count - 1;
+}
+
+const char *tl_web_measure_point(double x, double y, bool has_anchor, double anchor_x, double anchor_y,
+                                 const char *targets, double tolerance, bool free)
+{
+    TlVec2 anchor = tl_vec2(anchor_x, anchor_y), world = tl_vec2(x, y);
+    TlSnapPoint snap = {world, TL_SNAP_NONE, {0, 0}};
+    TlGuides guides = {0};
+    TlVec2 point = free ? world
+                        : tl_measure_point(tl_web_project(), world, has_anchor ? &anchor : NULL, tolerance,
+                                           strcmp(targets, "walls") == 0 ? TL_SNAP_TO_WALL_SURFACES : TL_SNAP_TO_ALL,
+                                           true, true, &snap, &guides);
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "point", point_json(point));
+    tl_json_object_set(json, "snapped", tl_json_bool(snap.kind != TL_SNAP_NONE));
+    TlJson *list = tl_json_array();
+    for (int i = 0; i < guides.count; i++) {
+        TlJson *guide = point_json(guides.items[i].from);
+        tl_json_array_push(guide, tl_json_bool(guides.items[i].vertical));
+        tl_json_array_push(list, guide);
+    }
+    tl_json_object_set(json, "guides", list);
+    return keep(json);
+}
+
 /* ---- выбор -------------------------------------------------------------------- */
 
 #define HANDLE_FACTOR 1.5 /* маркеры (углы, концы, узлы) ловятся чуть дальше тел */
@@ -273,13 +317,53 @@ static bool pick_handle(TlProject *project, TlVec2 point, double tolerance, Item
     return false;
 }
 
+/* Часть отрезка под точкой: 1 — начало, 2 — конец, 0 — сам отрезок, −1 — мимо. */
+static int segment_part(TlVec2 start, TlVec2 end, TlVec2 point, double end_tolerance, double line_tolerance)
+{
+    if (tl_distance(point, start) < end_tolerance * HANDLE_FACTOR)
+        return 1;
+    if (tl_distance(point, end) < end_tolerance * HANDLE_FACTOR)
+        return 2;
+    return tl_point_segment_distance(point, start, end, NULL) < line_tolerance ? 0 : -1;
+}
+
+/* Стык полов в проёме под точкой: 2/3 — конец у косяка, 1 — линия, 0 — мимо. */
+static int threshold_part(TlProject *project, const TlOpening *opening, TlVec2 point, double tolerance)
+{
+    TlVec2 from, to;
+    if (!tl_project_opening_threshold(project, opening, &from, &to))
+        return 0;
+    if (tl_distance(point, from) < tolerance)
+        return TL_DRAG_THRESHOLD_FROM;
+    if (tl_distance(point, to) < tolerance)
+        return TL_DRAG_THRESHOLD_TO;
+    return tl_point_segment_distance(point, from, to, NULL) < tolerance * 0.6 ? TL_DRAG_THRESHOLD_LINE : 0;
+}
+
 const char *tl_web_pick(double x, double y, double tolerance)
 {
     TlProject *project = tl_web_project();
     TlVec2 point = tl_vec2(x, y);
     Item item = {"none", 0, 0, 0, 0};
+    for (size_t i = project->rulers.count; i-- > 0;) {
+        int part = segment_part(project->rulers.items[i]->start, project->rulers.items[i]->end, point, tolerance,
+                                tolerance);
+        if (part >= 0)
+            return item_json((Item){"ruler", (int)i, part, 0, 0});
+    }
+    for (size_t i = project->expansion_joints.count; i-- > 0;) {
+        const TlExpansionJoint *joint = project->expansion_joints.items[i];
+        int part = segment_part(joint->start, joint->end, point, tolerance, fmax(tolerance, joint->gap / 2));
+        if (part >= 0)
+            return item_json((Item){"joint", (int)i, part, 0, 0});
+    }
     if (pick_handle(project, point, tolerance, &item))
         return item_json(item);
+    for (size_t i = 0; i < project->openings.count; i++) {
+        int part = threshold_part(project, project->openings.items[i], point, tolerance);
+        if (part > 0)
+            return item_json((Item){"threshold", (int)i, part, 0, 0});
+    }
     for (size_t i = 0; i < project->openings.count; i++)
         if (on_opening(project, project->openings.items[i], point, tolerance))
             return item_json((Item){"opening", (int)i, 0, 0, 0});
@@ -387,6 +471,41 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         } else if (is(kind, "vertex")) {
             tl_json_object_set(json, "locked", tl_json_bool(tl_outline_vertex_locked(house, (size_t)part)));
         }
+    } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
+        const TlRuler *ruler = project->rulers.items[index];
+        TlPolygon line = {0};
+        tl_polygon_push(&line, ruler->start);
+        tl_polygon_push(&line, ruler->end);
+        add_outline(outlines, &line);
+        tl_polygon_free(&line);
+        add_point(handles, ruler->start);
+        add_point(handles, ruler->end);
+        tl_json_object_set(json, "length", tl_json_number(round(tl_ruler_length(ruler))));
+        tl_json_object_set(json, "locked", tl_json_bool(false));
+    } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
+        const TlExpansionJoint *joint = project->expansion_joints.items[index];
+        TlPolygon strip = tl_expansion_joint_strip(joint);
+        add_outline(outlines, &strip);
+        tl_polygon_free(&strip);
+        add_point(handles, joint->start);
+        add_point(handles, joint->end);
+        tl_json_object_set(json, "gap", tl_json_number(joint->gap));
+        tl_json_object_set(json, "length", tl_json_number(round(tl_expansion_joint_length(joint))));
+        tl_json_object_set(json, "locked", tl_json_bool(false));
+    } else if (is(kind, "threshold") && opening) {
+        TlVec2 from, to;
+        if (!tl_project_opening_threshold(project, opening, &from, &to)) {
+            found = false;
+        } else {
+            TlPolygon line = {0};
+            tl_polygon_push(&line, from);
+            tl_polygon_push(&line, to);
+            add_outline(outlines, &line);
+            tl_polygon_free(&line);
+            add_point(handles, from);
+            add_point(handles, to);
+            tl_json_object_set(json, "locked", tl_json_bool(opening->locked));
+        }
     } else if ((is(kind, "node") || is(kind, "tee")) && partition) {
         TlNode node;
         TlTee tee;
@@ -462,6 +581,17 @@ bool tl_web_set_wall_thickness(int house_index, int wall, double thickness, doub
     return true;
 }
 
+bool tl_web_set_joint_gap(int index, double gap, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (index < 0 || (size_t)index >= project->expansion_joints.count || !(gap > 0 && gap <= 100))
+        return false;
+    tl_web_checkpoint("jgap", now_seconds);
+    project->expansion_joints.items[index]->gap = gap;
+    tl_project_update_spaces(project);
+    return true;
+}
+
 bool tl_web_delete(const char *kind, int index, int part, int end, double now_seconds)
 {
     TlProject *project = tl_web_project();
@@ -485,6 +615,12 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
         tl_outline_remove_vertex(house, (size_t)part);
         tl_project_end_edit(project, token, NULL);
         tl_project_remove_orphan_openings(project);
+    } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
+        tl_web_checkpoint("", now_seconds);
+        tl_project_delete_ruler(project, project->rulers.items[index]);
+    } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
+        tl_web_checkpoint("", now_seconds);
+        tl_project_delete_expansion_joint(project, project->expansion_joints.items[index]);
     } else if (is(kind, "node") && partition) {
         TlNode node;
         if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node) || node_locked(&node))
@@ -503,6 +639,7 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
 static struct {
     TlDrag drag;
     bool active, moved;
+    int space; /* дом и сетка плитки — id комнаты, за которую взяли */
 } dragging;
 
 bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x, double y)
@@ -524,11 +661,25 @@ bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x,
             return false;
         if (target.kind == TL_DRAG_NODE)
             target.index = 0; /* за середину — узел целиком */
-    } else if (is(kind, "opening")) {
-        target.kind = TL_DRAG_OPENING;
+    } else if (is(kind, "opening") || is(kind, "threshold")) {
+        target.kind = is(kind, "opening") ? TL_DRAG_OPENING : TL_DRAG_THRESHOLD;
         target.opening = opening_at(index);
         if (!target.opening)
             return false;
+    } else if (is(kind, "house") || is(kind, "tiles")) {
+        TlSpace *space = tl_project_space_at(project, tl_vec2(x, y));
+        if (!space || (is(kind, "house") && !space->house))
+            return false;
+        target.kind = is(kind, "house") ? TL_DRAG_HOUSE : TL_DRAG_TILES;
+        target.outline = space->house;
+        target.space = space;
+        dragging.space = space->id;
+    } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
+        target.kind = TL_DRAG_RULER;
+        target.ruler = project->rulers.items[index];
+    } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
+        target.kind = TL_DRAG_JOINT;
+        target.joint = project->expansion_joints.items[index];
     } else {
         return false;
     }
@@ -553,6 +704,23 @@ static Item dragged_item(TlProject *project)
     case TL_DRAG_NODE: return (Item){"node", index_of_partition(project, t->partition), 0, (int)t->end, 0};
     case TL_DRAG_TEE: return (Item){"tee", index_of_partition(project, t->partition), 0, (int)t->end, 0};
     case TL_DRAG_OPENING: return (Item){"opening", index_of_opening(project, t->opening), 0, 0, 0};
+    case TL_DRAG_THRESHOLD: return (Item){"threshold", index_of_opening(project, t->opening), t->index, 0, 0};
+    case TL_DRAG_HOUSE:
+    case TL_DRAG_TILES: return (Item){"space", 0, 0, 0, dragging.space};
+    case TL_DRAG_RULER:
+    case TL_DRAG_JOINT: {
+        int index = -1;
+        if (t->kind == TL_DRAG_RULER) {
+            for (size_t i = 0; i < project->rulers.count; i++)
+                if (project->rulers.items[i] == t->ruler)
+                    index = (int)i;
+        } else {
+            for (size_t i = 0; i < project->expansion_joints.count; i++)
+                if (project->expansion_joints.items[i] == t->joint)
+                    index = (int)i;
+        }
+        return (Item){t->kind == TL_DRAG_RULER ? "ruler" : "joint", index, t->index, 0, 0};
+    }
     default: return (Item){"none", 0, 0, 0, 0};
     }
 }
@@ -567,7 +735,7 @@ const char *tl_web_drag_move(double x, double y, double tolerance, double grid, 
         dragging.moved = true;
     }
     TlSnapContext snap = {.project = project, .tolerance = tolerance, .grid_step = grid, .skip_vertex = -1,
-                          .align = true};
+                          .align = true, .magnet = true};
     TlGuides guides;
     tl_drag_move(&dragging.drag, project, tl_vec2(x, y), &snap, free, &guides);
     TlJson *json = tl_json_object();

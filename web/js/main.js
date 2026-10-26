@@ -10,8 +10,11 @@ import { attachViewControls, View } from './view.js';
 
 const PICK_PX = 6; // допуск выбора предмета, пиксели экрана
 const SNAP_PX = 10; // допуск притягивания при перетаскивании
-const DRAGGABLE = new Set(['vertex', 'wall', 'partition', 'node', 'tee', 'opening']);
-const CURSORS = { vertex: 'crosshair', node: 'move', tee: 'move', wall: 'move', partition: 'move', opening: 'ew-resize' };
+const DRAGGABLE = new Set(['vertex', 'wall', 'partition', 'node', 'tee', 'opening', 'threshold', 'ruler', 'joint']);
+const CURSORS = {
+  vertex: 'crosshair', node: 'move', tee: 'move', wall: 'move', partition: 'move', opening: 'ew-resize',
+  threshold: 'move', ruler: 'move', joint: 'move',
+};
 
 const state = {
   core: null,
@@ -20,7 +23,7 @@ const state = {
   object: null, // свойства выделенного предмета (tl_web_object)
   guides: [], // линии выравнивания при перетаскивании
   fileName: 'plan.tilelayout.json',
-  settings: { houseThickness: 200, partitionThickness: 100, openingWidth: 800, grid: 10, ...readSettings() },
+  settings: { houseThickness: 200, partitionThickness: 100, openingWidth: 800, grid: 10, jointGap: 10, ...readSettings() },
 };
 
 const canvas = document.getElementById('plan');
@@ -72,7 +75,9 @@ const panel = new Panel(document.getElementById('panel'), {
         ? state.core.setPartitionThickness(index, value)
         : kind === 'wall'
           ? state.core.setWallThickness(index, part, value)
-          : state.core.setOpeningWidth(index, value);
+          : kind === 'joint'
+            ? state.core.setJointGap(index, value)
+            : state.core.setOpeningWidth(index, value);
     if (ok) changed();
     else say('Значение не подходит.');
   },
@@ -202,8 +207,8 @@ function deleteSelection() {
     say('Комнату образуют стены: удалите перегородку или весь дом (щёлкните его стену).');
     return;
   }
-  if (selection.kind === 'tee') {
-    say('Примыкание удаляется вместе с перегородкой: выделите её саму.');
+  if (selection.kind === 'tee' || selection.kind === 'threshold') {
+    say(selection.kind === 'tee' ? 'Примыкание удаляется вместе с перегородкой: выделите её саму.' : 'Стык удаляется вместе с проёмом.');
     return;
   }
   if (!state.core.deleteObject(selection)) {
@@ -258,11 +263,17 @@ function select(world) {
   say('');
 }
 
-/** Нажатие в «Выборе»: предмет под курсором тянется; комната и пустое место — сдвиг вида. */
-function startDrag(world) {
+/** Нажатие в «Выборе»: предмет под курсором тянется; выделенная комната — дом
+ *  целиком, с Ctrl — сетка плитки; иначе комната и пустое место — сдвиг вида. */
+function startDrag(world, event) {
   if (!state.core || tools.drawing) return null;
   const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
-  if (!DRAGGABLE.has(hit.kind) || !state.core.dragBegin(hit, world[0], world[1])) return null;
+  let target = DRAGGABLE.has(hit.kind) ? hit : null;
+  if (hit.kind === 'space') {
+    if (event.ctrlKey || event.metaKey) target = { kind: 'tiles' };
+    else if (hit.space === selectedSpace()) target = { kind: 'house' };
+  }
+  if (!target || !state.core.dragBegin(target, world[0], world[1])) return null;
   state.selection = hit;
   refresh();
   return {
@@ -288,7 +299,7 @@ function updateCursor(world) {
     return;
   }
   const hit = state.core.pick(world[0], world[1], PICK_PX / view.scale);
-  canvas.style.cursor = CURSORS[hit.kind] || '';
+  canvas.style.cursor = hit.kind === 'space' && hit.space === selectedSpace() ? 'move' : CURSORS[hit.kind] || '';
 }
 
 // ---- команды -------------------------------------------------------------------
@@ -320,7 +331,7 @@ const commands = {
   catalog: pickTile,
 };
 
-const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening' };
+const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', l: 'ruler' };
 
 function onKey(event) {
   const typing = event.target.matches('input, select, textarea');
@@ -382,7 +393,7 @@ function bindCommands() {
       tools.hover(world, event.shiftKey);
       requestDraw();
     },
-    onDragStart: (world) => startDrag(world),
+    onDragStart: (world, event) => startDrag(world, event),
   });
   canvas.addEventListener('dblclick', () => {
     tools.doubleClick();

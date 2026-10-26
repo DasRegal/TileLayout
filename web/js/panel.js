@@ -51,6 +51,8 @@ const TOOL_TITLES = {
   contour: 'Контур',
   partition: 'Перегородка',
   opening: 'Проём',
+  ruler: 'Линейка',
+  joint: 'Деформационный шов',
 };
 
 /* Предметы плана: заголовок, поле размера (если есть), подсказка, кнопка удаления. */
@@ -84,6 +86,22 @@ const OBJECTS = {
     title: 'Узел перегородок',
     info: (o) => `Перегородок в узле: ${o.count}. Тяните — узел двигается целиком. «Убрать узел» выпрямляет перегородку.`,
     remove: 'Убрать узел',
+  },
+  ruler: {
+    title: 'Линейка',
+    info: (o) => `Длина ${o.length} мм. Тяните за линию — целиком, за конец — с притягиванием к стенам и швам плитки.`,
+    remove: 'Удалить',
+  },
+  joint: {
+    title: 'Деформационный шов',
+    size: 'Ширина щели',
+    info: (o) => `Длина ${o.length} мм. Режет плитку: куски по обе стороны — отдельные подрезки.`,
+    remove: 'Удалить',
+  },
+  threshold: {
+    title: 'Стык полов в проёме',
+    info: () => 'Тяните поперёк стены; за конец у косяка — только этот конец (стык наискосок).',
+    remove: '',
   },
   tee: {
     title: 'Примыкание',
@@ -123,6 +141,7 @@ export class Panel {
       partitionThickness: this.root.querySelector('#setting-partition'),
       openingWidth: this.root.querySelector('#setting-opening'),
       grid: this.root.querySelector('#setting-grid'),
+      jointGap: this.root.querySelector('#setting-joint'),
     };
     for (const [key, input] of Object.entries(this.settingInputs)) {
       input.addEventListener('change', () => {
@@ -242,9 +261,13 @@ export class Panel {
       sizeRow.hidden = !text.size;
       if (text.size) {
         this.root.querySelector('#object-size-caption').textContent = text.size;
-        const value = object.kind === 'opening' ? object.width : object.thickness;
-        const limits = object.kind === 'opening' ? { min: 100, max: 10000 } : { min: 10, max: object.kind === 'wall' ? 2000 : 1000 };
-        Object.assign(this.objectSize, { ...limits, step: 10 });
+        const value = { opening: object.width, joint: object.gap }[object.kind] ?? object.thickness;
+        const limits = {
+          opening: { min: 100, max: 10000, step: 10 },
+          joint: { min: 1, max: 100, step: 1 },
+          wall: { min: 10, max: 2000, step: 10 },
+        }[object.kind] ?? { min: 10, max: 1000, step: 10 };
+        Object.assign(this.objectSize, limits);
         if (document.activeElement !== this.objectSize) this.objectSize.value = String(Math.round(value * 10) / 10);
         this.objectSize.disabled = object.locked;
       }

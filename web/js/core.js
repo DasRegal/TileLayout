@@ -65,6 +65,14 @@ export async function loadCore() {
     },
     setPartitionThickness: (index, value) => module._tl_web_set_partition_thickness(index, value, now()) !== 0,
     setOpeningWidth: (index, value) => module._tl_web_set_opening_width(index, value, now()) !== 0,
+    addRuler: (a, b) => module._tl_web_add_ruler(a[0], a[1], b[0], b[1], now()),
+    addJoint: (a, b, gap) => module._tl_web_add_joint(a[0], a[1], b[0], b[1], gap, now()),
+    setJointGap: (index, gap) => module._tl_web_set_joint_gap(index, gap, now()) !== 0,
+    /** Конец линейки (targets 'all') или шва ('walls'): притягивание и выравнивание от anchor. */
+    measurePoint: (x, y, anchor, targets, tolerance, free) =>
+      withString(targets, (t) =>
+        JSON.parse(text(module._tl_web_measure_point(x, y, anchor ? 1 : 0, anchor?.[0] ?? 0, anchor?.[1] ?? 0, t, tolerance, free ? 1 : 0))),
+      ),
     setWallThickness: (house, wall, value) => module._tl_web_set_wall_thickness(house, wall, value, now()) !== 0,
     deleteObject(target) {
       const { kind, index, part, end } = item(target);

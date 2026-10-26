@@ -27,6 +27,8 @@
       <button type="button" data-tool="contour" title="Контур: дом или комната любой формы (C)" aria-pressed="false">Контур</button>
       <button type="button" data-tool="partition" title="Перегородка (P)" aria-pressed="false">Перегородка</button>
       <button type="button" data-tool="opening" title="Проём (O)" aria-pressed="false">Проём</button>
+      <button type="button" data-tool="joint" title="Деформационный шов (J)" aria-pressed="false">Шов</button>
+      <button type="button" data-tool="ruler" title="Линейка (L)" aria-pressed="false">Линейка</button>
     </nav>
   </header>
 
@@ -49,6 +51,8 @@
             <span class="control"><input type="number" id="setting-partition" min="10" max="1000" step="10"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="opening"><span class="caption">Ширина проёма</span>
             <span class="control"><input type="number" id="setting-opening" min="100" max="10000" step="10"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="joint"><span class="caption">Ширина щели шва</span>
+            <span class="control"><input type="number" id="setting-joint" min="1" max="100" step="1"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="rect contour partition opening"><span class="caption">Шаг привязки</span>
             <span class="control"><input type="number" id="setting-grid" min="0" max="1000" step="5"><span class="unit">мм</span></span></label>
         </div>
@@ -101,7 +105,7 @@
       <footer class="note">
         Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Файлы — те же, что у
         <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программы</a>: в ней есть
-        ещё перетаскивание стен и углов, деформационные швы, печать с чертежами подрезок.
+        ещё печать и PDF с чертежами подрезок.
       </footer>
     </aside>
   </main>
