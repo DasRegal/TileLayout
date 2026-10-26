@@ -10,6 +10,7 @@
 #define APP_CANVAS_PRIVATE_H
 
 #include "app_canvas.h"
+#include "tl_drag.h"
 #include "tl_snap.h"
 #include "app_view.h"
 #include "tl_measure_snap.h"
@@ -49,16 +50,10 @@ extern const AppTool APP_EXPANSION_JOINT_TOOL;
 
 typedef enum AppDragKind {
     APP_DRAG_NONE,
-    APP_DRAG_VERTEX,
-    APP_DRAG_WALL,
-    APP_DRAG_HOUSE,
-    APP_DRAG_PARTITION,
-    APP_DRAG_OPENING,
+    APP_DRAG_GEOMETRY, /* дом, стена, угол, перегородка, узел, примыкание, проём — tl_drag */
     APP_DRAG_TILES,
     APP_DRAG_RULER,
     APP_DRAG_EXPANSION_JOINT,
-    APP_DRAG_NODE, /* точка узла перегородок: середина или угол */
-    APP_DRAG_TEE,  /* точка примыкания: вдоль бока, а за грань — узел */
     APP_DRAG_THRESHOLD
 } AppDragKind;
 
@@ -67,28 +62,16 @@ typedef struct AppDrag {
     AppDragKind kind;
     bool moved;
     TlVec2 start;                   /* мир, где нажали */
-    TlOutline *outline;
     int index;
-    TlPolygon original_corners;
-    TlWallRefList links;            /* смежные стены соседних домов */
-    TlPolygonList links_original;
-    TlPartition *partition;
-    TlVec2 original_start, original_end;
-    TlOpening *opening;
-    TlRuler *ruler;                 /* original_start/original_end — его концы */
-    TlExpansionJoint *expansion_joint; /* и его */
-    double original_corner_offset;  /* угол тела перегородки */
-    TlPartitionEnd end;             /* узел: конец partition в нём */
-    TlVec2 original_point;          /* узел: взятая точка */
-    TlVec2 original_node;           /* узел: его точка на осях */
-    TlPartition *frozen;            /* узел из примыкания: эта перегородка не возвращается на бок */
+    TlDrag geometry;                /* APP_DRAG_GEOMETRY */
+    TlVec2 original_start, original_end; /* линейка или шов */
+    TlRuler *ruler;
+    TlExpansionJoint *expansion_joint;
+    TlOpening *opening;             /* стык */
     double original_shares[2];      /* стык: доли у косяков в начале и в конце проёма */
     double original_share;          /* стык: доля под курсором при нажатии */
-    TlBand band;
-    double original_along;
-    TlSpace *space;
+    TlSpace *space;                 /* сетка плитки */
     double original_offset_x, original_offset_y;
-    TlEditToken *token;
 } AppDrag;
 
 struct AppCanvas {

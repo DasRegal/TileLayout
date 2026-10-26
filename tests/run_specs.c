@@ -19,5 +19,6 @@ int main(void)
     spec_doorway();
     spec_web();
     spec_commands();
+    spec_drag();
     return spec_report() == 0 ? 0 : 1;
 }

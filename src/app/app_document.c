@@ -1,5 +1,7 @@
 #include "app_document.h"
 
+#include "tl_drag.h"
+
 #include <glib.h>
 #include <glib/gprintf.h>
 #include <stdarg.h>
@@ -105,14 +107,7 @@ bool app_selection_tee(const AppSelection *selection, TlProject *project, TlTee 
            tl_project_tee_of(project, selection->partition, selection->end, tee);
 }
 
-TlVec2 app_node_point(const TlNode *node, int index)
-{
-    if (index <= 0)
-        return tl_node_center(node);
-    TlNodeCorner corners[TL_NODE_MAX];
-    tl_node_corners(node, corners);
-    return corners[index - 1].first;
-}
+TlVec2 app_node_point(const TlNode *node, int index) { return tl_node_point(node, index); }
 
 bool app_selection_equal(const AppSelection *a, const AppSelection *b)
 {
