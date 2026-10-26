@@ -217,24 +217,6 @@ static void fill_hatch(cairo_t *cr, const AppRenderOptions *options)
     cairo_surface_destroy(tile);
 }
 
-static void render_outline_walls(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
-                                 TlOutline *outline)
-{
-    TlPolygon outer = tl_outline_outer(outline);
-    app_path_polygon(cr, view, &outer);
-    app_path_polygon(cr, view, &outline->inner);
-    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
-    bool highlighted = options->highlighted_outline == outline;
-    app_set_color(cr, app_color_hex(highlighted ? COLOR_WALL_SELECTED : COLOR_WALL));
-    cairo_fill_preserve(cr);
-    fill_hatch(cr, options);
-    cairo_new_path(cr);
-    app_path_polygon(cr, view, &outer);
-    app_path_polygon(cr, view, &outline->inner);
-    app_stroke(cr, app_color_hex(COLOR_WALL_EDGE), 1.4);
-    tl_polygon_free(&outer);
-}
-
 /* Рисовать дальше всюду, кроме этих многоугольников. «Всюду» — нынешняя
    область рисования: огромный прямоугольник растровый Cairo не переварит (его
    координаты — с фиксированной точкой, до ~8 млн), и вырез выйдет случайным. */
@@ -264,21 +246,44 @@ static void clip_out_doorways(cairo_t *cr, const AppView *view, TlProject *proje
     tl_polygon_list_free_all(&doorways);
 }
 
-/* Тела перегородок одним силуэтом: сначала обводка вдвое толще, затем заливка
- * поверх — внутренние стыки тел скрываются. */
-static void render_partitions(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
-                              TlProject *project)
+static void path_outline_walls(cairo_t *cr, const AppView *view, TlOutline *outline)
+{
+    TlPolygon outer = tl_outline_outer(outline);
+    app_path_polygon(cr, view, &outer);
+    app_path_polygon(cr, view, &outline->inner);
+    tl_polygon_free(&outer);
+}
+
+/* Стены и перегородки одним силуэтом: сначала все обводки вдвое толще, затем
+ * заливки поверх — стыки перегородок между собой и со стенами скрываются.
+ * Тела у узлов срезаны по диагонали угла, их острые концы дали бы шипы: предел
+ * острия их срезает, а настоящий угол обводке дают заплатки углов силуэта. */
+static void render_walls(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlProject *project)
 {
     cairo_save(cr);
     clip_out_doorways(cr, view, project);
-    TlPolygonList bodies = tl_project_partition_bodies(project, 0);
+    TlPolygonList bodies = tl_project_partition_silhouette(project);
+    for (size_t o = 0; o < project->outlines.count; o++)
+        path_outline_walls(cr, view, project->outlines.items[o]);
     for (size_t i = 0; i < bodies.count; i++)
         app_path_polygon(cr, view, &bodies.items[i]);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_MITER);
+    cairo_set_miter_limit(cr, 1.5);
     app_stroke(cr, app_color_hex(COLOR_WALL_EDGE), 2.8);
+
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlOutline *outline = project->outlines.items[o];
+        path_outline_walls(cr, view, outline);
+        bool highlighted = options->highlighted_outline == outline;
+        app_set_color(cr, app_color_hex(highlighted ? COLOR_WALL_SELECTED : COLOR_WALL));
+        cairo_fill_preserve(cr);
+        fill_hatch(cr, options);
+        cairo_new_path(cr);
+    }
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
     for (size_t i = 0; i < bodies.count; i++)
         app_path_polygon(cr, view, &bodies.items[i]);
-    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
     app_set_color(cr, app_color_hex(COLOR_WALL));
     cairo_fill_preserve(cr);
     fill_hatch(cr, options);
@@ -715,12 +720,7 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         render_floor(cr, view, options, project->spaces.items[s]);
     if (options->show_expansion_joints)
         render_expansion_joints(cr, view, project);
-    cairo_save(cr);
-    clip_out_doorways(cr, view, project);
-    for (size_t o = 0; o < project->outlines.count; o++)
-        render_outline_walls(cr, view, options, project->outlines.items[o]);
-    cairo_restore(cr);
-    render_partitions(cr, view, options, project);
+    render_walls(cr, view, options, project);
     render_openings(cr, view, options, project);
     if (options->show_numbers && options->show_tiles)
         render_tile_numbers(cr, view, options, project);

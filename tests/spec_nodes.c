@@ -204,6 +204,30 @@ void spec_nodes(void)
             EXPECT_NEAR(union_area(project), 4 * 100 * 950 + 100 * 100, 1e-6);
             tl_project_free(project);
         }
+        IT("угол из двух перегородок: заплатки дают силуэту прямые углы снаружи и внутри")
+        {
+            TlProject *project = tl_project_new();
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 0), tl_vec2(1000, 0), 100));
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(0, 0), tl_vec2(0, 1000), 100));
+            TlNode node = {0};
+            EXPECT(single_node(project, &node));
+            bool outer = false, inner = false;
+            for (size_t k = 0; k < node.count; k++) {
+                TlPolygon patch;
+                EXPECT(tl_node_corner_patch(&node, k, &patch));
+                EXPECT_NEAR(fabs(tl_polygon_signed_area(&patch)), 50 * 50, 1e-6);
+                outer = outer || near_point(patch.items[1], -50, -50);
+                inner = inner || near_point(patch.items[1], 50, 50);
+                tl_polygon_free(&patch);
+            }
+            EXPECT(outer && inner);
+            TlPolygonList silhouette = tl_project_partition_silhouette(project);
+            EXPECT_INT(silhouette.count, 4); /* два тела и две заплатки */
+            for (size_t i = 0; i < silhouette.count; i++)
+                EXPECT(tl_polygon_signed_area(&silhouette.items[i]) > 0);
+            tl_polygon_list_free_all(&silhouette);
+            tl_project_free(project);
+        }
         IT("узел переносится целиком: все концы — в новую точку, дальние концы на месте")
         {
             TlProject *project = tl_project_new();

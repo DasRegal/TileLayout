@@ -151,6 +151,11 @@ TlVec2 tl_node_center(const TlNode *node);
 void tl_node_end_corners(const TlNode *node, size_t index, TlVec2 *left, TlVec2 *right);
 /* Середина узла из трёх и больше перегородок (или клин у очень острого угла). */
 bool tl_node_core(const TlNode *node, TlPolygon *core);
+/* Заплатка угла узла для силуэта: угол между боками, сошедшимися в corner, и
+   середина узла. Тела у узла срезаны по диагонали угла — их обводка у острого
+   конца срезана, а заплатка даёт обводке настоящий угол. false — бока не
+   сошлись или продолжают друг друга. */
+bool tl_node_corner_patch(const TlNode *node, size_t corner, TlPolygon *patch);
 /* Все концы узла — в точку. */
 void tl_project_move_node(TlProject *project, const TlNode *node, TlVec2 point);
 /* Угол узла — в точку: меняются отступы у узла обоих боков, сходящихся в нём;
@@ -188,6 +193,9 @@ bool tl_project_dissolve_node(TlProject *project, const TlNode *node);
 TlPolygon tl_project_partition_body(TlProject *project, const TlPartition *partition, double extension);
 /* Тела всех перегородок и середины узлов. */
 TlPolygonList tl_project_partition_bodies(TlProject *project, double extension);
+/* Силуэт перегородок для рисования: тела, середины узлов и заплатки углов,
+   все против часовой стрелки. */
+TlPolygonList tl_project_partition_silhouette(TlProject *project);
 
 /* ---- грани ---------------------------------------------------------------- */
 

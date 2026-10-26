@@ -148,6 +148,22 @@ TlPolygonList tl_project_partition_bodies(TlProject *project, double extension)
     return bodies;
 }
 
+TlPolygonList tl_project_partition_silhouette(TlProject *project)
+{
+    TlPolygonList silhouette = tl_project_partition_bodies(project, 0);
+    TlNodeList nodes = tl_project_nodes(project);
+    for (size_t i = 0; i < nodes.count; i++)
+        for (size_t k = 0; k < nodes.items[i].count; k++) {
+            TlPolygon patch;
+            if (tl_node_corner_patch(&nodes.items[i], k, &patch)) {
+                orient_counterclockwise(&patch);
+                tl_polygon_list_push(&silhouette, patch);
+            }
+        }
+    tl_node_list_free(&nodes);
+    return silhouette;
+}
+
 /* ---- грани ---------------------------------------------------------------- */
 
 TlFaceList tl_project_faces(TlProject *project)

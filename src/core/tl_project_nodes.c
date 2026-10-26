@@ -194,6 +194,37 @@ bool tl_node_core(const TlNode *node, TlPolygon *core)
     return false;
 }
 
+bool tl_node_corner_patch(const TlNode *node, size_t corner, TlPolygon *patch)
+{
+    TlNodeCorner corners[TL_NODE_MAX];
+    size_t count = tl_node_corners(node, corners);
+    *patch = (TlPolygon){0};
+    if (corner >= count || !corners[corner].joined)
+        return false;
+    const TlNodeEnd *first = &node->ends[corner], *second = &node->ends[(corner + 1) % count];
+    TlVec2 meeting = corners[corner].first, unused, first_far, second_far;
+    side_points(first, true, &unused, &first_far);
+    side_points(second, false, &unused, &second_far);
+    TlVec2 a = tl_vec2_sub(first_far, meeting), b = tl_vec2_sub(second_far, meeting);
+    if (fabs(tl_vec2_cross(tl_vec2_normalized(a), tl_vec2_normalized(b))) < PARALLEL_SINE)
+        return false;
+    /* По бокам — на полтолщины, но не дальше половины бока. */
+    double reach = 0.5 * fmin(tl_partition_max_thickness(first->partition),
+                              tl_partition_max_thickness(second->partition));
+    double first_reach = fmin(reach, 0.5 * tl_vec2_length(a)), second_reach = fmin(reach, 0.5 * tl_vec2_length(b));
+    if (first_reach <= 0 || second_reach <= 0)
+        return false;
+    tl_polygon_push(patch, tl_vec2_add(meeting, tl_vec2_scale(tl_vec2_normalized(a), first_reach)));
+    tl_polygon_push(patch, meeting);
+    tl_polygon_push(patch, tl_vec2_add(meeting, tl_vec2_scale(tl_vec2_normalized(b), second_reach)));
+    tl_polygon_push(patch, node->point);
+    if (fabs(tl_polygon_signed_area(patch)) < 1e-6) {
+        tl_polygon_free(patch);
+        return false;
+    }
+    return true;
+}
+
 /* ---- правка узла ---------------------------------------------------------- */
 
 void tl_project_move_node(TlProject *project, const TlNode *node, TlVec2 point)
