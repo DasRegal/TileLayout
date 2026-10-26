@@ -492,9 +492,11 @@ static TlEditToken *begin_partition_change(AppPanel *panel, const char *merge_ke
     return *partition ? app_document_begin_geometry(panel->document, merge_key, NULL) : NULL;
 }
 
-static void end_partition_change(AppPanel *panel, TlPartition *partition, TlEditToken *token)
+/* own_ends — концы перегородки заданы правкой (длина, угол): не возвращать их на
+   грани, к которым они были привязаны, иначе перегородка съезжает вдоль стены. */
+static void end_partition_change(AppPanel *panel, TlPartition *partition, TlEditToken *token, bool own_ends)
 {
-    TlEditOptions options = {.master = partition};
+    TlEditOptions options = {.master = partition, .frozen = own_ends ? partition : NULL};
     app_document_end_geometry(panel->document, token, &options);
 }
 
@@ -505,7 +507,7 @@ static void on_partition_length(GtkSpinButton *spin, AppPanel *panel)
     if (!token)
         return;
     tl_partition_set_length(partition, gtk_spin_button_get_value(spin));
-    end_partition_change(panel, partition, token);
+    end_partition_change(panel, partition, token, true);
 }
 
 static void on_partition_thickness(GtkSpinButton *spin, AppPanel *panel)
@@ -515,7 +517,7 @@ static void on_partition_thickness(GtkSpinButton *spin, AppPanel *panel)
     if (!token)
         return;
     tl_partition_set_thickness(partition, gtk_spin_button_get_value(spin));
-    end_partition_change(panel, partition, token);
+    end_partition_change(panel, partition, token, false);
 }
 
 static void on_partition_angle(GtkSpinButton *spin, AppPanel *panel)
@@ -525,7 +527,7 @@ static void on_partition_angle(GtkSpinButton *spin, AppPanel *panel)
     if (!token)
         return;
     tl_partition_set_angle(partition, gtk_spin_button_get_value(spin));
-    end_partition_change(panel, partition, token);
+    end_partition_change(panel, partition, token, true);
 }
 
 static void on_partition_corner_offset(GtkSpinButton *spin, AppPanel *panel)
@@ -538,7 +540,7 @@ static void on_partition_corner_offset(GtkSpinButton *spin, AppPanel *panel)
     if (!token)
         return;
     partition->corner_offsets[corner] = gtk_spin_button_get_value(spin);
-    end_partition_change(panel, partition, token);
+    end_partition_change(panel, partition, token, false);
 }
 
 static void on_partition_make_rectangular(GtkButton *button, AppPanel *panel)
@@ -548,7 +550,7 @@ static void on_partition_make_rectangular(GtkButton *button, AppPanel *panel)
     if (!token)
         return;
     tl_partition_set_thickness(partition, tl_partition_thickness_at(partition, TL_PARTITION_START));
-    end_partition_change(panel, partition, token);
+    end_partition_change(panel, partition, token, false);
 }
 
 static void on_partition_lock(GtkToggleButton *check, AppPanel *panel)
