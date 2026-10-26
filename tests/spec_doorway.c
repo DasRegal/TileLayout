@@ -132,6 +132,19 @@ void spec_doorway(void)
             EXPECT_NEAR(fabs(tl_polygon_area(&layout->floor_outline)), expected, DIVIDER_LOSS);
             tl_project_free(project);
         }
+        IT("в перегородке-трапеции пол под дверью сливается с комнатами, отдельной комнаты не появляется")
+        {
+            TlProject *project = tl_project_new();
+            const TlVec2 corners[] = {{0, 0}, {4000, 0}, {4000, 3000}, {0, 3000}};
+            tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
+            TlPartition *trapezoid = tl_partition_new(tl_vec2(2000, 0), tl_vec2(2000, 3000), 100);
+            trapezoid->corner_offsets[TL_PARTITION_END_LEFT] = trapezoid->corner_offsets[TL_PARTITION_END_RIGHT] = 150;
+            tl_project_add_partition(project, trapezoid);
+            tl_project_add_opening(project, tl_opening_new(tl_vec2(2000, 2000), 800));
+            tl_project_update_spaces(project);
+            EXPECT_INT(project->spaces.count, 2);
+            tl_project_free(project);
+        }
         IT("новый проём — со стыком посередине и без шва; стык и шов сохраняются в файле")
         {
             TlOpening *opening = tl_opening_new(tl_vec2(0, 0), 800);

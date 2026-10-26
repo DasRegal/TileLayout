@@ -90,6 +90,7 @@ bool tl_project_opening_cut(TlProject *project, const TlOpening *opening, TlPoly
 /* ---- пол под проёмом ---------------------------------------------------------- */
 
 #define WALL_FLOOR_OVERLAP 0.05 /* мм — пол проёма заходит в пол дома, чтобы сомкнуться с ним */
+#define DOORWAY_OVERLAP 0.05    /* мм — то же у проёма в перегородке */
 #define MIN_FLOOR_DEPTH 0.5     /* мм — меньше этого пола под проёмом в наружной стене нет */
 
 /* Проём в основной стене: поперёк — от внутренней грани (0) до дальней (depth):
@@ -152,7 +153,9 @@ bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, Tl
     TlBand band;
     double from, to;
     if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from, &to)) {
-        *doorway = partition_opening_shape(project, &band, from, to, 0);
+        /* чуть за бока: у наклонного бока (трапеция) край пола проёма иначе расходится
+           с боком тела на доли микрона, и щель между ними отрезает пол от комнаты */
+        *doorway = partition_opening_shape(project, &band, from, to, DOORWAY_OVERLAP);
         return true;
     }
     WallPassage passage;
