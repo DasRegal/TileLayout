@@ -64,6 +64,33 @@ void tl_catalog_tile_set_group(TlCatalogTile *tile, const char *group);
 /* Плитка в группе group или глубже; пустая группа — весь каталог. */
 bool tl_catalog_tile_in_group(const TlCatalogTile *tile, const char *group);
 
+/* ---- загрузка папки каталога (tl_catalog_load.c) ---------------------------- */
+
+/* Откуда читается каталог: пути — от его корня («» — корень, вложенные — через
+ * «/»). Чтение папок и файлов — у вызывающего (диск, сеть, память); память
+ * результатов — tl_malloc / tl_strdup, освобождает загрузчик (free). */
+typedef struct TlCatalogSource {
+    void *data;
+    /* Имена в папке path (файлы и папки) в порядке показа; *count — сколько.
+       NULL — папки нет. */
+    char **(*list)(void *data, const char *path, size_t *count);
+    bool (*is_folder)(void *data, const char *path);
+    /* Содержимое файла строкой; NULL — файла нет. */
+    char *(*read_text)(void *data, const char *path);
+    /* Ошибка в описании path (может быть NULL — молча). */
+    void (*warn)(void *data, const char *path, const char *error);
+} TlCatalogSource;
+
+#define TL_CATALOG_FILE "catalog.json"
+#define TL_CATALOG_MAX_DEPTH 8 /* вложенность папок (и защита от петель ссылок) */
+
+/* Картинка ли файл (по расширению). */
+bool tl_catalog_is_image(const char *file);
+/* Плитки каталога: в каждой папке — из её catalog.json или из картинок с
+   размером в имени; вложенные папки — группы. Название каталога — из
+   catalog.json корня. */
+void tl_catalog_load(TlCatalog *catalog, const TlCatalogSource *source);
+
 /* Ссылка «каталог/плитка» и обратно. */
 void tl_catalog_reference(const TlCatalog *catalog, const TlCatalogTile *tile, char *reference, size_t size);
 const TlCatalogTile *tl_catalog_find(const TlCatalogList *catalogs, const char *reference,

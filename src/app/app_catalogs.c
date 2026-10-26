@@ -1,13 +1,13 @@
 #include "app_catalogs.h"
 
 #include <gdk/gdk.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_config.h"
+#include "tl_memory.h"
 
-#define CATALOG_FILE "catalog.json"
 #define MAX_IMAGE_SIDE 1024 /* px: крупные фото уменьшаются — плитка на плане мельче */
-#define MAX_DEPTH 8         /* вложенность папок в каталоге (и защита от петель ссылок) */
 
 static struct {
     bool loaded;
@@ -53,90 +53,60 @@ static char *builtin_directory(void)
     return found;
 }
 
-/* ---- загрузка ------------------------------------------------------------------ */
+/* ---- загрузка: обход — в ядре (tl_catalog_load), здесь — чтение диска ---------- */
 
-static bool is_image(const char *file)
-{
-    static const char *const EXTENSIONS[] = {".jpg", ".jpeg", ".png", ".webp", ".bmp"};
-    char *lower = g_ascii_strdown(file, -1);
-    bool image = false;
-    for (size_t i = 0; i < G_N_ELEMENTS(EXTENSIONS) && !image; i++)
-        image = g_str_has_suffix(lower, EXTENSIONS[i]);
-    g_free(lower);
-    return image;
-}
-
-static int compare_names(gconstpointer left, gconstpointer right)
+static int compare_names(const void *left, const void *right)
 {
     return g_utf8_collate(*(char *const *)left, *(char *const *)right);
 }
 
-/* Имена в папке по алфавиту (новый массив строк). */
-static GPtrArray *sorted_entries(const char *folder)
+static char **list_folder(void *root, const char *path, size_t *count)
 {
-    GPtrArray *names = g_ptr_array_new_with_free_func(g_free);
+    char *folder = g_build_filename(root, path, NULL);
     GDir *dir = g_dir_open(folder, 0, NULL);
+    g_free(folder);
     if (!dir)
-        return names;
+        return NULL;
+    GPtrArray *names = g_ptr_array_new();
     for (const char *name; (name = g_dir_read_name(dir));)
-        g_ptr_array_add(names, g_strdup(name));
+        g_ptr_array_add(names, tl_strdup(name)); /* освобождает ядро — free */
     g_dir_close(dir);
     g_ptr_array_sort(names, compare_names);
-    return names;
+    *count = names->len;
+    char **result = tl_malloc((names->len + 1) * sizeof *result);
+    memcpy(result, names->pdata, names->len * sizeof *result);
+    g_ptr_array_free(names, TRUE);
+    return result;
 }
 
-/* Плитки одной папки — из её catalog.json или из картинок с размером в имени —
-   в каталог, с группой group. У корня каталога его название берётся из описания. */
-static void load_tiles(TlCatalog *catalog, const char *folder, const char *group, GPtrArray *files)
+static bool is_folder(void *root, const char *path)
 {
-    TlCatalog *part = tl_catalog_new(catalog->id, catalog->name);
-    char *description = g_build_filename(folder, CATALOG_FILE, NULL);
-    char *text = NULL;
-    if (g_file_get_contents(description, &text, NULL, NULL)) {
-        char error[160] = "";
-        if (!tl_catalog_parse(part, text, error, sizeof error))
-            g_warning("Каталог %s: %s", description, error);
-        if (!group[0])
-            g_strlcpy(catalog->name, part->name, sizeof catalog->name);
-    } else {
-        for (guint i = 0; i < files->len; i++) {
-            TlCatalogTile tile;
-            if (is_image(files->pdata[i]) && tl_catalog_tile_from_file(files->pdata[i], &tile))
-                tl_catalog_tile_list_push(&part->tiles, tile);
-        }
-    }
-    for (size_t i = 0; i < part->tiles.count; i++) {
-        tl_catalog_tile_set_group(&part->tiles.items[i], group);
-        tl_catalog_tile_list_push(&catalog->tiles, part->tiles.items[i]);
-    }
+    char *full = g_build_filename(root, path, NULL);
+    bool folder = g_file_test(full, G_FILE_TEST_IS_DIR);
+    g_free(full);
+    return folder;
+}
+
+static char *read_text(void *root, const char *path)
+{
+    char *full = g_build_filename(root, path, NULL), *text = NULL;
+    char *result = g_file_get_contents(full, &text, NULL, NULL) ? tl_strdup(text) : NULL;
     g_free(text);
-    g_free(description);
-    tl_catalog_free(part);
+    g_free(full);
+    return result;
 }
 
-/* Папка и вложенные в неё (группы: «фирма/формат/…»). */
-static void load_folder(TlCatalog *catalog, const char *folder, const char *group, int depth)
+static void warn(void *root, const char *path, const char *error)
 {
-    GPtrArray *entries = sorted_entries(folder);
-    load_tiles(catalog, folder, group, entries);
-    for (guint i = 0; i < entries->len && depth < MAX_DEPTH; i++) {
-        const char *name = entries->pdata[i];
-        char *path = g_build_filename(folder, name, NULL);
-        if (name[0] != '.' && g_file_test(path, G_FILE_TEST_IS_DIR)) {
-            char *subgroup = group[0] ? g_strconcat(group, "/", name, NULL) : g_strdup(name);
-            load_folder(catalog, path, subgroup, depth + 1);
-            g_free(subgroup);
-        }
-        g_free(path);
-    }
-    g_ptr_array_free(entries, TRUE);
+    g_warning("Каталог %s/%s: %s", (const char *)root, path, error);
 }
 
 /* Каталог из папки; NULL — плиток в ней нет. */
 static TlCatalog *load_catalog(const char *folder, const char *id)
 {
     TlCatalog *catalog = tl_catalog_new(id, id);
-    load_folder(catalog, folder, "", 0);
+    TlCatalogSource source = {(void *)folder, list_folder, is_folder, read_text, warn};
+    tl_catalog_load(catalog, &source);
     if (catalog->tiles.count == 0) {
         tl_catalog_free(catalog);
         return NULL;
@@ -154,21 +124,23 @@ static bool has_catalog(const char *id)
 
 static void load_root(const char *root)
 {
-    if (!root)
-        return;
-    GPtrArray *entries = sorted_entries(root);
-    for (guint i = 0; i < entries->len; i++) {
-        const char *id = entries->pdata[i];
+    size_t count = 0;
+    char **entries = root ? list_folder((void *)root, "", &count) : NULL;
+    for (size_t i = 0; i < count; i++) {
+        const char *id = entries[i];
         char *folder = g_build_filename(root, id, NULL);
-        TlCatalog *catalog = g_file_test(folder, G_FILE_TEST_IS_DIR) && !has_catalog(id) ? load_catalog(folder, id) : NULL;
+        TlCatalog *catalog = id[0] != '.' && g_file_test(folder, G_FILE_TEST_IS_DIR) && !has_catalog(id)
+                                 ? load_catalog(folder, id)
+                                 : NULL;
         if (catalog) {
             tl_catalog_list_push(&catalogs.list, catalog);
             g_ptr_array_add(catalogs.folders, folder);
         } else {
             g_free(folder);
         }
+        free(entries[i]);
     }
-    g_ptr_array_free(entries, TRUE);
+    free(entries);
 }
 
 static void free_surface(gpointer surface)
