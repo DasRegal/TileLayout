@@ -73,6 +73,7 @@ struct AppPanel {
 
     AppSection tile_section, glue_section, clip_section;
     GtkWidget *shared_note, *row_shift, *color_button, *texture_name;
+    GtkWidget *corners, *centers; /* раскладка от угла и по центру — у каждой комнаты своя */
     TileBinding tile_bindings[MAX_TILE_BINDINGS];
     size_t tile_binding_count;
 
@@ -84,6 +85,12 @@ struct AppPanel {
 static TlSpace *selected_space(AppPanel *panel)
 {
     return panel->document->selection.kind == APP_SELECT_SPACE ? panel->document->selection.space : NULL;
+}
+
+/* Выделенные комнаты (Shift+щелчок — несколько); поля плитки применяются ко всем. */
+static size_t selected_spaces(AppPanel *panel, TlSpace **rooms)
+{
+    return app_selection_spaces(&panel->document->selection, rooms);
 }
 
 static double spin_value(GtkWidget *spin) { return gtk_spin_button_get_value(GTK_SPIN_BUTTON(spin)); }
@@ -132,23 +139,25 @@ static const TlTileField *find_field(const char *key)
 
 static void commit_tile_field(AppPanel *panel, const TlTileField *field, const void *value)
 {
-    TlSpace *space = selected_space(panel);
-    if (panel->updating || !space)
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = selected_spaces(panel, rooms);
+    if (panel->updating || count == 0)
         return;
     char key[48];
     g_snprintf(key, sizeof key, "tile_%s", field->key);
     app_document_checkpoint(panel->document, key);
-    TlTileSettings *tile = tl_space_effective_tile(space);
-    char *member = (char *)tile + field->offset;
-    switch (field->type) {
-    case TL_FIELD_BOOL: *(bool *)member = *(const bool *)value; break;
-    case TL_FIELD_DOUBLE: *(double *)member = *(const double *)value; break;
-    case TL_FIELD_INT: *(int *)member = (int)*(const double *)value; break;
-    case TL_FIELD_COLOR: g_strlcpy(member, value, TL_COLOR_LENGTH); break;
-    case TL_FIELD_TEXT: g_strlcpy(member, value, TL_TEXTURE_LENGTH); break;
+    for (size_t i = 0; i < count; i++) {
+        char *member = (char *)tl_space_effective_tile(rooms[i]) + field->offset;
+        switch (field->type) {
+        case TL_FIELD_BOOL: *(bool *)member = *(const bool *)value; break;
+        case TL_FIELD_DOUBLE: *(double *)member = *(const double *)value; break;
+        case TL_FIELD_INT: *(int *)member = (int)*(const double *)value; break;
+        case TL_FIELD_COLOR: g_strlcpy(member, value, TL_COLOR_LENGTH); break;
+        case TL_FIELD_TEXT: g_strlcpy(member, value, TL_TEXTURE_LENGTH); break;
+        }
     }
     if (field->remembered_for_new_rooms)
-        tl_tile_settings_remember_as_default(tile);
+        tl_tile_settings_remember_as_default(tl_space_effective_tile(rooms[0]));
     app_document_commit(panel->document);
 }
 
@@ -160,6 +169,7 @@ static void on_tile_spin_changed(GtkSpinButton *spin, TileBinding *binding)
 
 static void on_tile_check_toggled(GtkToggleButton *check, TileBinding *binding)
 {
+    gtk_toggle_button_set_inconsistent(check, FALSE);
     bool value = gtk_toggle_button_get_active(check);
     commit_tile_field(binding->panel, binding->field, &value);
 }
@@ -183,15 +193,42 @@ static GtkWidget *tile_spin(AppPanel *panel, const char *key, double minimum, do
     return spin;
 }
 
-static void refresh_tile_bindings(AppPanel *panel, const TlTileSettings *tile)
+/* Поле одинаково у всех выделенных комнат? */
+static bool field_same(const TlTileField *field, TlSpace *const *rooms, size_t count)
 {
+    static const size_t SIZES[] = {[TL_FIELD_BOOL] = sizeof(bool), [TL_FIELD_DOUBLE] = sizeof(double),
+                                   [TL_FIELD_INT] = sizeof(int), [TL_FIELD_COLOR] = 0, [TL_FIELD_TEXT] = 0};
+    const char *first = (const char *)tl_space_effective_tile(rooms[0]) + field->offset;
+    for (size_t i = 1; i < count; i++) {
+        const char *other = (const char *)tl_space_effective_tile(rooms[i]) + field->offset;
+        if (SIZES[field->type] ? memcmp(first, other, SIZES[field->type]) != 0 : strcmp(first, other) != 0)
+            return false;
+    }
+    return true;
+}
+
+/* Значения первой комнаты; у разных в выделенных комнатах поле пустое с подсказкой «разные»
+   (флажок — в среднем положении): введённое значение получат все. */
+static void refresh_tile_bindings(AppPanel *panel, TlSpace *const *rooms, size_t count)
+{
+    const TlTileSettings *tile = tl_space_effective_tile(rooms[0]);
     for (size_t i = 0; i < panel->tile_binding_count; i++) {
         const TileBinding *binding = &panel->tile_bindings[i];
         const char *member = (const char *)tile + binding->field->offset;
+        bool mixed = !field_same(binding->field, rooms, count);
         switch (binding->field->type) {
-        case TL_FIELD_BOOL: set_check(binding->widget, *(const bool *)member); break;
-        case TL_FIELD_DOUBLE: set_spin(binding->widget, *(const double *)member); break;
-        case TL_FIELD_INT: set_spin(binding->widget, *(const int *)member); break;
+        case TL_FIELD_BOOL:
+            set_check(binding->widget, *(const bool *)member);
+            gtk_toggle_button_set_inconsistent(GTK_TOGGLE_BUTTON(binding->widget), mixed);
+            break;
+        case TL_FIELD_DOUBLE:
+        case TL_FIELD_INT:
+            set_spin(binding->widget, binding->field->type == TL_FIELD_INT ? *(const int *)member
+                                                                            : *(const double *)member);
+            gtk_entry_set_placeholder_text(GTK_ENTRY(binding->widget), mixed ? "разные" : NULL);
+            if (mixed)
+                gtk_entry_set_text(GTK_ENTRY(binding->widget), "");
+            break;
         default: break;
         }
     }
@@ -273,22 +310,27 @@ static void on_optimize_count(GtkButton *button, AppPanel *panel)
 
 static void on_swap_tile(GtkButton *button, AppPanel *panel)
 {
-    TlSpace *space = selected_space(panel);
-    if (!space)
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = selected_spaces(panel, rooms);
+    if (count == 0)
         return;
     app_document_checkpoint(panel->document, "");
-    TlTileSettings *tile = tl_space_effective_tile(space);
-    double width = tile->tile_width;
-    tile->tile_width = tile->tile_height;
-    tile->tile_height = width;
-    tl_tile_settings_remember_as_default(tile);
+    for (size_t i = 0; i < count; i++) {
+        TlTileSettings *tile = tl_space_effective_tile(rooms[i]);
+        if (i > 0 && tile == tl_space_effective_tile(rooms[0]))
+            continue; /* общий пол — уже повёрнут */
+        double width = tile->tile_width;
+        tile->tile_width = tile->tile_height;
+        tile->tile_height = width;
+    }
+    tl_tile_settings_remember_as_default(tl_space_effective_tile(rooms[0]));
     app_document_commit(panel->document);
 }
 
 static void on_row_shift(GtkComboBox *combo, AppPanel *panel)
 {
     int index = gtk_combo_box_get_active(combo);
-    if (index >= 0)
+    if (index >= 0 && (size_t)index < G_N_ELEMENTS(ROW_SHIFTS))
         commit_tile_field(panel, find_field("shift"), &ROW_SHIFTS[index].value);
 }
 
@@ -305,10 +347,11 @@ static void on_choose_texture(GtkButton *button, AppPanel *panel)
 }
 
 /* Название плитки из каталога: «Мрамор белый, 600 × 300»; без рисунка — «только цвет». */
-static void refresh_texture(AppPanel *panel, const TlTileSettings *tile)
+static void refresh_texture(AppPanel *panel, const TlTileSettings *tile, bool mixed)
 {
     const TlCatalogTile *found = tile->texture[0] ? tl_catalog_find(app_catalogs(), tile->texture, NULL) : NULL;
-    char *text = !tile->texture[0] ? g_strdup("только цвет")
+    char *text = mixed           ? g_strdup("разные")
+                 : !tile->texture[0] ? g_strdup("только цвет")
                  : found         ? g_strdup(found->name)
                                  : g_strdup_printf("нет в каталогах: %s", tile->texture);
     gtk_label_set_text(GTK_LABEL(panel->texture_name), text);
@@ -328,14 +371,33 @@ static void on_color(GtkColorButton *button, AppPanel *panel)
 
 /* ---- комната, дом, стена ------------------------------------------------------- */
 
-static void on_room_selected(GtkListBox *list, GtkListBoxRow *row, AppPanel *panel)
+/* Список комнат: щелчок — одна комната, Ctrl/Shift+щелчок — несколько. */
+static void on_rooms_selected(GtkListBox *list, AppPanel *panel)
 {
-    if (panel->updating || !row)
+    if (panel->updating)
         return;
-    int index = gtk_list_box_row_get_index(row);
-    if (index >= 0 && (size_t)index < panel->document->project->spaces.count)
-        app_document_select(panel->document, (AppSelection){.kind = APP_SELECT_SPACE,
-                                                            .space = panel->document->project->spaces.items[index]});
+    TlProject *project = panel->document->project;
+    TlSpace *current = selected_space(panel);
+    AppSelection selection = {0};
+    GList *rows = gtk_list_box_get_selected_rows(list);
+    for (GList *row = rows; row; row = row->next) {
+        int index = gtk_list_box_row_get_index(row->data);
+        if (index < 0 || (size_t)index >= project->spaces.count)
+            continue;
+        TlSpace *space = project->spaces.items[index];
+        if (!selection.space)
+            selection = (AppSelection){.kind = APP_SELECT_SPACE, .space = space};
+        else if (selection.more_count < APP_MAX_ROOMS - 1)
+            selection.more_spaces[selection.more_count++] = space;
+    }
+    g_list_free(rows);
+    for (size_t i = 0; i < selection.more_count; i++)
+        if (selection.more_spaces[i] == current) { /* первой остаётся выделенная раньше */
+            selection.more_spaces[i] = selection.space;
+            selection.space = current;
+        }
+    if (selection.space)
+        app_document_select(panel->document, selection);
 }
 
 static void rename_space(AppPanel *panel)
@@ -765,8 +827,11 @@ static void build_rooms(AppPanel *panel, GtkWidget *box)
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(scrolled, -1, 100);
     panel->room_list = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(panel->room_list), GTK_SELECTION_MULTIPLE);
+    gtk_widget_set_tooltip_text(panel->room_list, "Ctrl или Shift+щелчок — несколько комнат: плитку, клей и СВП\n"
+                                                  "можно задать им сразу (на плане — Shift+щелчок)");
     gtk_container_add(GTK_CONTAINER(scrolled), panel->room_list);
-    g_signal_connect(panel->room_list, "row-selected", G_CALLBACK(on_room_selected), panel);
+    g_signal_connect(panel->room_list, "selected-rows-changed", G_CALLBACK(on_rooms_selected), panel);
     app_section_wide(&section, scrolled);
     GtkWidget *buttons = app_hbox(4);
     gtk_box_pack_start(GTK_BOX(buttons),
@@ -1194,6 +1259,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     panel->row_shift = gtk_combo_box_text_new();
     for (size_t i = 0; i < G_N_ELEMENTS(ROW_SHIFTS); i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->row_shift), ROW_SHIFTS[i].title);
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->row_shift), "разные"); /* у нескольких комнат */
     g_signal_connect(panel->row_shift, "changed", G_CALLBACK(on_row_shift), panel);
     app_section_row(s, "Раскладка", panel->row_shift);
 
@@ -1211,7 +1277,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "Смещение X", tile_spin(panel, "off_x", -100000, 100000, 5, 1, "мм"));
     app_section_row(s, "Смещение Y", tile_spin(panel, "off_y", -100000, 100000, 5, 1, "мм"));
 
-    GtkWidget *corners = app_hbox(4);
+    GtkWidget *corners = panel->corners = app_hbox(4);
     gtk_box_pack_start(GTK_BOX(corners), gtk_label_new("От угла:"), FALSE, FALSE, 0);
     const char *arrows[4] = {"↖", "↗", "↙", "↘"};
     const char *tips[4] = {"левом верхнем", "правом верхнем", "левом нижнем", "правом нижнем"};
@@ -1223,7 +1289,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
         gtk_box_pack_start(GTK_BOX(corners), button, TRUE, TRUE, 0);
     }
     app_section_wide(s, corners);
-    GtkWidget *centers = gtk_grid_new();
+    GtkWidget *centers = panel->centers = gtk_grid_new();
     gtk_grid_set_column_homogeneous(GTK_GRID(centers), TRUE);
     gtk_grid_set_column_spacing(GTK_GRID(centers), 4);
     gtk_grid_set_row_spacing(GTK_GRID(centers), 4);
@@ -1307,12 +1373,33 @@ static void refresh_room_list(AppPanel *panel)
         panel->room_names = g_strdup(names->str);
     }
     g_string_free(names, TRUE);
-    TlSpace *space = selected_space(panel);
-    GtkListBoxRow *row = NULL;
-    for (size_t i = 0; space && i < project->spaces.count; i++)
-        if (project->spaces.items[i] == space)
-            row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(panel->room_list), (int)i);
-    gtk_list_box_select_row(GTK_LIST_BOX(panel->room_list), row);
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = selected_spaces(panel, rooms);
+    gtk_list_box_unselect_all(GTK_LIST_BOX(panel->room_list));
+    for (size_t i = 0; i < project->spaces.count; i++)
+        for (size_t k = 0; k < count; k++)
+            if (project->spaces.items[i] == rooms[k])
+                gtk_list_box_select_row(GTK_LIST_BOX(panel->room_list),
+                                        gtk_list_box_get_row_at_index(GTK_LIST_BOX(panel->room_list), (int)i));
+}
+
+/* Несколько комнат: общие поля плитки, клея и СВП; смещение сетки и раскладка от угла —
+   у каждой своя, недоступны. */
+static void refresh_rooms(AppPanel *panel, TlSpace *const *rooms, size_t count)
+{
+    double area = 0;
+    GString *names = g_string_new(NULL);
+    for (size_t i = 0; i < count; i++) {
+        area += tl_space_room_area(rooms[i]);
+        g_string_append_printf(names, "%s«%s»", i ? ", " : "", rooms[i]->name);
+    }
+    char *note = g_strdup_printf("Выбрано комнат: %zu (%s), %.2f м². Изменения применяются ко всем. "
+                                 "Shift+щелчок — добавить или убрать комнату.",
+                                 count, names->str, area / 1e6);
+    gtk_label_set_text(GTK_LABEL(panel->shared_note), note);
+    gtk_widget_set_visible(panel->shared_note, TRUE);
+    g_free(note);
+    g_string_free(names, TRUE);
 }
 
 static void refresh_space(AppPanel *panel, TlSpace *space)
@@ -1339,22 +1426,36 @@ static void refresh_space(AppPanel *panel, TlSpace *space)
     if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(floor), active))
         gtk_combo_box_set_active(GTK_COMBO_BOX(floor), 0);
 
-    const TlTileSettings *tile = tl_space_effective_tile(space);
     bool shared = tl_space_has_shared_floor(space);
     char *note = g_strdup_printf("Пол общий с «%s»: настройки плитки и клея общие.", space->layout_source->name);
     gtk_label_set_text(GTK_LABEL(panel->shared_note), shared ? note : "");
     gtk_widget_set_visible(panel->shared_note, shared);
     g_free(note);
-    refresh_tile_bindings(panel, tile);
+}
+
+static void refresh_tile(AppPanel *panel, TlSpace *const *rooms, size_t count)
+{
+    const TlTileSettings *tile = tl_space_effective_tile(rooms[0]);
+    refresh_tile_bindings(panel, rooms, count);
     size_t shift_index = 0;
     for (size_t i = 0; i < G_N_ELEMENTS(ROW_SHIFTS); i++)
         if (fabs(ROW_SHIFTS[i].value - tile->row_shift) < fabs(ROW_SHIFTS[shift_index].value - tile->row_shift))
             shift_index = i;
-    gtk_combo_box_set_active(GTK_COMBO_BOX(panel->row_shift), (int)shift_index);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(panel->row_shift),
+                             field_same(find_field("shift"), rooms, count) ? (int)shift_index
+                                                                           : (int)G_N_ELEMENTS(ROW_SHIFTS));
     GdkRGBA rgba;
     if (gdk_rgba_parse(&rgba, tile->color))
         gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(panel->color_button), &rgba);
-    refresh_texture(panel, tile);
+    refresh_texture(panel, tile, !field_same(find_field("texture"), rooms, count));
+    bool single = count == 1;
+    for (size_t i = 0; i < panel->tile_binding_count; i++) {
+        const char *key = panel->tile_bindings[i].field->key;
+        if (strcmp(key, "off_x") == 0 || strcmp(key, "off_y") == 0)
+            gtk_widget_set_sensitive(panel->tile_bindings[i].widget, single);
+    }
+    gtk_widget_set_sensitive(panel->corners, single);
+    gtk_widget_set_sensitive(panel->centers, single);
 }
 
 static void refresh_wall(AppPanel *panel, TlOutline *outline, size_t wall)
@@ -1434,7 +1535,9 @@ static void refresh(AppPanel *panel)
     AppDocument *document = panel->document;
     const AppSelection *s = &document->selection;
     TlSpace *space = selected_space(panel);
-    TlOutline *outline = app_selection_outline(s);
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t room_count = selected_spaces(panel, rooms);
+    TlOutline *outline = room_count > 1 ? NULL : app_selection_outline(s);
     refresh_room_list(panel);
 
     set_spin(panel->partition_thickness, document->preferences.partition_thickness);
@@ -1445,7 +1548,7 @@ static void refresh(AppPanel *panel)
     set_spin(panel->expansion_joint_gap, document->preferences.expansion_joint_gap);
     set_check(panel->auto_align, document->preferences.auto_align);
 
-    gtk_widget_set_visible(panel->space_section.frame, space != NULL);
+    gtk_widget_set_visible(panel->space_section.frame, room_count == 1);
     gtk_widget_set_visible(panel->tile_section.frame, space != NULL);
     gtk_widget_set_visible(panel->glue_section.frame, space != NULL);
     gtk_widget_set_visible(panel->clip_section.frame, space != NULL);
@@ -1459,8 +1562,12 @@ static void refresh(AppPanel *panel)
     gtk_widget_set_visible(panel->expansion_joint_section.frame, s->kind == APP_SELECT_EXPANSION_JOINT);
     gtk_widget_set_visible(panel->hint, s->kind == APP_SELECT_NONE);
 
-    if (space)
+    if (room_count == 1)
         refresh_space(panel, space);
+    else if (room_count > 1)
+        refresh_rooms(panel, rooms, room_count);
+    if (room_count > 0)
+        refresh_tile(panel, rooms, room_count);
     if (outline) {
         set_label(panel->outline_area, "%.2f м²", tl_outline_area(outline) / 1e6);
         set_spin(panel->outline_thickness, document->preferences.outline_thickness);
@@ -1486,7 +1593,7 @@ static void refresh(AppPanel *panel)
         set_label(panel->expansion_joint_length, "%.0f мм", tl_expansion_joint_length(s->expansion_joint));
     }
 
-    char *markup = app_calc_markup(document->project, space);
+    char *markup = app_calc_markup(document->project, room_count == 1 ? space : NULL);
     gtk_label_set_markup(GTK_LABEL(panel->calc), markup);
     g_free(markup);
     panel->updating = false;

@@ -118,6 +118,35 @@ void spec_web(void)
             EXPECT(!tl_web_set_tile_field(99, "w", "300", 300.0));
             EXPECT(strcmp(tl_web_space_tile(99), "null") == 0);
         }
+        IT("поля плитки — сразу нескольким комнатам, одним шагом отмены; длина ⇄ ширина — у каждой своя")
+        {
+            char *text = read_fixture(TL_FIXTURES_DIR "/python_demo.tilelayout.json");
+            tl_web_open(text);
+            free(text);
+            EXPECT_NEAR(tile_number(2, "w"), 300, 1e-9); /* Ванная 300×300, Гостиная 600×300 */
+            EXPECT(tl_web_set_rooms_tile_fields("[1, 2]", "{\"svp_long\": 3}", 10.0));
+            EXPECT(tl_web_set_rooms_tile_fields("[1, 2]", "{\"svp_long\": 5}", 10.5)); /* та же серия */
+            EXPECT(tl_web_set_rooms_tile_fields("[1, 2]", "{\"glue_mm\": 6, \"gap\": 1.5}", 11.0));
+            EXPECT_NEAR(tile_number(1, "svp_long"), 5, 1e-9);
+            EXPECT_NEAR(tile_number(2, "svp_long"), 5, 1e-9);
+            EXPECT_NEAR(tile_number(2, "glue_mm"), 6, 1e-9);
+            EXPECT_NEAR(tile_number(1, "gap"), 1.5, 1e-9);
+            EXPECT_INT(tl_web_undo_count(), 2);
+            EXPECT(tl_web_swap_tiles("[1, 2]", 12.0));
+            EXPECT_NEAR(tile_number(1, "w"), 300, 1e-9);
+            EXPECT_NEAR(tile_number(1, "h"), 600, 1e-9);
+            EXPECT_NEAR(tile_number(2, "w"), 300, 1e-9);
+            EXPECT(tl_web_undo() && tl_web_undo());
+            EXPECT_NEAR(tile_number(1, "gap"), tile_number(3, "gap"), 1e-9); /* Спальня — пол Гостиной */
+            EXPECT_NEAR(tile_number(2, "svp_long"), 5, 1e-9);
+            EXPECT(tl_web_undo());
+            EXPECT(tile_number(2, "svp_long") != 5);
+            EXPECT(!tl_web_set_rooms_tile_fields("[1, 99]", "{\"gap\": 2}", 13.0)); /* нет комнаты — никому */
+            EXPECT(!tl_web_set_rooms_tile_fields("[1, 2]", "{\"gap\": \"широкий\"}", 13.0));
+            EXPECT(!tl_web_set_rooms_tile_fields("[]", "{\"gap\": 2}", 13.0));
+            EXPECT(!tl_web_swap_tiles("не JSON", 13.0));
+            EXPECT_INT(tl_web_undo_count(), 0);
+        }
         IT("сохраняет проект текстом файла; неверный текст не открывается, проект прежний")
         {
             tl_web_new_demo();

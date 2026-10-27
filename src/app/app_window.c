@@ -29,6 +29,8 @@ static const char *const HELP_SECTIONS[] = {
     "• Клик — выделить; тянуть угол, стену, перегородку (за тело — поперёк, за конец — вдоль или с поворотом), проём.\n"
     "• Тянуть комнату — переместить весь дом. Двойной клик по наружной стене — добавить угол.\n"
     "• Ctrl + тянуть (или «Сдвиг плитки», T) — сдвиг сетки плитки. Shift — без привязок.\n"
+    "• Shift + клик по комнате — добавить её к выделенным или убрать (в списке комнат — Ctrl или Shift): "
+    "плитку, клей и СВП можно задать сразу нескольким комнатам.\n"
     "• Колесо — масштаб; правая/средняя кнопка или пустое место — панорама.\n"
     "• Стрелки — сдвиг выделенного на шаг привязки (Shift — 1 мм, Ctrl — плитка). Delete — удалить.\n\n",
     "<b>Рисование</b>: длину можно набрать на клавиатуре и нажать Enter.\n"
@@ -482,7 +484,7 @@ static void on_tile_color_only(GtkMenuItem *item, AppWindow *self)
         app_document_status(self->document, "Выделите комнату");
         return;
     }
-    app_command_set_tile_texture(self->document, s->space, NULL, NULL);
+    app_command_set_tile_texture(self->document, NULL, NULL);
 }
 
 static void on_open_catalogs(GtkMenuItem *item, AppWindow *self)
@@ -561,7 +563,14 @@ static void on_thanks(GtkButton *button, AppWindow *self)
     gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     g_object_set(box, "margin", 18, NULL);
-    gtk_box_pack_start(GTK_BOX(box), selectable_label("<big>" THANKS_MAIL "</big>"), FALSE, FALSE, 0);
+    GtkWidget *mail_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(mail_row), gtk_label_new("Написать:"), FALSE, FALSE, 0);
+    GtkWidget *mail_frame = gtk_frame_new(NULL);
+    GtkWidget *mail = selectable_label("<span size=\"large\">" THANKS_MAIL "</span>");
+    g_object_set(mail, "margin", 10, NULL);
+    gtk_container_add(GTK_CONTAINER(mail_frame), mail);
+    gtk_box_pack_start(GTK_BOX(mail_row), mail_frame, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), mail_row, FALSE, FALSE, 0);
     GtkWidget *frame = gtk_frame_new(NULL);
     GtkWidget *wallet = selectable_label("<span font_family=\"monospace\" size=\"large\">" THANKS_WALLET "</span>");
     g_object_set(wallet, "margin", 10, NULL);

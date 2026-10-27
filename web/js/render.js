@@ -54,7 +54,7 @@ const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
 
 /**
- * Нарисовать сцену. options: {selected — id комнаты, highlight — контуры
+ * Нарисовать сцену. options: {selected — id выделенных комнат, highlight — контуры
  * выделенного предмета (плоские массивы, мм), image(reference) — картинка плитки
  * или null (ещё грузится / нет), dpr — плотность пикселей, overlay(ctx) —
  * рисование инструмента поверх, в пикселях экрана, layers — слои (DEFAULT_LAYERS),
@@ -81,8 +81,12 @@ export function drawScene(ctx, scene, view, options) {
   if (layers.joints) for (const joint of scene.joints) drawJoint(ctx, joint, px);
   drawWalls(ctx, scene, view, px, dpr, options.mono);
   drawOpenings(ctx, scene, view, px);
-  const selected = scene.spaces.find((space) => space.id === options.selected);
-  const outlines = options.printing ? [] : selected ? [selected.outline, ...selected.holes] : options.highlight || [];
+  const selected = scene.spaces.filter((space) => options.selected?.includes(space.id));
+  const outlines = options.printing
+    ? []
+    : selected.length
+      ? selected.flatMap((space) => [space.outline, ...space.holes])
+      : options.highlight || [];
   if (outlines.length) {
     ctx.beginPath();
     for (const outline of outlines) polygonPath(ctx, outline, false);

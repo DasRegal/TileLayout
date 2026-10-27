@@ -183,32 +183,68 @@ static bool assign(TlTileSettings *tile, const TlTileField *field, const TlJson 
     return false;
 }
 
-/* Поля из объекта fields (только известные ключи) — одним шагом отмены. */
-static bool set_fields(int space_id, const TlJson *fields, const char *merge_key, double now_seconds)
+#define MAX_ROOMS 256
+
+/* Поля из объекта fields (только известные ключи) в настройки tile; false — нет ни
+   одного или значение не того типа. */
+static bool apply_fields(TlTileSettings *tile, const TlJson *fields, bool *remembered)
 {
-    TlSpace *space = tl_project_space_by_id(tl_web_project(), space_id);
-    if (!space || tl_json_type(fields) != TL_JSON_OBJECT)
-        return false;
-    TlTileSettings changed = *tl_space_effective_tile(space);
     size_t count;
     const TlTileField *table = tl_tile_settings_fields(&count);
-    bool remembered = false, any = false;
+    bool any = false;
     for (size_t i = 0; i < count; i++) {
         const TlJson *value = tl_json_get(fields, table[i].key);
         if (!value)
             continue;
-        if (!assign(&changed, &table[i], value))
+        if (!assign(tile, &table[i], value))
             return false;
         any = true;
-        remembered = remembered || table[i].remembered_for_new_rooms;
+        *remembered = *remembered || table[i].remembered_for_new_rooms;
     }
-    if (!any)
+    return any;
+}
+
+/* Поля комнатам spaces — одним шагом отмены; все или ни одной. */
+static bool set_fields_of(TlSpace *const *spaces, size_t count, const TlJson *fields, const char *merge_key,
+                          double now_seconds)
+{
+    if (count == 0 || count > MAX_ROOMS || tl_json_type(fields) != TL_JSON_OBJECT)
         return false;
+    TlTileSettings changed[MAX_ROOMS];
+    bool remembered = false;
+    for (size_t i = 0; i < count; i++) {
+        changed[i] = *tl_space_effective_tile(spaces[i]);
+        if (!apply_fields(&changed[i], fields, &remembered))
+            return false;
+    }
     tl_history_checkpoint(web.history, web.project, merge_key, now_seconds);
-    *tl_space_effective_tile(space) = changed;
+    for (size_t i = 0; i < count; i++)
+        *tl_space_effective_tile(spaces[i]) = changed[i];
     if (remembered)
-        tl_tile_settings_remember_as_default(&changed);
+        tl_tile_settings_remember_as_default(&changed[0]);
     return true;
+}
+
+static bool set_fields(int space_id, const TlJson *fields, const char *merge_key, double now_seconds)
+{
+    TlSpace *space = tl_project_space_by_id(tl_web_project(), space_id);
+    return space && set_fields_of(&space, 1, fields, merge_key, now_seconds);
+}
+
+/* Комнаты по JSON-массиву id; 0 — пусто, нет такой комнаты или их слишком много. */
+static size_t spaces_by_ids(const char *space_ids, TlSpace **spaces)
+{
+    TlJson *ids = tl_json_parse(space_ids, NULL, 0);
+    size_t count = ids && tl_json_type(ids) == TL_JSON_ARRAY ? tl_json_length(ids) : 0;
+    if (count > MAX_ROOMS)
+        count = 0;
+    for (size_t i = 0; i < count; i++) {
+        spaces[i] = tl_project_space_by_id(tl_web_project(), (int)tl_json_number_or(tl_json_at(ids, i), 0));
+        if (!spaces[i])
+            count = 0;
+    }
+    tl_json_free(ids);
+    return count;
 }
 
 bool tl_web_set_tile_field(int space_id, const char *key, const char *value, double now_seconds)
@@ -231,6 +267,49 @@ bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds
     bool ok = parsed && set_fields(space_id, parsed, "", now_seconds);
     tl_json_free(parsed);
     return ok;
+}
+
+bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, double now_seconds)
+{
+    TlSpace *spaces[MAX_ROOMS];
+    size_t count = spaces_by_ids(space_ids, spaces);
+    TlJson *parsed = tl_json_parse(fields, NULL, 0);
+    char merge_key[160] = ""; /* одно поле — серия правок склеивается */
+    size_t field_count, present = 0;
+    const TlTileField *table = tl_tile_settings_fields(&field_count);
+    const char *key = NULL;
+    for (size_t i = 0; parsed && i < field_count; i++)
+        if (tl_json_get(parsed, table[i].key)) {
+            present++;
+            key = table[i].key;
+        }
+    if (present == 1)
+        snprintf(merge_key, sizeof merge_key, "tile_%s_%s", space_ids, key);
+    bool ok = count > 0 && parsed && set_fields_of(spaces, count, parsed, merge_key, now_seconds);
+    tl_json_free(parsed);
+    return ok;
+}
+
+bool tl_web_swap_tiles(const char *space_ids, double now_seconds)
+{
+    TlSpace *spaces[MAX_ROOMS];
+    size_t count = spaces_by_ids(space_ids, spaces);
+    if (count == 0)
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    for (size_t i = 0; i < count; i++) {
+        TlTileSettings *tile = tl_space_effective_tile(spaces[i]);
+        bool done = false; /* общий пол: настройки у нескольких комнат одни */
+        for (size_t k = 0; k < i; k++)
+            done = done || tl_space_effective_tile(spaces[k]) == tile;
+        if (done)
+            continue;
+        double width = tile->tile_width;
+        tile->tile_width = tile->tile_height;
+        tile->tile_height = width;
+    }
+    tl_tile_settings_remember_as_default(tl_space_effective_tile(spaces[0]));
+    return true;
 }
 
 /* ---- раскладка комнаты ---------------------------------------------------------- */

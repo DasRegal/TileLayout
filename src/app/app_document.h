@@ -34,6 +34,8 @@ typedef enum AppSelectionKind {
     APP_SELECT_TEE         /* точка примыкания: partition + end — конец, упёршийся в бок другой */
 } AppSelectionKind;
 
+#define APP_MAX_ROOMS 64 /* выделенных разом (Shift+щелчок) */
+
 typedef struct AppSelection {
     AppSelectionKind kind;
     TlOutline *outline;
@@ -44,6 +46,8 @@ typedef struct AppSelection {
     TlExpansionJoint *expansion_joint;
     TlPartitionEnd end; /* у узла */
     int index;
+    TlSpace *more_spaces[APP_MAX_ROOMS - 1]; /* у комнаты: ещё комнаты, добавленные Shift+щелчком */
+    size_t more_count;
 } AppSelection;
 
 typedef enum AppChange {
@@ -111,6 +115,10 @@ bool app_document_redo(AppDocument *document);
 
 void app_document_select(AppDocument *document, AppSelection selection);
 void app_document_clear_selection(AppDocument *document);
+/* Shift+щелчок по комнате: добавить к выделенным комнатам или убрать из них. */
+void app_document_toggle_space(AppDocument *document, TlSpace *space);
+/* Выделенные комнаты (space и добавленные), не больше APP_MAX_ROOMS; 0 — комната не выделена. */
+size_t app_selection_spaces(const AppSelection *selection, TlSpace **spaces);
 /* Дом выделенной стены, угла или комнаты. */
 TlOutline *app_selection_outline(const AppSelection *selection);
 bool app_selection_equal(const AppSelection *a, const AppSelection *b);

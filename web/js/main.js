@@ -21,7 +21,8 @@ const CURSORS = {
 const state = {
   core: null,
   scene: null,
-  selection: null, // предмет плана (tl_web_pick): {kind, index, part, end, space}
+  selection: null, // предмет плана (tl_web_pick): {kind, index, part, end, space}; у комнат ещё more — id
+  multi: false, // «Несколько комнат»: касание добавляет комнату к выделенным (как Shift+щелчок)
   object: null, // свойства выделенного предмета (tl_web_object)
   guides: [], // линии выравнивания при перетаскивании
   fileName: 'plan.tilelayout.json',
@@ -48,6 +49,8 @@ const status = document.getElementById('status');
 let frame = 0;
 
 const selectedSpace = () => (state.selection?.kind === 'space' ? state.selection.space : 0);
+/** Все выделенные комнаты (Shift+щелчок — несколько): первая — выделенная раньше всех. */
+const selectedSpaces = () => (selectedSpace() ? [state.selection.space, ...(state.selection.more || [])] : []);
 
 const catalogs = new Catalogs(() => requestDraw());
 const tools = new Tools({
@@ -69,9 +72,14 @@ const tools = new Tools({
   say,
 });
 const panel = new Panel(document.getElementById('panel'), {
-  setField: (key, value) => editRoom(() => state.core.setTileField(selectedSpace(), key, value)),
+  setField: (key, value) => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { [key]: value })),
   chooseTile: () => pickTile(),
-  colorOnly: () => editRoom(() => state.core.setTileField(selectedSpace(), 'texture', '')),
+  colorOnly: () => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '' })),
+  toggleMulti: () => {
+    state.multi = !state.multi;
+    say(state.multi ? 'Касайтесь комнат, чтобы добавить или убрать их; поля применятся ко всем.' : '');
+    refresh();
+  },
   rename: (name) => editRoom(() => state.core.setSpaceName(selectedSpace(), name)),
   align: (mode) => {
     const result = state.core.alignTiles(selectedSpace(), mode);
@@ -121,10 +129,7 @@ const panel = new Panel(document.getElementById('panel'), {
     else say(key === 'locked' ? 'Не удалось.' : 'Значение не подходит или предмет заблокирован.');
   },
   setFloorSource: (id) => editRoom(() => state.core.setSpaceSource(selectedSpace(), id)),
-  swapTile: () => {
-    const tile = state.core.spaceTile(selectedSpace()).tile;
-    editRoom(() => state.core.setTileFields(selectedSpace(), { w: tile.h, h: tile.w }));
-  },
+  swapTile: () => editRoom(() => state.core.swapTiles(selectedSpaces())),
   deleteObject: () => deleteSelection(),
 });
 
@@ -145,7 +150,7 @@ function draw() {
     canvas.height = height;
   }
   drawScene(ctx, state.scene, view, {
-    selected: selectedSpace(),
+    selected: selectedSpaces(),
     highlight: highlightOf(state.object),
     image: (ref) => catalogs.image(ref),
     dpr,
@@ -240,21 +245,39 @@ function refresh() {
   const core = state.core;
   state.scene = core.scene();
   const selection = state.selection;
-  if (selection?.kind === 'space' && !state.scene.spaces.some((space) => space.id === selection.space)) {
+  const exists = (id) => state.scene.spaces.some((space) => space.id === id);
+  if (selection?.kind === 'space' && !exists(selection.space)) {
     state.selection = null;
+  } else if (selection?.more) {
+    selection.more = selection.more.filter(exists);
   }
   state.object = state.selection && state.selection.kind !== 'space' ? core.object(state.selection) : null;
   if (state.object?.kind === 'wall') state.object.keep_angles = state.settings.keepAngles;
   state.numbers = state.settings.layers.numbers ? core.tileNumbers() : null;
   if (state.selection && state.selection.kind !== 'space' && !state.object) state.selection = null;
-  panel.show(selectedSpace() ? core.spaceTile(selectedSpace()) : null, catalogs);
+  panel.show(selectedSpaces().map((id) => core.spaceTile(id)), catalogs, state.multi);
   panel.showObject(state.object);
   panel.showTool(tools.tool, state.settings, TOOL_HINTS[tools.tool]);
+  document.getElementById('sheet-title').textContent = sheetTitle();
   document.querySelector('[data-action="undo"]').disabled = !core.canUndo();
   document.querySelector('[data-action="redo"]').disabled = !core.canRedo();
   clearTimeout(summaryTimer); // расчёт — чуть позже: при вводе подряд не пересчитывать на каждое поле
   summaryTimer = setTimeout(() => showSummary(document.getElementById('summary'), core.summary(), catalogs), 150);
   requestDraw();
+}
+
+/** Заголовок шторки настроек на телефоне: что выделено. */
+function sheetTitle() {
+  const rooms = selectedSpaces();
+  if (rooms.length > 1) return `Комнат: ${rooms.length} — плитка, клей, СВП`;
+  if (rooms.length === 1) return `${state.scene.spaces.find((s) => s.id === rooms[0])?.name ?? 'Комната'} — плитка`;
+  if (state.object) return panel.objectTitle(state.object);
+  return tools.tool === 'select' ? 'Расчёт к покупке' : 'Настройки инструмента';
+}
+
+function toggleSheet(open = !document.body.classList.contains('sheet-open')) {
+  document.body.classList.toggle('sheet-open', open);
+  document.getElementById('sheet-toggle').setAttribute('aria-expanded', String(open));
 }
 
 /** Проект изменился: обновить всё и сохранить черновик. */
@@ -304,7 +327,10 @@ function setTool(tool) {
   for (const button of document.querySelectorAll('[data-tool]')) {
     button.setAttribute('aria-pressed', String(button.dataset.tool === tool));
   }
-  if (tool !== 'select') state.selection = null;
+  if (tool !== 'select') {
+    state.selection = null;
+    state.multi = false;
+  }
   refresh();
 }
 
@@ -327,16 +353,32 @@ async function pickTile() {
   const room = state.core.spaceTile(selectedSpace());
   const choice = await chooseTile(catalogs, room.tile.texture);
   if (choice === 'color-only') {
-    editRoom(() => state.core.setTileField(selectedSpace(), 'texture', ''));
+    editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '' }));
   } else if (choice) {
     const fields = await catalogs.fieldsFor(choice.catalog, choice.tile);
-    editRoom(() => state.core.setTileFields(selectedSpace(), fields));
+    editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), fields));
   }
 }
 
-function select(world) {
+/** Комнату — к выделенным или из них (Shift+щелчок, «Несколько комнат»). */
+function toggleSpace(id) {
+  const rooms = selectedSpaces();
+  const next = rooms.includes(id) ? rooms.filter((room) => room !== id) : [...rooms, id];
+  state.selection = next.length ? { kind: 'space', space: next[0], more: next.slice(1) } : null;
+  const count = next.length;
+  say(count > 1 ? `Выбрано комнат: ${count}. Поля плитки, клея и СВП применяются ко всем.` : '');
+}
+
+const adding = (event) => state.multi || Boolean(event?.shiftKey);
+
+function select(world, event) {
   const handle = handleAt(world);
   const hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  if (hit.kind === 'space' && adding(event)) {
+    toggleSpace(hit.space);
+    refresh();
+    return;
+  }
   state.selection = hit.kind === 'none' ? null : hit;
   refresh();
   say('');
@@ -350,6 +392,7 @@ function startDrag(world, event) {
   const hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
   let target = DRAGGABLE.has(hit.kind) ? hit : null;
   if (hit.kind === 'space') {
+    if (adding(event)) return null; // щелчок добавит комнату к выделенным
     if (event.ctrlKey || event.metaKey) target = { kind: 'tiles' };
     else if (hit.space === selectedSpace()) target = { kind: 'house' };
   }
@@ -575,6 +618,7 @@ function onKey(event) {
     if (tools.drawing) setTool('select');
     else {
       state.selection = null;
+      state.multi = false;
       refresh();
     }
   } else if ((event.key === 'Delete' || event.key === 'Backspace') && !tools.drawing) {
@@ -585,6 +629,7 @@ function onKey(event) {
 
 function bindCommands() {
   installIcons();
+  document.getElementById('sheet-toggle').addEventListener('click', () => toggleSheet());
   bindLayers();
   for (const button of document.querySelectorAll('[data-action]')) {
     const command = commands[button.dataset.action];
@@ -603,7 +648,7 @@ function bindCommands() {
         tools.hover(world, event.shiftKey);
         requestDraw();
       } else {
-        select(world);
+        select(world, event);
       }
     },
     onHover: (world, event) => {
@@ -631,7 +676,17 @@ function bindCommands() {
     }
   });
   acceptDroppedFiles(document.body, openProject);
-  new ResizeObserver(requestDraw).observe(canvas);
+  // план поменял размер (шторка на телефоне, окно): середина вида остаётся на месте
+  let size = null;
+  new ResizeObserver(() => {
+    const box = canvas.getBoundingClientRect();
+    if (size && box.width > 0 && box.height > 0) {
+      view.panX += (box.width - size.width) / 2;
+      view.panY += (box.height - size.height) / 2;
+    }
+    if (box.width > 0 && box.height > 0) size = { width: box.width, height: box.height };
+    requestDraw();
+  }).observe(canvas);
 }
 
 // ---- запуск ---------------------------------------------------------------------

@@ -152,12 +152,15 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
 .thanks:hover { color: var(--ink); }
 
 .thanks-dialog p { margin: 6px 0; user-select: text; }
-.thanks-mail { font-size: 15px; }
-.wallet {
+.thanks-mail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wallet, .framed {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--ground);
+}
+.framed { flex: 1; font-size: 15px; }
+.wallet {
   font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
   font-size: 13.5px;
   overflow-wrap: anywhere;
@@ -265,6 +268,15 @@ legend {
   font-weight: 600;
 }
 .room-name:hover, .room-name:focus { border-color: var(--line); }
+.room-head { display: flex; align-items: flex-start; gap: 8px; }
+.room-head .room-name, .room-head h2 { flex: 1; min-width: 0; }
+.room-head h2 { margin: 4px 0 6px; }
+#multi-rooms { flex: none; padding: 4px 8px; font-size: 12.5px; }
+#multi-rooms .icon { width: 18px; height: 18px; }
+#multi-rooms[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.control input[type="number"]::placeholder { color: var(--muted); font-style: italic; }
+.control input:disabled, .control select:disabled { opacity: 0.5; }
+.sheet-toggle { display: none; }
 button.danger { color: #b3261e; border-color: #e7b9b4; }
 button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e; }
 
@@ -357,15 +369,82 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
 
 /* ---- узкий экран: план сверху, панель снизу ---- */
 
+/* Телефон: сверху одна строка значков, под ней инструменты, план — на всё
+   остальное; настройки и расчёт — шторка снизу (касание заголовка открывает). */
 @media (max-width: 820px) {
-  body { height: auto; min-height: 100%; }
-  .workspace { grid-template-columns: 1fr; }
-  .rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 4px 6px; }
-  .rail button { min-width: 64px; }
+  .bar {
+    flex-wrap: nowrap;
+    gap: 2px;
+    min-height: 0;
+    padding: 5px max(10px, env(safe-area-inset-right, 0px)) 5px max(10px, env(safe-area-inset-left, 0px));
+  }
+  .bar .brand { display: none; } /* значок — то же, что «Пример» */
+  .bar .tools { flex-wrap: nowrap; gap: 2px; }
+  .bar .tools button, .bar .view-menu summary {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+    gap: 0;
+  }
+  .bar .divider { margin: 0 2px; }
+  .bar .view-menu-body { left: auto; right: 0; font-size: 15px; }
+  .bar .view-menu-body label { padding: 4px 0; }
+
+  .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .rail { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 2px 6px; gap: 0; scrollbar-width: none; }
+  .rail button { flex: 1 0 auto; min-width: 50px; padding: 5px 3px 4px; font-size: 10px; }
+  .rail button .icon { width: 22px; height: 22px; }
   .rail-divider { width: 1px; height: auto; margin: 6px 2px; }
-  .bar .tools button:not(.icon-only) { padding: 5px 7px; }
-  .plan-area { height: 62vh; }
-  .panel { border-left: 0; border-top: 1px solid var(--line); padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+
+  .thanks { top: 8px; left: 8px; padding: 4px 8px; font-size: 12px; }
+  .zoom button { width: 40px; height: 40px; }
+  .status { bottom: max(62px, env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 24px); }
+
+  .panel {
+    max-height: 48px;
+    overflow: hidden;
+    padding: 0 max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -4px 16px rgba(20, 24, 32, 0.08);
+    transition: max-height 0.2s ease;
+  }
+  body.sheet-open .panel { max-height: 58vh; max-height: 58dvh; overflow-y: auto; }
+  @media (prefers-reduced-motion: reduce) { .panel { transition: none; } }
+  .sheet-toggle {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex: none;
+    width: calc(100% + 32px);
+    min-height: 48px;
+    margin: 0 -16px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 0;
+    background: var(--surface);
+    font-size: 15px;
+    font-weight: 600;
+    text-align: left;
+  }
+  .sheet-toggle span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sheet-arrow::after { content: "▲"; color: var(--muted); font-size: 12px; }
+  body.sheet-open .sheet-arrow::after { content: "▼"; }
+
+  /* поля — крупнее для пальца; 16px — иначе iPhone увеличивает страницу при вводе */
+  .panel input, .panel select, .small-dialog input, .small-dialog select { font-size: 16px; }
+  .row { padding: 5px 0; }
+  .control input[type="number"] { width: 110px; padding: 6px 8px; }
+  .control select { padding: 6px 4px; }
+  .row.check input { width: 20px; height: 20px; }
+  .panel button { min-height: 38px; }
+
   .catalog-body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .catalog-tree { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
 }

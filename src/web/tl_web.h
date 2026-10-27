@@ -44,6 +44,12 @@ const char *tl_web_space_tile(int space_id);
 bool tl_web_set_tile_field(int space_id, const char *key, const char *value, double now_seconds);
 /* Несколько полей одним шагом отмены: fields — JSON-объект {ключ: значение}. */
 bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds);
+/* Те же поля нескольким комнатам одним шагом отмены (выделение с Shift):
+   space_ids — JSON-массив id, fields — JSON-объект {ключ: значение}; серия правок
+   одного поля тех же комнат склеивается. false — нет такой комнаты или значение не то. */
+bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, double now_seconds);
+/* Поменять длину и ширину плитки у комнат space_ids (JSON-массив id) — одним шагом. */
+bool tl_web_swap_tiles(const char *space_ids, double now_seconds);
 
 /* Раскладка комнаты: смещение сетки по правилу mode — "top_left", "top_right",
    "bottom_left", "bottom_right" (целая плитка в углу), "center" (центр плитки в

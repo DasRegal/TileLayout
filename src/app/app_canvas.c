@@ -444,8 +444,14 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
     if (!outline)
         return;
     if (s->kind == APP_SELECT_SPACE) {
-        app_path_polygon_with_holes(cr, view, &s->space->outline, &s->space->holes);
-        fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.14), APP_BLUE, 2.2);
+        TlSpace *rooms[APP_MAX_ROOMS];
+        size_t count = app_selection_spaces(s, rooms);
+        for (size_t i = 0; i < count; i++) {
+            app_path_polygon_with_holes(cr, view, &rooms[i]->outline, &rooms[i]->holes);
+            fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.14), APP_BLUE, 2.2);
+        }
+        if (count > 1)
+            return; /* несколько комнат — без углов дома */
     } else if (s->kind == APP_SELECT_WALL) {
         TlPolygon quad = tl_outline_wall_quad(outline, (size_t)s->index, NULL);
         app_path_polygon(cr, view, &quad);

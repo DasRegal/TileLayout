@@ -306,13 +306,13 @@ void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
             continue;
         }
         if (response == RESPONSE_COLOR_ONLY) {
-            app_command_set_tile_texture(document, space, NULL, NULL);
+            app_command_set_tile_texture(document, NULL, NULL);
         } else if (response == GTK_RESPONSE_ACCEPT) {
             GList *selected = gtk_flow_box_get_selected_children(GTK_FLOW_BOX(picker.tiles));
             const TlCatalog *catalog;
             const TlCatalogTile *tile;
             if (selected && card_tile(selected->data, &catalog, &tile))
-                app_command_set_tile_texture(document, space, catalog, tile);
+                app_command_set_tile_texture(document, catalog, tile);
             g_list_free(selected);
         }
         break;

@@ -11,6 +11,8 @@
  *   проём — вдоль своей стены; стык комнат в нём — поперёк стены, за конец у
  *     косяка (у выделенного стыка) — только этот конец, стык наискосок;
  *   Ctrl — сетка плитки комнаты;
+ *   Shift+щелчок по комнате — добавить её к выделенным (или убрать): плитку,
+ *     клей и СВП можно задать сразу нескольким комнатам;
  *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием.
  * Двойной клик по стене дома добавляет угол.
  * Как тянется каждый предмет — в ядре (tl_drag.c), общем с веб-версией; здесь —
@@ -100,6 +102,10 @@ static void press(AppCanvas *canvas, const AppPointer *pointer)
     }
     AppSelection hit = app_hit_test(canvas->document->project, &canvas->view, pointer->screen,
                                     &canvas->document->selection);
+    if (pointer->shift && hit.kind == APP_SELECT_SPACE) {
+        app_document_toggle_space(canvas->document, hit.space);
+        return;
+    }
     app_document_select(canvas->document, hit);
     if (hit.kind == APP_SELECT_NONE) {
         app_canvas_start_pan(canvas, pointer->screen);

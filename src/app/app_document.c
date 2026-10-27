@@ -127,6 +127,43 @@ void app_document_clear_selection(AppDocument *document)
     app_document_select(document, (AppSelection){0});
 }
 
+size_t app_selection_spaces(const AppSelection *selection, TlSpace **spaces)
+{
+    if (selection->kind != APP_SELECT_SPACE || !selection->space)
+        return 0;
+    spaces[0] = selection->space;
+    for (size_t i = 0; i < selection->more_count; i++)
+        spaces[i + 1] = selection->more_spaces[i];
+    return selection->more_count + 1;
+}
+
+void app_document_toggle_space(AppDocument *document, TlSpace *space)
+{
+    AppSelection s = document->selection;
+    if (s.kind != APP_SELECT_SPACE) {
+        app_document_select(document, (AppSelection){.kind = APP_SELECT_SPACE, .space = space});
+        return;
+    }
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = app_selection_spaces(&s, rooms), kept = 0;
+    bool removed = false;
+    for (size_t i = 0; i < count; i++) {
+        if (rooms[i] == space)
+            removed = true;
+        else
+            rooms[kept++] = rooms[i];
+    }
+    if (!removed && kept < APP_MAX_ROOMS)
+        rooms[kept++] = space;
+    AppSelection next = {0};
+    if (kept > 0) {
+        next = (AppSelection){.kind = APP_SELECT_SPACE, .space = rooms[0], .more_count = kept - 1};
+        for (size_t i = 1; i < kept; i++)
+            next.more_spaces[i - 1] = rooms[i];
+    }
+    app_document_select(document, next);
+}
+
 static bool contains_pointer(void *const *items, size_t count, const void *item)
 {
     for (size_t i = 0; i < count; i++)
@@ -146,7 +183,13 @@ static bool selection_is_valid(AppDocument *document)
     case APP_SELECT_WALL:
         return contains_pointer((void *const *)p->outlines.items, p->outlines.count, s->outline) &&
                (size_t)s->index < tl_outline_wall_count(s->outline);
-    case APP_SELECT_SPACE: return contains_pointer((void *const *)p->spaces.items, p->spaces.count, s->space);
+    case APP_SELECT_SPACE:
+        if (!contains_pointer((void *const *)p->spaces.items, p->spaces.count, s->space))
+            return false;
+        for (size_t i = 0; i < s->more_count; i++)
+            if (!contains_pointer((void *const *)p->spaces.items, p->spaces.count, s->more_spaces[i]))
+                return false;
+        return true;
     case APP_SELECT_PARTITION:
         return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition);
     case APP_SELECT_OPENING:
@@ -212,6 +255,8 @@ void app_document_end_geometry(AppDocument *document, TlEditToken *token, const 
 typedef struct SelectionKey {
     AppSelectionKind kind;
     long position;
+    long more[APP_MAX_ROOMS - 1]; /* добавленные комнаты */
+    size_t more_count;
     int index;
     TlPartitionEnd end;
 } SelectionKey;
@@ -228,7 +273,7 @@ static SelectionKey selection_key(AppDocument *document)
 {
     const AppSelection *s = &document->selection;
     TlProject *p = document->project;
-    SelectionKey key = {s->kind, -1, s->index, s->end};
+    SelectionKey key = {.kind = s->kind, .position = -1, .index = s->index, .end = s->end};
     switch (s->kind) {
     case APP_SELECT_VERTEX:
     case APP_SELECT_WALL:
@@ -236,6 +281,9 @@ static SelectionKey selection_key(AppDocument *document)
         break;
     case APP_SELECT_SPACE:
         key.position = position_in((void *const *)p->spaces.items, p->spaces.count, s->space);
+        for (size_t i = 0; i < s->more_count; i++)
+            key.more[key.more_count++] = position_in((void *const *)p->spaces.items, p->spaces.count,
+                                                     s->more_spaces[i]);
         break;
     case APP_SELECT_PARTITION:
     case APP_SELECT_NODE:
@@ -274,6 +322,9 @@ static void restore_selection(AppDocument *document, SelectionKey key)
         found = found && position < p->spaces.count;
         if (found)
             s.space = p->spaces.items[position];
+        for (size_t i = 0; found && i < key.more_count; i++)
+            if (key.more[i] >= 0 && (size_t)key.more[i] < p->spaces.count)
+                s.more_spaces[s.more_count++] = p->spaces.items[key.more[i]];
         break;
     case APP_SELECT_PARTITION:
     case APP_SELECT_NODE:

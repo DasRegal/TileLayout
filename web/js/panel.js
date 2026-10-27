@@ -147,7 +147,7 @@ const OBJECTS = {
  * showTool(инструмент, настройки, подсказка), showObject(предмет).
  * actions: {setField(key, value), chooseTile(), colorOnly(), rename(name),
  *           align(mode), setSetting(key, value), setObjectField(key, value), deleteObject(),
- *           setFloorSource(id), swapTile()}.
+ *           setFloorSource(id), swapTile(), toggleMulti()}.
  */
 export class Panel {
   constructor(root, actions) {
@@ -198,6 +198,11 @@ export class Panel {
     this.textureName = this.root.querySelector('#texture-name');
     this.textureImage = this.root.querySelector('#texture-image');
     this.root.querySelector('#choose-tile').addEventListener('click', () => this.actions.chooseTile());
+    this.roomsTitle = this.root.querySelector('#rooms-title');
+    this.multi = this.root.querySelector('#multi-rooms');
+    this.multi.addEventListener('click', () => this.actions.toggleMulti());
+    this.floorRow = this.root.querySelector('#floor-row');
+    this.align = this.root.querySelector('.align');
     this.colorOnly = this.root.querySelector('#color-only');
     this.colorOnly.addEventListener('click', () => this.actions.colorOnly());
     const fields = this.root.querySelector('#tile-fields');
@@ -221,6 +226,9 @@ export class Panel {
     if (field.options) {
       input = document.createElement('select');
       field.options.forEach(([title], i) => input.add(new Option(title, String(i))));
+      const mixed = new Option('разные', 'mixed'); // у нескольких комнат значения разные
+      mixed.hidden = true;
+      input.add(mixed);
       input.addEventListener('change', () => this.actions.setField(field.key, field.options[input.selectedIndex][1]));
     } else if (field.check) {
       input = document.createElement('input');
@@ -279,6 +287,10 @@ export class Panel {
       }
     }
     this.updateEmpty();
+  }
+
+  objectTitle(object) {
+    return OBJECTS[object.kind].title;
   }
 
   /** Выделенный предмет плана (tl_web_object) или null. */
@@ -356,11 +368,33 @@ export class Panel {
     return row;
   }
 
-  /** room — от ядра (tl_web_space_tile) или null; catalogs — для названия плитки. */
-  show(room, catalogs) {
+  /**
+   * rooms — выделенные комнаты от ядра (tl_web_space_tile), может быть пусто;
+   * catalogs — для названия плитки; multi — включён выбор нескольких комнат.
+   * У нескольких комнат поле с разными значениями пустое («разные»): введённое
+   * получат все; смещение сетки и раскладка от угла — только у одной комнаты.
+   */
+  show(rooms, catalogs, multi) {
+    const room = rooms[0];
+    const several = rooms.length > 1;
     this.room.hidden = !room;
     this.updateEmpty();
     if (!room) return;
+    this.multi.setAttribute('aria-pressed', String(multi));
+    this.roomName.hidden = several;
+    this.roomsTitle.hidden = !several;
+    this.floorRow.hidden = several;
+    this.align.hidden = several;
+    if (several) {
+      const area = rooms.reduce((sum, r) => sum + r.area, 0);
+      this.roomsTitle.textContent = `Комнат: ${rooms.length}`;
+      this.roomInfo.textContent =
+        `${rooms.map((r) => `«${r.name}»`).join(', ')} — ${area.toFixed(2).replace('.', ',')} м². ` +
+        'Изменения применяются ко всем.';
+      this.shared.hidden = true;
+      this.showTile(rooms, catalogs);
+      return;
+    }
     if (document.activeElement !== this.roomName) this.roomName.value = room.name;
     this.roomInfo.textContent = `${room.area.toFixed(2).replace('.', ',')} м², периметр ${room.perimeter} мм`;
     this.floorSource.replaceChildren(
@@ -371,30 +405,44 @@ export class Panel {
     if (this.floorSource.selectedIndex < 0) this.floorSource.value = '0';
     this.shared.hidden = !room.source;
     this.shared.textContent = room.source ? `Пол общий с комнатой «${room.source}»: настройки — её.` : '';
-    const tile = room.tile;
+    this.showTile(rooms, catalogs);
+  }
+
+  /** Поля плитки, клея и СВП выделенных комнат. */
+  showTile(rooms, catalogs) {
+    const tile = rooms[0].tile;
+    const same = (key) => rooms.every((r) => r.tile[key] === tile[key]);
+    const single = rooms.length === 1;
     this.enabled.checked = tile.enabled;
+    this.enabled.indeterminate = !same('enabled');
     for (const { field, input } of this.inputs.values()) {
       const value = tile[field.key];
+      const mixed = !same(field.key);
+      input.disabled = !single && (field.key === 'off_x' || field.key === 'off_y');
       if (document.activeElement === input) continue; // не мешать вводу
       if (field.options) {
-        input.selectedIndex = nearestIndex(field.options, value);
+        input.selectedIndex = mixed ? field.options.length : nearestIndex(field.options, value);
       } else if (field.check) {
         input.checked = value;
+        input.indeterminate = mixed;
       } else if (field.color) {
         input.value = value;
       } else {
-        input.value = String(Math.round(value * 100) / 100);
+        input.value = mixed ? '' : String(Math.round(value * 100) / 100);
+        input.placeholder = mixed ? 'разные' : '';
       }
     }
-    const found = catalogs.find(tile.texture);
-    this.colorOnly.hidden = !tile.texture;
+    const found = same('texture') && catalogs.find(tile.texture);
+    this.colorOnly.hidden = rooms.every((r) => !r.tile.texture);
     this.textureImage.hidden = !found;
     if (found) this.textureImage.src = catalogs.imageUrl(found.catalog, found.tile);
-    this.textureName.textContent = !tile.texture
-      ? 'только цвет'
-      : found
-        ? found.tile.name
-        : `нет в каталогах: ${tile.texture}`;
+    this.textureName.textContent = !same('texture')
+      ? 'разные'
+      : !tile.texture
+        ? 'только цвет'
+        : found
+          ? found.tile.name
+          : `нет в каталогах: ${tile.texture}`;
   }
 }
 

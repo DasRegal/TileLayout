@@ -192,16 +192,21 @@ void app_command_set_tee_point(AppDocument *document, const AppSelection *select
     app_document_select(document, kept);
 }
 
-void app_command_set_tile_texture(AppDocument *document, TlSpace *space, const TlCatalog *catalog,
-                                  const TlCatalogTile *tile)
+void app_command_set_tile_texture(AppDocument *document, const TlCatalog *catalog, const TlCatalogTile *tile)
 {
-    TlTileSettings *settings = tl_space_effective_tile(space);
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = app_selection_spaces(&document->selection, rooms);
+    if (count == 0)
+        return;
     app_document_checkpoint(document, "");
-    if (catalog && tile)
-        app_catalogs_apply(catalog, tile, settings);
-    else
-        settings->texture[0] = '\0';
-    tl_tile_settings_remember_as_default(settings);
+    for (size_t i = 0; i < count; i++) {
+        TlTileSettings *settings = tl_space_effective_tile(rooms[i]);
+        if (catalog && tile)
+            app_catalogs_apply(catalog, tile, settings);
+        else
+            settings->texture[0] = '\0';
+        tl_tile_settings_remember_as_default(settings);
+    }
     app_document_commit(document);
 }
 

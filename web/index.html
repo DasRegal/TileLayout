@@ -65,8 +65,11 @@
     </section>
 
     <aside id="panel" class="panel">
+      <button type="button" id="sheet-toggle" class="sheet-toggle" aria-expanded="false" aria-controls="panel">
+        <span id="sheet-title">Настройки и расчёт</span><span class="sheet-arrow" aria-hidden="true"></span>
+      </button>
       <section>
-        <p id="room-empty" class="hint">Щёлкните комнату на плане, чтобы настроить её плитку. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг.</p>
+        <p id="room-empty" class="hint">Щёлкните комнату на плане, чтобы настроить её плитку; Shift+щелчок — ещё комнаты, им всем сразу. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг.</p>
 
         <div id="tool-settings" hidden>
           <h2 id="tool-title"></h2>
@@ -91,9 +94,14 @@
         </div>
 
         <div id="room-settings" hidden>
-          <input type="text" id="room-name" class="room-name" aria-label="Название комнаты" maxlength="120">
+          <div class="room-head">
+            <input type="text" id="room-name" class="room-name" aria-label="Название комнаты" maxlength="120">
+            <h2 id="rooms-title" hidden></h2>
+            <button type="button" id="multi-rooms" data-icon="rooms" aria-pressed="false"
+              title="Выбрать несколько комнат: касание добавляет или убирает комнату (на компьютере — Shift+щелчок)">Несколько комнат</button>
+          </div>
           <p id="room-info" class="hint"></p>
-          <label class="row"><span class="caption">Пол</span>
+          <label class="row" id="floor-row"><span class="caption">Пол</span>
             <span class="control"><select id="floor-source"></select></span></label>
           <p id="room-shared" class="hint" hidden></p>
           <label class="row check"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка в комнате</span></label>
@@ -192,7 +200,7 @@
 
   <dialog id="thanks-dialog" class="small-dialog thanks-dialog">
     <form method="dialog">
-      <p class="thanks-mail">minuscreets@gmail.com</p>
+      <p class="thanks-mail">Написать: <span class="framed">minuscreets@gmail.com</span></p>
       <p class="wallet">1DonatDAJiLsHMz5S23fmtXSPMmuS6AwT</p>
       <footer><span class="spacer"></span><button value="ok" class="primary" autofocus>ОК</button></footer>
     </form>
