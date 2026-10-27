@@ -4,6 +4,7 @@ import { Catalogs, chooseTile } from './catalogs.js';
 import { loadCore } from './core.js';
 import { Panel, showSummary } from './panel.js';
 import { PRINT_SCALES, printProject } from './print.js';
+import { installIcons } from './icons.js';
 import { DEFAULT_LAYERS, drawScene } from './render.js';
 import { acceptDroppedFiles, downloadFile, pickFile, readDraft, readSettings, writeDraft, writeSettings } from './storage.js';
 import { TOOL_HINTS, Tools } from './tools.js';
@@ -217,6 +218,13 @@ function drawHandles(c) {
   }
 }
 
+/** Масштаб кнопками — у середины плана. */
+function zoomBy(factor) {
+  const box = canvas.getBoundingClientRect();
+  view.zoomAt(box.width / 2, box.height / 2, factor);
+  requestDraw();
+}
+
 function fitView() {
   const box = canvas.getBoundingClientRect();
   if (state.scene) view.fit(state.scene.bounds, box.width, box.height);
@@ -422,6 +430,8 @@ const commands = {
     if (state.core.redo()) changed();
   },
   fit: fitView,
+  'zoom-in': () => zoomBy(1.25),
+  'zoom-out': () => zoomBy(1 / 1.25),
   catalog: pickTile,
   house: addHouse,
   png: exportPng,
@@ -573,6 +583,7 @@ function onKey(event) {
 }
 
 function bindCommands() {
+  installIcons();
   bindLayers();
   for (const button of document.querySelectorAll('[data-action]')) {
     const command = commands[button.dataset.action];

@@ -52,8 +52,9 @@ void spec_summary(void)
     DESCRIBE("Сводный расчёт")
     {
         /* Python-версия без пола под дверью давала 100 плиток, ванную 56, клей 125,51 кг и 461 СВП;
-           пол дверного проёма добавляет 1 плитку 600×300, 2 полоски в ванной и 5 СВП. */
-        IT("расчёт демо-плана: 101 плитка 600×300 (−6 на стыке, −9 из обрезков), ванная 58")
+           пол дверного проёма добавляет 1 плитку 600×300, 2 полоски в ванной и 5 СВП. Угловые
+           куски (обрезаны с двух сторон) тоже идут в пары — ещё 1 плитка 600×300 и 2 в ванной. */
+        IT("расчёт демо-плана: 100 плиток 600×300 (−6 на стыке, −10 из обрезков), ванная 56")
         {
             TlProject *project = demo_with_bedroom();
             TlSummary summary = tl_report_summarize(project);
@@ -62,13 +63,13 @@ void spec_summary(void)
             const TlTileTypeSummary *bath_tile = type_with_width(&summary, 300);
             EXPECT(main_tile && bath_tile);
             if (main_tile && bath_tile) {
-                EXPECT_INT(main_tile->count, 101);
+                EXPECT_INT(main_tile->count, 100);
                 EXPECT_INT(main_tile->shared_saving, 6);
-                EXPECT_INT(main_tile->offcut_saving, 9);
-                EXPECT_INT(main_tile->to_buy, 112);
+                EXPECT_INT(main_tile->offcut_saving, 10);
+                EXPECT_INT(main_tile->to_buy, 110);
                 EXPECT_INT(main_tile->spaces.count, 2);
-                EXPECT_INT(bath_tile->count, 58);
-                EXPECT_INT(bath_tile->to_buy, 64);
+                EXPECT_INT(bath_tile->count, 56);
+                EXPECT_INT(bath_tile->to_buy, 62);
             }
             EXPECT_NEAR(summary.glue_total_kg, 125.95, 0.01);
             EXPECT_INT(summary.glue.count, 1);
@@ -202,7 +203,7 @@ void spec_summary(void)
                 EXPECT(cards.items[i].parts.count >= 1);
             }
             EXPECT_INT(shared_cards, 6);
-            EXPECT_INT(pair_cards, 10);
+            EXPECT_INT(pair_cards, 13); /* 10 пар основной плитки и 3 — плитки ванной */
             tl_cut_card_list_free_all(&cards);
             tl_project_free(project);
         }
@@ -235,6 +236,37 @@ void spec_summary(void)
         }
     }
 
+    DESCRIBE("Угловые куски из одной плитки")
+    {
+        IT("два угловых куска — пара: каждый в своём углу плитки, между ними — запас на рез, не внахлёст")
+        {
+            TlProject *project = tl_project_new();
+            add_room(project, 0, 400, 200, "Кухня");      /* кусок 400×200 — обрезан с двух сторон */
+            add_room(project, 3000, 150, 250, "Кладовая"); /* 150×250 */
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.offcut_pairs.count, 1); /* 400 + 150 + 3 ≤ 600 — бок о бок */
+            if (summary.types.count == 1)
+                EXPECT_INT(summary.types.items[0].count, 1);
+            tl_summary_free(&summary);
+            TlCutCardList cards = tl_report_cut_cards(project);
+            EXPECT_INT(cards.count, 1);
+            if (cards.count == 1 && cards.items[0].parts.count == 2) {
+                TlRect a = tl_polygon_bounds(&cards.items[0].parts.items[0].shapes.items[0]);
+                TlRect b = tl_polygon_bounds(&cards.items[0].parts.items[1].shapes.items[0]);
+                if (a.left > b.left) {
+                    TlRect swap = a;
+                    a = b;
+                    b = swap;
+                }
+                EXPECT(b.left - a.right >= 3 - 1e-9); /* не внахлёст, запас на рез */
+                EXPECT(a.left >= 0 && b.right <= 600 + 1e-9 && a.bottom <= 300 + 1e-9 && b.bottom <= 300 + 1e-9);
+                EXPECT_NEAR(tl_rect_height(a) + tl_rect_height(b), 200 + 250, 1e-9); /* настоящие высоты кусков */
+            }
+            tl_cut_card_list_free_all(&cards);
+            tl_project_free(project);
+        }
+    }
+
     DESCRIBE("Подбор «Минимум плиток»")
     {
         IT("из неудачного смещения находит раскладку с меньшим числом плиток")
@@ -246,7 +278,7 @@ void spec_summary(void)
             TlTileCountResult result;
             EXPECT(tl_report_optimize_count(project, living, &result));
             EXPECT(result.after.tiles < result.before.tiles);
-            EXPECT_INT(result.after.tiles, 101);
+            EXPECT_INT(result.after.tiles, 100);
             tl_project_free(project);
         }
     }

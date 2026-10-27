@@ -12,17 +12,17 @@
   <header class="bar">
     <a class="brand" href="./"><img src="icon.svg" alt="" width="26" height="26"> TileLayout</a>
     <nav class="tools" aria-label="Проект">
-      <button type="button" data-action="demo" title="Пример проекта">Пример</button>
-      <button type="button" data-action="open" title="Открыть файл проекта (Ctrl+O)">Открыть…</button>
-      <button type="button" data-action="save" title="Сохранить проект файлом (Ctrl+S)">Сохранить</button>
+      <button type="button" data-action="open" data-icon="open" title="Открыть файл проекта (Ctrl+O)">Открыть</button>
+      <button type="button" data-action="save" data-icon="save" title="Сохранить проект файлом (Ctrl+S)">Сохранить</button>
+      <button type="button" data-action="demo" data-icon="demo" class="icon-only" title="Пример проекта" aria-label="Пример проекта"></button>
       <span class="divider" aria-hidden="true"></span>
-      <button type="button" data-action="undo" title="Отменить (Ctrl+Z)" disabled>Отменить</button>
-      <button type="button" data-action="redo" title="Повторить (Ctrl+Shift+Z)" disabled>Повторить</button>
-      <span class="divider" aria-hidden="true"></span>
-      <button type="button" data-action="fit" title="Весь план в окне">Вписать</button>
-      <button type="button" data-action="house" title="Новый дом или квартира по внутренним размерам">Дом по размерам…</button>
+      <button type="button" data-action="undo" data-icon="undo" class="icon-only" title="Отменить (Ctrl+Z)" aria-label="Отменить" disabled></button>
+      <button type="button" data-action="redo" data-icon="redo" class="icon-only" title="Повторить (Ctrl+Shift+Z)" aria-label="Повторить" disabled></button>
+    </nav>
+    <span class="spacer"></span>
+    <nav class="tools" aria-label="Вид и печать">
       <details class="view-menu">
-        <summary title="Что показывать на плане">Вид</summary>
+        <summary title="Что показывать на плане" data-icon="view">Вид</summary>
         <div class="view-menu-body">
           <label><input type="checkbox" data-layer="tiles"> Плитка</label>
           <label><input type="checkbox" data-layer="numbers"> Номера плиток</label>
@@ -33,24 +33,34 @@
           <label><input type="checkbox" data-layer="rulers"> Линейки</label>
         </div>
       </details>
-      <button type="button" data-action="png" title="Картинка плана, как на экране">PNG</button>
-      <button type="button" data-action="print" title="Печать и PDF (Ctrl+P)">Печать / PDF…</button>
-    </nav>
-    <nav class="tools tool-modes" aria-label="Инструменты">
-      <button type="button" data-tool="select" title="Выбор (V)" aria-pressed="true">Выбор</button>
-      <button type="button" data-tool="rect" title="Прямоугольник: дом или комната (R)" aria-pressed="false">Прямоугольник</button>
-      <button type="button" data-tool="contour" title="Контур: дом или комната любой формы (C)" aria-pressed="false">Контур</button>
-      <button type="button" data-tool="partition" title="Перегородка (P)" aria-pressed="false">Перегородка</button>
-      <button type="button" data-tool="opening" title="Проём (O)" aria-pressed="false">Проём</button>
-      <button type="button" data-tool="joint" title="Деформационный шов (J)" aria-pressed="false">Шов</button>
-      <button type="button" data-tool="ruler" title="Линейка (L)" aria-pressed="false">Линейка</button>
+      <button type="button" data-action="png" data-icon="image" class="icon-only" title="Картинка плана PNG" aria-label="Картинка плана PNG"></button>
+      <button type="button" data-action="print" data-icon="print" title="Печать и PDF (Ctrl+P)">Печать / PDF</button>
     </nav>
   </header>
 
   <main class="workspace">
+    <nav class="rail" aria-label="Инструменты">
+      <button type="button" data-tool="select" data-icon="select" title="Выбор и перетаскивание (V)" aria-pressed="true"><span>Выбор</span></button>
+      <span class="rail-divider" aria-hidden="true"></span>
+      <button type="button" data-tool="rect" data-icon="rect" title="Прямоугольник: дом или комната (R)" aria-pressed="false"><span>Комната</span></button>
+      <button type="button" data-tool="contour" data-icon="contour" title="Контур: дом или комната любой формы (C)" aria-pressed="false"><span>Контур</span></button>
+      <button type="button" data-tool="partition" data-icon="partition" title="Перегородка (P)" aria-pressed="false"><span>Перегородка</span></button>
+      <button type="button" data-tool="opening" data-icon="opening" title="Проём, дверь (O)" aria-pressed="false"><span>Проём</span></button>
+      <span class="rail-divider" aria-hidden="true"></span>
+      <button type="button" data-tool="joint" data-icon="joint" title="Деформационный шов (J)" aria-pressed="false"><span>Шов</span></button>
+      <button type="button" data-tool="ruler" data-icon="ruler" title="Линейка (L)" aria-pressed="false"><span>Линейка</span></button>
+      <span class="rail-divider" aria-hidden="true"></span>
+      <button type="button" data-action="house" data-icon="house" title="Новый дом или квартира по внутренним размерам"><span>Дом…</span></button>
+    </nav>
+
     <section class="plan-area" aria-label="План">
       <canvas id="plan"></canvas>
       <p id="status" class="status" role="status">Загрузка…</p>
+      <div class="zoom" aria-label="Масштаб">
+        <button type="button" data-action="zoom-out" data-icon="minus" class="icon-only" title="Отдалить" aria-label="Отдалить"></button>
+        <button type="button" data-action="fit" data-icon="fit" class="icon-only" title="Весь план в окне" aria-label="Весь план в окне"></button>
+        <button type="button" data-action="zoom-in" data-icon="plus" class="icon-only" title="Приблизить" aria-label="Приблизить"></button>
+      </div>
     </section>
 
     <aside id="panel" class="panel">
@@ -76,7 +86,7 @@
           <h2 id="object-title"></h2>
           <p id="object-info" class="hint"></p>
           <div id="object-fields"></div>
-          <div class="button-row"><button type="button" id="object-delete" class="danger">Удалить</button></div>
+          <div class="button-row"><button type="button" id="object-delete" class="danger" data-icon="trash"><span class="label">Удалить</span></button></div>
         </div>
 
         <div id="room-settings" hidden>
@@ -93,7 +103,7 @@
               <span id="texture-name" class="texture-name"></span>
             </div>
             <div class="texture-buttons">
-              <button type="button" id="choose-tile" title="Плитка из каталога (Ctrl+K)">Выбрать…</button>
+              <button type="button" id="choose-tile" data-icon="catalog" title="Плитка из каталога (Ctrl+K)">Выбрать…</button>
               <button type="button" id="swap-tile" title="Поменять длину и ширину плитки">Длина ⇄ ширина</button>
               <button type="button" id="color-only" title="Убрать рисунок: плитка — просто цветом">Только цвет</button>
             </div>

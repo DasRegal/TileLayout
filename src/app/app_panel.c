@@ -1319,8 +1319,8 @@ static void refresh_space(AppPanel *panel, TlSpace *space)
 {
     TlProject *project = panel->document->project;
     gtk_entry_set_text(GTK_ENTRY(panel->space_name), space->name);
-    set_label(panel->space_area, "%.2f м²", tl_space_area(space) / 1e6);
-    set_label(panel->space_perimeter, "%.0f мм", tl_space_perimeter(space));
+    set_label(panel->space_area, "%.2f м²", tl_space_room_area(space) / 1e6);
+    set_label(panel->space_perimeter, "%.0f мм", tl_space_room_perimeter(space));
     GtkComboBoxText *floor = GTK_COMBO_BOX_TEXT(panel->floor_source);
     gtk_combo_box_text_remove_all(floor);
     gtk_combo_box_text_append(floor, "0", "Своя раскладка");

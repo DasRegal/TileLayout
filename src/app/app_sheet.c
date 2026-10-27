@@ -178,13 +178,13 @@ static void add_rooms(AppSheet *sheet, const TlSummary *summary, bool mono)
 {
     add_text(sheet, "<b>По комнатам</b>", 16);
     add_row(sheet, 2, ROOM_COLUMNS, ROOM_ALIGN, 7, true,
-            cells_from("<b>Комната</b>", "<b>Пол, м²</b>", "<b>Под плитку, м²</b>", "<b>Плитка / раскладка</b>",
+            cells_from("<b>Комната</b>", "<b>Площадь, м²</b>", "<b>Под плитку, м²</b>", "<b>Плитка / раскладка</b>",
                        "<b>Плиток</b>", "<b>Клей, кг</b>", "<b>СВП</b>", NULL));
     for (size_t i = 0; i < summary->rooms.count; i++) {
         const TlRoomSummary *room = &summary->rooms.items[i];
         TlSpace *space = room->space;
         char *name = escaped(space->name);
-        char *floor = g_strdup_printf("%.2f", tl_space_area(space) / 1e6);
+        char *floor = g_strdup_printf("%.2f", tl_space_room_area(space) / 1e6);
         if (!room->tiled) {
             add_row(sheet, 2, ROOM_COLUMNS, ROOM_ALIGN, 7, false,
                     cells_from(name, floor, "—", "без плитки", "", "", "", NULL));
@@ -238,8 +238,8 @@ AppSheet *app_sheet_new_calculation(TlProject *project, const char *title, bool 
     time_t now = time(NULL);
     strftime(date, sizeof date, "%d.%m.%Y", localtime(&now));
     GString *intro = g_string_new(NULL);
-    g_string_append_printf(intro, "Дата: %s\nПлощадь пола: <b>%.2f м²</b>, под плитку: <b>%.2f м²</b>", date,
-                           summary.floor_area / 1e6, summary.tiled_area / 1e6);
+    g_string_append_printf(intro, "Дата: %s\nПлощадь комнат: <b>%.2f м²</b>; под плитку: <b>%.2f м²</b> (с полом под дверьми)",
+                           date, summary.room_area / 1e6, summary.tiled_area / 1e6);
     if (summary.floor_area - summary.tiled_area > 1000)
         g_string_append_printf(intro, ", без плитки: %.2f м²", (summary.floor_area - summary.tiled_area) / 1e6);
     add_text(sheet, intro->str, 13);

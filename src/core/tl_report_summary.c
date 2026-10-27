@@ -4,7 +4,10 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include "tl_memory.h"
 
 /* ---- нумерация ------------------------------------------------------------- */
 
@@ -24,65 +27,113 @@ void tl_report_assign_numbers(TlProject *project)
     tl_report_free_groups(&groups);
 }
 
-/* ---- пары обрезков ---------------------------------------------------------- */
+/* ---- пары обрезков ----------------------------------------------------------
+ *
+ * Из одной плитки — два куска, каждый у своего края плитки: так у каждого
+ * остаются заводские кромки к швам, а рез идёт к стене. Полоса на всю высоту
+ * плитки встаёт в пару по ширине, полоса на всю ширину — по высоте; угловой
+ * кусок (обрезан с двух сторон) — у угла плитки, ему подходит и то и другое.
+ * Пары — жадно: самая широкая полоса с самой узкой, если вместе с запасом на
+ * рез они помещаются в плитку. */
 
 typedef struct Strip {
     double size;
-    TlPieceRef ref;
+    size_t piece;  /* номер в списке кусков */
 } Strip;
 
 TL_ARRAY_DEFINE(StripList, Strip, strip_list)
+
+/* Список кусков, по которому сортируются полосы (для одинакового порядка на всех платформах). */
+static const TlPieceList *sorting_pieces;
 
 static int compare_strips(const void *left, const void *right)
 {
     const Strip *a = left, *b = right;
     if (a->size != b->size)
         return a->size < b->size ? -1 : 1;
-    if (a->ref.space->id != b->ref.space->id) /* для одинакового результата на всех платформах */
-        return a->ref.space->id < b->ref.space->id ? -1 : 1;
-    return tl_compare_cells(a->ref.cell, b->ref.cell);
+    const TlPieceRef *ra = &sorting_pieces->items[a->piece].ref, *rb = &sorting_pieces->items[b->piece].ref;
+    if (ra->space->id != rb->space->id)
+        return ra->space->id < rb->space->id ? -1 : 1;
+    return tl_compare_cells(ra->cell, rb->cell);
 }
 
-static void pair_strips(StripList *strips, double full_length, double allowance, TlOffcutPairList *pairs)
+static void pair_strips(const TlPieceList *pieces, StripList *strips, double full_length, double allowance,
+                        bool across_width, bool *used, TlOffcutPairList *pairs)
 {
     if (strips->count < 2)
         return;
+    sorting_pieces = pieces;
     qsort(strips->items, strips->count, sizeof(Strip), compare_strips);
     size_t narrowest = 0, widest = strips->count - 1;
     while (narrowest < widest) {
         if (strips->items[narrowest].size + strips->items[widest].size + allowance <= full_length + 1e-6) {
-            TlOffcutPair pair = {strips->items[narrowest].ref, strips->items[widest].ref};
+            size_t a = strips->items[narrowest].piece, b = strips->items[widest].piece;
+            TlOffcutPair pair = {pieces->items[a].ref, pieces->items[b].ref, across_width};
             tl_offcut_pair_list_push(pairs, pair);
+            used[a] = used[b] = true;
             narrowest++;
         }
         widest--;
     }
 }
 
+typedef enum PieceShape { PIECE_WHOLE, PIECE_ACROSS_WIDTH, PIECE_ACROSS_HEIGHT, PIECE_CORNER } PieceShape;
+
+static PieceShape piece_shape(const TlPiece *piece, double tile_width, double tile_height)
+{
+    bool full_height = piece->height >= tile_height - 0.5, full_width = piece->width >= tile_width - 0.5;
+    if (full_height && full_width)
+        return PIECE_WHOLE;      /* фигурный кусок во всю плитку — из остатка не выйдет */
+    if (full_height)
+        return PIECE_ACROSS_WIDTH;
+    if (full_width)
+        return PIECE_ACROSS_HEIGHT;
+    return PIECE_CORNER;
+}
+
+/* Пары: сначала по одному направлению (угловые куски — туда), потом по другому
+   (оставшиеся угловые). width_first — сначала по ширине плитки. */
+static TlOffcutPairList pair_in_order(const TlPieceList *pieces, double tile_width, double tile_height,
+                                      double allowance, bool square, bool width_first)
+{
+    TlOffcutPairList pairs = {0};
+    bool *used = tl_calloc(pieces->count + 1, sizeof *used);
+    for (int pass = 0; pass < 2; pass++) {
+        bool across_width = (pass == 0) == width_first;
+        StripList strips = {0};
+        for (size_t i = 0; i < pieces->count; i++) {
+            const TlPiece *piece = &pieces->items[i];
+            PieceShape shape = piece_shape(piece, tile_width, tile_height);
+            if (used[i] || shape == PIECE_WHOLE)
+                continue;
+            if (square) { /* у квадрата куски поворачиваются: всё — по одному направлению */
+                if (pass == 0)
+                    strip_list_push(&strips, (Strip){fmin(piece->width, piece->height), i});
+                continue;
+            }
+            bool fits = shape == PIECE_CORNER || shape == (across_width ? PIECE_ACROSS_WIDTH : PIECE_ACROSS_HEIGHT);
+            if (fits)
+                strip_list_push(&strips, (Strip){across_width ? piece->width : piece->height, i});
+        }
+        pair_strips(pieces, &strips, across_width || square ? tile_width : tile_height, allowance,
+                    across_width || square, used, &pairs);
+        strip_list_free(&strips);
+    }
+    free(used);
+    return pairs;
+}
+
 static TlOffcutPairList pair_pieces(const TlPieceList *pieces, double tile_width, double tile_height,
                                     double allowance, bool square)
 {
-    TlOffcutPairList pairs = {0};
-    StripList across_width = {0}, across_height = {0};
-    for (size_t i = 0; i < pieces->count; i++) {
-        const TlPiece *piece = &pieces->items[i];
-        bool full_height = piece->height >= tile_height - 0.5;
-        bool full_width = piece->width >= tile_width - 0.5;
-        if (full_height && !full_width)        /* полоса на всю высоту плитки */
-            strip_list_push(&across_width, (Strip){piece->width, piece->ref});
-        else if (full_width && !full_height)   /* полоса на всю ширину */
-            strip_list_push(&across_height, (Strip){piece->height, piece->ref});
+    TlOffcutPairList width_first = pair_in_order(pieces, tile_width, tile_height, allowance, square, true);
+    TlOffcutPairList height_first = pair_in_order(pieces, tile_width, tile_height, allowance, square, false);
+    if (height_first.count > width_first.count) {
+        tl_offcut_pair_list_free(&width_first);
+        return height_first;
     }
-    if (square) {                              /* у квадрата полосы взаимозаменяемы */
-        for (size_t i = 0; i < across_height.count; i++)
-            strip_list_push(&across_width, across_height.items[i]);
-        across_height.count = 0;
-    }
-    pair_strips(&across_width, tile_width, allowance, &pairs);
-    pair_strips(&across_height, tile_height, allowance, &pairs);
-    strip_list_free(&across_width);
-    strip_list_free(&across_height);
-    return pairs;
+    tl_offcut_pair_list_free(&height_first);
+    return width_first;
 }
 
 TlOffcutPairList tl_report_offcut_pairs(const TlTileSettings *tile, const TlPieceList *pieces)
@@ -248,6 +299,7 @@ TlSummary tl_report_summarize(TlProject *project)
         TlLayout *layout = tl_space_layout(space);
         TlRoomSummary room = {space, layout, tl_space_effective_tile(space)->enabled && !layout->too_many, 0, 0, 0};
         summary.floor_area += tl_space_area(space);
+        summary.room_area += tl_space_room_area(space);
         if (room.tiled) {
             const TlTileSettings *tile = tl_space_effective_tile(space);
             room.glue_kg = tl_layout_glue_kg(space, layout);

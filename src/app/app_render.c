@@ -579,7 +579,7 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
     char area[48], tiles[48], source[160];
     const char *lines[4] = {space->name, area};
     size_t count = 2;
-    snprintf(area, sizeof area, "%.2f м²", tl_space_area(space) / 1e6);
+    snprintf(area, sizeof area, "%.2f м²", tl_space_room_area(space) / 1e6);
     const TlTileSettings *tile = tl_space_effective_tile(space);
     if (tile->enabled) {
         TlLayout *layout = tl_space_layout(space);

@@ -5,6 +5,7 @@
  */
 #include "tl_report_groups.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -39,27 +40,21 @@ static TlCutPart strip_part(const char *room, int number, TlRect rect)
     return part;
 }
 
-static bool strip_across_width(const TlTileSettings *tile, double width, double height)
+/* Две подрезки из одной плитки — каждая у своего края (у углового куска — в
+   углу), отход между ними. across_width — бок о бок по ширине плитки. */
+static void add_pair_parts(TlCutCard *card, const TlTileSettings *tile, bool across_width, const char *first_room,
+                           const TlTile *first, const char *second_room, const TlTile *second)
 {
-    return height >= tile->tile_height - 0.5 && width < tile->tile_width - 0.5;
-}
-
-/* Две полосы из одной плитки — у противоположных краёв, отход между ними. */
-static void add_strip_parts(TlCutCard *card, const TlTileSettings *tile, const char *first_room,
-                            const TlTile *first, const char *second_room, const TlTile *second)
-{
-    bool first_across = strip_across_width(tile, first->piece_width, first->piece_height);
-    bool second_across = strip_across_width(tile, second->piece_width, second->piece_height);
     double w = tile->tile_width, h = tile->tile_height;
-    if (first_across || second_across || tl_tile_settings_is_square(tile)) {
-        double first_size = first_across ? first->piece_width : first->piece_height;
-        double second_size = second_across ? second->piece_width : second->piece_height;
-        tl_cut_part_list_push(&card->parts, strip_part(first_room, first->number, (TlRect){0, 0, first_size, h}));
-        tl_cut_part_list_push(&card->parts, strip_part(second_room, second->number, (TlRect){w - second_size, 0, w, h}));
-    } else {
-        tl_cut_part_list_push(&card->parts, strip_part(first_room, first->number, (TlRect){0, 0, w, first->piece_height}));
-        tl_cut_part_list_push(&card->parts, strip_part(second_room, second->number, (TlRect){0, h - second->piece_height, w, h}));
+    double w1 = first->piece_width, h1 = first->piece_height, w2 = second->piece_width, h2 = second->piece_height;
+    if (tl_tile_settings_is_square(tile)) { /* у квадрата куски поворачиваются: узкой стороной — по ширине */
+        double s1 = fmin(w1, h1), l1 = fmax(w1, h1), s2 = fmin(w2, h2), l2 = fmax(w2, h2);
+        w1 = s1, h1 = l1, w2 = s2, h2 = l2;
     }
+    TlRect first_rect = {0, 0, w1, h1};
+    TlRect second_rect = across_width ? (TlRect){w - w2, 0, w, h2} : (TlRect){0, h - h2, w2, h};
+    tl_cut_part_list_push(&card->parts, strip_part(first_room, first->number, first_rect));
+    tl_cut_part_list_push(&card->parts, strip_part(second_room, second->number, second_rect));
 }
 
 static bool lies_lengthwise(const TlTileSettings *tile) { return tile->tile_width >= tile->tile_height; }
@@ -146,7 +141,8 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
                 continue;
             }
             TlPieceRef mate;
-            if (partner_of(&summary, room->space, tile->cell, &mate)) {
+            const TlOffcutPair *pair = partner_of(&summary, room->space, tile->cell, &mate);
+            if (pair) {
                 if (!take_once(&done, room->space, tile->cell))
                     continue;
                 take_once(&done, mate.space, mate.cell);
@@ -163,7 +159,8 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
                 TlCutCard card = {.kind = TL_CARD_OFFCUT_PAIR, .tile = settings,
                                   .number = tile->number < mate_tile->number ? tile->number : mate_tile->number,
                                   .narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW};
-                add_strip_parts(&card, settings, room->space->name, tile, mate.space->name, mate_tile);
+                add_pair_parts(&card, settings, pair->across_width, room->space->name, tile, mate.space->name,
+                               mate_tile);
                 if (mate.space == room->space)
                     snprintf(card.title, sizeof card.title, "№%d + №%d  %s", tile->number,
                              mate_tile->number, room->space->name);

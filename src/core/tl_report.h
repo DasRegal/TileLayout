@@ -49,6 +49,7 @@ typedef struct TlPieceRef {
 
 typedef struct TlOffcutPair {
     TlPieceRef first, second;
+    bool across_width;     /* куски бок о бок по ширине плитки (иначе — один над другим) */
 } TlOffcutPair;
 
 /* Подрезанный кусок: где лежит и его габарит по осям плитки. */
@@ -70,7 +71,8 @@ typedef struct TlSummary {
     double glue_total_kg;
     TlPackLineList clips;        /* по количеству в упаковке */
     int clip_total;
-    double floor_area, tiled_area;
+    double floor_area, tiled_area; /* пол с полом под дверьми; из него — под плитку */
+    double room_area;              /* площадь комнат — без пола дверных проёмов */
     TlOffcutPairList offcut_pairs;
 } TlSummary;
 

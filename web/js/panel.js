@@ -294,7 +294,7 @@ export class Panel {
       this.showObjectFields(object, text.fields || []);
       const remove = this.root.querySelector('#object-delete');
       remove.hidden = !text.remove;
-      remove.textContent = text.remove;
+      remove.querySelector('.label').textContent = text.remove;
       remove.disabled = object.locked || (object.kind === 'vertex' && object.walls <= 3);
     }
     this.updateEmpty();
@@ -454,7 +454,7 @@ export function showSummary(root, summary, catalogs) {
   if (summary.clips.total > 0) {
     root.append(paragraph(`СВП: ${integer.format(summary.clips.total)} шт. — ${packs(summary.clips.packs, 'шт.', 'упак.')}`));
   }
-  root.append(paragraph(`Площадь пола: ${decimal.format(summary.floor_area)} м², под плитку: ${decimal.format(summary.tiled_area)} м²`));
+  root.append(paragraph(`Площадь комнат: ${decimal.format(summary.room_area)} м², под плитку: ${decimal.format(summary.tiled_area)} м² (с полом под дверьми)`));
 }
 
 function paragraph(text) {

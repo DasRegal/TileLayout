@@ -34,8 +34,12 @@ TlSpace *tl_space_new(int id, const char *name, TlTileSettings tile);
 void tl_space_free(TlSpace *space);
 void tl_space_set_name(TlSpace *space, const char *name);
 
+/* Пол комнаты вместе с полом под дверьми — то, что кладут плиткой. */
 double tl_space_area(const TlSpace *space);
 double tl_space_perimeter(const TlSpace *space);
+/* Площадь и периметр самой комнаты — без пола дверных проёмов (как на плане). */
+double tl_space_room_area(const TlSpace *space);
+double tl_space_room_perimeter(const TlSpace *space);
 bool tl_space_contains(const TlSpace *space, TlVec2 point);
 TlVec2 tl_space_label_point(const TlSpace *space);
 

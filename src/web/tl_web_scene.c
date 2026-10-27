@@ -228,7 +228,7 @@ static TlJson *space_json(TlSpace *space)
     tl_json_object_set(json, "holes", polygons(&space->holes));
     tl_json_object_set(json, "room", tl_web_polygon(tl_space_room_outline(space)));
     tl_json_object_set(json, "label", point(tl_space_label_point(space)));
-    tl_json_object_set(json, "area", tl_json_number(round(tl_space_area(space) / 1e4) / 100));
+    tl_json_object_set(json, "area", tl_json_number(round(tl_space_room_area(space) / 1e4) / 100));
     tl_json_object_set(json, "source", tl_space_has_shared_floor(space) ? tl_json_string(space->layout_source->name)
                                                                         : tl_json_null());
     const TlTileSettings *tile = tl_space_effective_tile(space);

@@ -1,7 +1,7 @@
 /*
  * Сводка к покупке для браузера:
  *
- * {"floor_area": м², "tiled_area": м²,
+ * {"floor_area": м² (с полом под дверьми), "room_area": м² (комнат, без проёмов), "tiled_area": м²,
  *  "types": [{"name": "600×300 мм", "tile": {настройки}, "rooms": ["Кухня", ...],
  *             "count": плиток без запаса, "whole": целых, "to_buy": с запасом,
  *             "area": м², "shared_saving": шт., "offcut_saving": шт.}],
@@ -59,7 +59,7 @@ static TlJson *room_json(const TlRoomSummary *room)
     tl_json_object_set(json, "count", tl_json_number(counted ? tl_layout_total(room->layout) : 0));
     tl_json_object_set(json, "glue_kg", rounded(room->glue_kg, 0.1));
     tl_json_object_set(json, "clips", tl_json_number(room->clip_count));
-    tl_json_object_set(json, "floor_area", rounded(tl_space_area(room->space) / 1e6, 0.01));
+    tl_json_object_set(json, "floor_area", rounded(tl_space_room_area(room->space) / 1e6, 0.01));
     tl_json_object_set(json, "tiled_area", rounded(counted ? room->layout->floor_area / 1e6 : 0, 0.01));
     tl_json_object_set(json, "tiled", tl_json_bool(room->tiled));
     const TlTileSettings *tile = tl_space_effective_tile(room->space);
@@ -82,6 +82,7 @@ const char *tl_web_summary(void)
     TlSummary summary = tl_report_summarize(tl_web_project());
     TlJson *json = tl_json_object();
     tl_json_object_set(json, "floor_area", rounded(summary.floor_area / 1e6, 0.01));
+    tl_json_object_set(json, "room_area", rounded(summary.room_area / 1e6, 0.01));
     tl_json_object_set(json, "tiled_area", rounded(summary.tiled_area / 1e6, 0.01));
     TlJson *types = tl_json_array();
     for (size_t i = 0; i < summary.types.count; i++)

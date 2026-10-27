@@ -79,11 +79,11 @@ typedef struct ToolEntry {
 
 static const ToolEntry TOOL_ENTRIES[] = {
     {APP_TOOL_SELECT, "select", "Выбор", "Выбор и правка (V)"},
-    {APP_TOOL_RECT, "rect", "Прямоугольник", "Дом прямоугольником, а внутри дома — комната (R)"},
+    {APP_TOOL_RECT, "rect", "Комната", "Прямоугольник: на пустом месте — дом, внутри дома — комната (R)"},
     {APP_TOOL_CONTOUR, "contour", "Контур", "Дом по точкам, а внутри дома — комната (P)"},
     {APP_TOOL_PARTITION, "partition", "Перегородка", "Перегородка любой длины (W)"},
     {APP_TOOL_OPENING, "opening", "Проём", "Проём в стене или перегородке (O)"},
-    {APP_TOOL_TILES, "tile_move", "Сдвиг плитки", "Сдвинуть сетку плитки мышью (T)"},
+    {APP_TOOL_TILES, "tile_move", "Плитка", "Сдвинуть сетку плитки мышью (T)"},
     {APP_TOOL_EXPANSION_JOINT, "expansion_joint", "Шов", "Деформационный шов в покрытии (J)"},
     {APP_TOOL_RULER, "ruler", "Линейка", "Линейка: измерить расстояние (M)"},
 };
@@ -650,10 +650,13 @@ static GtkToolItem *tool_button(GtkToolItem *item, const char *icon, const char 
     return item;
 }
 
-/* Кнопки панели инструментов — с узкими полями по бокам, чтобы все уместились. */
+/* Кнопки панелей — с узкими полями; у инструментов слева — мелкая подпись под значком. */
 static void compact_toolbar_buttons(GtkWidget *toolbar)
 {
-    static const char CSS[] = "#main-toolbar toolbutton > button { padding-left: 5px; padding-right: 5px; }";
+    static const char CSS[] = "#main-toolbar toolbutton > button { padding-left: 5px; padding-right: 5px; }\n"
+                              "#tools-rail toolbutton > button { padding: 4px 2px; }\n"
+                              "#tools-rail toolbutton label { font-size: 8.5pt; }\n"
+                              "#tools-rail { border-right: 1px solid alpha(currentColor, 0.15); }";
     gtk_widget_set_name(toolbar, "main-toolbar");
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider, CSS, -1, NULL);
@@ -662,10 +665,13 @@ static void compact_toolbar_buttons(GtkWidget *toolbar)
     g_object_unref(provider);
 }
 
+static void on_print_button(GtkToolButton *button, AppWindow *self) { open_print_dialog(self); }
+
+/* Сверху: отмена, вид, печать. */
 static GtkWidget *build_toolbar(AppWindow *self)
 {
     GtkWidget *toolbar = gtk_toolbar_new();
-    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH);
+    gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
     compact_toolbar_buttons(toolbar);
     GtkToolItem *undo = tool_button(gtk_tool_button_new(NULL, NULL), "undo", "Отменить", "Отменить (Ctrl+Z)");
     g_signal_connect(undo, "clicked", G_CALLBACK(on_undo), self);
@@ -673,18 +679,6 @@ static GtkWidget *build_toolbar(AppWindow *self)
     GtkToolItem *redo = tool_button(gtk_tool_button_new(NULL, NULL), "redo", "Повторить", "Повторить (Ctrl+Shift+Z)");
     g_signal_connect(redo, "clicked", G_CALLBACK(on_redo), self);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), redo, -1);
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
-
-    GSList *group = NULL;
-    for (size_t i = 0; i < G_N_ELEMENTS(TOOL_ENTRIES); i++) {
-        GtkToolItem *item = gtk_radio_tool_button_new(group);
-        group = gtk_radio_tool_button_get_group(GTK_RADIO_TOOL_BUTTON(item));
-        tool_button(item, TOOL_ENTRIES[i].icon, TOOL_ENTRIES[i].label, TOOL_ENTRIES[i].tip);
-        g_object_set_data(G_OBJECT(item), "tool", GINT_TO_POINTER(TOOL_ENTRIES[i].tool));
-        g_signal_connect(item, "toggled", G_CALLBACK(on_tool_toggled), self);
-        gtk_toolbar_insert(GTK_TOOLBAR(toolbar), item, -1);
-        self->tool_buttons[TOOL_ENTRIES[i].tool] = item;
-    }
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
     GtkToolItem *fit = tool_button(gtk_tool_button_new(NULL, NULL), "fit", "Вписать", "Показать весь план (F)");
     g_signal_connect(fit, "clicked", G_CALLBACK(on_fit), self);
@@ -696,6 +690,7 @@ static GtkWidget *build_toolbar(AppWindow *self)
         GtkToolItem *item = gtk_toggle_tool_button_new();
         char *tip = g_strdup_printf("Показать / скрыть: %s", VIEW_TOGGLES[i].label);
         tool_button(item, VIEW_TOGGLES[i].icon, VIEW_TOGGLES[i].label, tip);
+        gtk_tool_item_set_is_important(item, TRUE); /* подпись рядом со значком */
         g_free(tip);
         gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(item), *view_flag(self, i));
         g_object_set_data(G_OBJECT(item), "view", GINT_TO_POINTER(i));
@@ -703,7 +698,38 @@ static GtkWidget *build_toolbar(AppWindow *self)
         gtk_toolbar_insert(GTK_TOOLBAR(toolbar), item, -1);
         self->view_buttons[i] = item;
     }
+    GtkToolItem *space = gtk_separator_tool_item_new(); /* печать — у правого края */
+    gtk_separator_tool_item_set_draw(GTK_SEPARATOR_TOOL_ITEM(space), FALSE);
+    gtk_tool_item_set_expand(space, TRUE);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), space, -1);
+    GtkToolItem *print = tool_button(gtk_tool_button_new(NULL, NULL), "print", "Печать / PDF", "Печать и PDF (Ctrl+P)");
+    gtk_tool_item_set_is_important(print, TRUE);
+    g_signal_connect(print, "clicked", G_CALLBACK(on_print_button), self);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), print, -1);
     return toolbar;
+}
+
+/* Слева: инструменты — значок и подпись под ним, по одному в ряд. */
+static GtkWidget *build_tools_rail(AppWindow *self)
+{
+    GtkWidget *rail = gtk_toolbar_new();
+    gtk_orientable_set_orientation(GTK_ORIENTABLE(rail), GTK_ORIENTATION_VERTICAL);
+    gtk_toolbar_set_style(GTK_TOOLBAR(rail), GTK_TOOLBAR_BOTH);
+    gtk_widget_set_name(rail, "tools-rail");
+    GSList *group = NULL;
+    for (size_t i = 0; i < G_N_ELEMENTS(TOOL_ENTRIES); i++) {
+        if (i == 1 || i == 5) /* выбор | рисование плана | плитка, швы, линейка */
+            gtk_toolbar_insert(GTK_TOOLBAR(rail), gtk_separator_tool_item_new(), -1);
+        GtkToolItem *item = gtk_radio_tool_button_new(group);
+        group = gtk_radio_tool_button_get_group(GTK_RADIO_TOOL_BUTTON(item));
+        tool_button(item, TOOL_ENTRIES[i].icon, TOOL_ENTRIES[i].label, TOOL_ENTRIES[i].tip);
+        gtk_tool_item_set_homogeneous(item, TRUE); /* одинаковой ширины — колонкой */
+        g_object_set_data(G_OBJECT(item), "tool", GINT_TO_POINTER(TOOL_ENTRIES[i].tool));
+        g_signal_connect(item, "toggled", G_CALLBACK(on_tool_toggled), self);
+        gtk_toolbar_insert(GTK_TOOLBAR(rail), item, -1);
+        self->tool_buttons[TOOL_ENTRIES[i].tool] = item;
+    }
+    return rail;
 }
 
 static GtkWidget *build_statusbar(AppWindow *self)
@@ -798,7 +824,10 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_paned_pack1(GTK_PANED(paned), app_canvas_widget(self->canvas), TRUE, FALSE);
     gtk_paned_pack2(GTK_PANED(paned), app_panel_widget(self->panel), FALSE, FALSE);
-    gtk_box_pack_start(GTK_BOX(layout), paned, TRUE, TRUE, 0);
+    GtkWidget *middle = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); /* инструменты | план | панель */
+    gtk_box_pack_start(GTK_BOX(middle), build_tools_rail(self), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(middle), paned, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(layout), middle, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(layout), build_statusbar(self), FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(self->window), layout);
 

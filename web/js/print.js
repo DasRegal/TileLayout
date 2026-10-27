@@ -418,7 +418,7 @@ function calculationSheet(summary, title, mono) {
   });
   sheet.innerHTML = `
     <h1>${escape(title)}</h1>
-    <p>Дата: ${date}<br>Площадь пола: <b>${number.format(summary.floor_area)} м²</b>, под плитку: <b>${number.format(summary.tiled_area)} м²</b>${untiled > 0.001 ? `, без плитки: ${number.format(untiled)} м²` : ''}</p>
+    <p>Дата: ${date}<br>Площадь комнат: <b>${number.format(summary.room_area)} м²</b>; под плитку: <b>${number.format(summary.tiled_area)} м²</b> (с полом под дверьми)${untiled > 0.001 ? `, без плитки: ${number.format(untiled)} м²` : ''}</p>
     <h2>Плитка к покупке</h2>
     <table><thead><tr><th>№</th><th>Плитка</th><th>Комнаты</th><th class="n">Площадь, м²</th><th class="n">Нужно, шт.</th><th class="n">Запас</th><th class="n">Купить, шт.</th><th class="n">Купить, м²</th></tr></thead>
     <tbody>${types.join('')}</tbody></table>
@@ -426,7 +426,7 @@ function calculationSheet(summary, title, mono) {
     <p>${summary.glue.total_kg > 0 ? `Клей: <b>${decimal.format(summary.glue.total_kg)} кг</b> =${packs(summary.glue.packs, 'кг', 'мешк.')}<br>` : ''}
        ${summary.clips.total > 0 ? `СВП: <b>${summary.clips.total} шт.</b> =${packs(summary.clips.packs, 'шт.', 'уп.')}` : ''}</p>
     <h2>По комнатам</h2>
-    <table><thead><tr><th>Комната</th><th class="n">Пол, м²</th><th class="n">Под плитку, м²</th><th>Плитка / раскладка</th><th class="n">Плиток</th><th class="n">Клей, кг</th><th class="n">СВП</th></tr></thead>
+    <table><thead><tr><th>Комната</th><th class="n">Площадь, м²</th><th class="n">Под плитку, м²</th><th>Плитка / раскладка</th><th class="n">Плиток</th><th class="n">Клей, кг</th><th class="n">СВП</th></tr></thead>
     <tbody>${rooms.join('')}</tbody></table>
     <p><small>«Нужно» — плиток на укладку с учётом общих плиток на стыке комнат с общей раскладкой и использования остатков
     подрезок. В таблице по комнатам — плитки каждой комнаты отдельно.</small></p>`;

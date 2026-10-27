@@ -26,7 +26,7 @@ static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
     g_string_append_printf(text, "Всего на укладку: <b>%d</b> шт.\n", total);
     g_string_append_printf(text, "С запасом %.0f%%: <b>%d</b> шт. = <b>%.2f м²</b>\n", tile->reserve_percent,
                            with_reserve, with_reserve * tile->tile_width * tile->tile_height / 1e6);
-    g_string_append_printf(text, "Площадь под плитку: %.2f м²\n", layout->floor_area / 1e6);
+    g_string_append_printf(text, "Под плитку (с полом под дверью): %.2f м²\n", layout->floor_area / 1e6);
     g_string_append_printf(text, "Клей: %.2f м² × %.2f кг × %.1f мм = <b>%.1f кг</b> → <b>%d</b> мешк. по %g кг\n",
                            layout->floor_area / 1e6, tile->glue_kg_per_m2_mm, tile->glue_layer_mm, kg,
                            tl_layout_glue_bags(space, layout), tile->glue_bag_kg);
@@ -52,8 +52,8 @@ static void append_rooms_of_type(GString *text, const TlTileTypeSummary *type)
 static void append_project(GString *text, const TlSummary *summary)
 {
     g_string_append(text, "<b>По проекту</b>\n");
-    g_string_append_printf(text, "Площадь пола: %.2f м²\n", summary->floor_area / 1e6);
-    g_string_append_printf(text, "Под плитку: <b>%.2f м²</b>\n", summary->tiled_area / 1e6);
+    g_string_append_printf(text, "Площадь комнат: %.2f м²\n", summary->room_area / 1e6);
+    g_string_append_printf(text, "Под плитку (с полом под дверьми): <b>%.2f м²</b>\n", summary->tiled_area / 1e6);
     if (summary->floor_area - summary->tiled_area > 1000)
         g_string_append_printf(text, "Без плитки: %.2f м²\n", (summary->floor_area - summary->tiled_area) / 1e6);
     for (size_t i = 0; i < summary->types.count; i++) {

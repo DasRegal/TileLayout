@@ -137,8 +137,8 @@ const char *tl_web_space_tile(int space_id)
         tl_json_array_push(sources, source);
     }
     tl_json_object_set(result, "sources", sources);
-    tl_json_object_set(result, "area", tl_json_number(round(tl_space_area(space) / 1e4) / 100));
-    tl_json_object_set(result, "perimeter", tl_json_number(round(tl_space_perimeter(space))));
+    tl_json_object_set(result, "area", tl_json_number(round(tl_space_room_area(space) / 1e4) / 100));
+    tl_json_object_set(result, "perimeter", tl_json_number(round(tl_space_room_perimeter(space))));
     tl_json_object_set(result, "tile", tl_web_tile_json(tl_space_effective_tile(space)));
     return tl_web_keep(&web.tile, result);
 }

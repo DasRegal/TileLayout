@@ -43,6 +43,16 @@ double tl_space_area(const TlSpace *space)
 
 double tl_space_perimeter(const TlSpace *space) { return tl_polygon_perimeter(&space->outline); }
 
+double tl_space_room_area(const TlSpace *space)
+{
+    double area = tl_polygon_area(tl_space_room_outline(space));
+    for (size_t i = 0; i < space->holes.count; i++)
+        area -= tl_polygon_area(&space->holes.items[i]);
+    return area;
+}
+
+double tl_space_room_perimeter(const TlSpace *space) { return tl_polygon_perimeter(tl_space_room_outline(space)); }
+
 bool tl_space_contains(const TlSpace *space, TlVec2 point)
 {
     if (!tl_polygon_contains(&space->outline, point))
