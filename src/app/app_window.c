@@ -538,6 +538,60 @@ static void on_about(GtkMenuItem *item, AppWindow *self)
     g_free(runtime);
 }
 
+#define THANKS_MAIL "minuscreets@gmail.com"
+#define THANKS_WALLET "1DonatDAJiLsHMz5S23fmtXSPMmuS6AwT"
+
+static GtkWidget *selectable_label(const char *markup)
+{
+    GtkWidget *label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(label), markup);
+    gtk_label_set_selectable(GTK_LABEL(label), TRUE);
+    gtk_widget_set_can_focus(label, FALSE); /* иначе при открытии выделится весь текст */
+    return label;
+}
+
+/* «Сказать спасибо автору»: почта и кошелёк — выделяются мышью; Esc и «ОК» закрывают. */
+static void on_thanks(GtkButton *button, AppWindow *self)
+{
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Сказать спасибо автору", GTK_WINDOW(self->window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "ОК",
+                                                    GTK_RESPONSE_OK, NULL);
+    gtk_window_set_position(GTK_WINDOW(dialog), GTK_WIN_POS_CENTER_ON_PARENT);
+    gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    g_object_set(box, "margin", 18, NULL);
+    gtk_box_pack_start(GTK_BOX(box), selectable_label("<big>" THANKS_MAIL "</big>"), FALSE, FALSE, 0);
+    GtkWidget *frame = gtk_frame_new(NULL);
+    GtkWidget *wallet = selectable_label("<span font_family=\"monospace\" size=\"large\">" THANKS_WALLET "</span>");
+    g_object_set(wallet, "margin", 10, NULL);
+    gtk_container_add(GTK_CONTAINER(frame), wallet);
+    gtk_box_pack_start(GTK_BOX(box), frame, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))), box, TRUE, TRUE, 0);
+    gtk_widget_show_all(dialog);
+    gtk_widget_grab_focus(gtk_dialog_get_widget_for_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK));
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+/* План с кнопкой «Сказать спасибо автору» в левом верхнем углу. */
+static GtkWidget *build_plan(AppWindow *self)
+{
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(overlay), app_canvas_widget(self->canvas));
+    GtkWidget *thanks = gtk_button_new_with_label("Сказать спасибо автору");
+    gtk_button_set_image(GTK_BUTTON(thanks), gtk_image_new_from_pixbuf(app_icon_pixbuf("heart", 16)));
+    gtk_button_set_always_show_image(GTK_BUTTON(thanks), TRUE);
+    gtk_widget_set_name(thanks, "thanks-button");
+    gtk_widget_set_can_focus(thanks, FALSE); /* клавиши — плану */
+    gtk_widget_set_halign(thanks, GTK_ALIGN_START);
+    gtk_widget_set_valign(thanks, GTK_ALIGN_START);
+    g_object_set(thanks, "margin", 8, NULL);
+    g_signal_connect(thanks, "clicked", G_CALLBACK(on_thanks), self);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), thanks);
+    return overlay;
+}
+
 /* ---- построение ------------------------------------------------------------------ */
 
 static GtkWidget *menu_item(AppWindow *self, GtkWidget *menu, const char *label, const char *accelerator,
@@ -656,7 +710,8 @@ static void compact_toolbar_buttons(GtkWidget *toolbar)
     static const char CSS[] = "#main-toolbar toolbutton > button { padding-left: 5px; padding-right: 5px; }\n"
                               "#tools-rail toolbutton > button { padding: 4px 2px; }\n"
                               "#tools-rail toolbutton label { font-size: 8.5pt; }\n"
-                              "#tools-rail { border-right: 1px solid alpha(currentColor, 0.15); }";
+                              "#tools-rail { border-right: 1px solid alpha(currentColor, 0.15); }\n"
+                              "#thanks-button { padding: 2px 8px; }";
     gtk_widget_set_name(toolbar, "main-toolbar");
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider, CSS, -1, NULL);
@@ -822,7 +877,7 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     gtk_box_pack_start(GTK_BOX(layout), build_menu(self), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(layout), build_toolbar(self), FALSE, FALSE, 0);
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_pack1(GTK_PANED(paned), app_canvas_widget(self->canvas), TRUE, FALSE);
+    gtk_paned_pack1(GTK_PANED(paned), build_plan(self), TRUE, FALSE);
     gtk_paned_pack2(GTK_PANED(paned), app_panel_widget(self->panel), FALSE, FALSE);
     GtkWidget *middle = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); /* инструменты | план | панель */
     gtk_box_pack_start(GTK_BOX(middle), build_tools_rail(self), FALSE, FALSE, 0);

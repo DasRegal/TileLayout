@@ -67,6 +67,10 @@ button.primary:hover:not(:disabled) { background: #1a4387; }
   text-decoration: none;
 }
 
+.brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+.brand-text small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.brand-text small:empty { display: none; }
+
 .tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .bar button { padding: 5px 9px; font-size: 13.5px; }
 .divider { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
@@ -131,6 +135,33 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
   box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
 }
 .zoom button { border: 0; background: none; }
+
+.thanks {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--muted);
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
+}
+.thanks .icon { width: 18px; height: 18px; color: #c8506a; }
+.thanks:hover { color: var(--ink); }
+
+.thanks-dialog p { margin: 6px 0; user-select: text; }
+.thanks-mail { font-size: 15px; }
+.wallet {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ground);
+  font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
 .zoom button:hover { background: var(--ground); }
 
 .plan-area { position: relative; min-height: 0; }

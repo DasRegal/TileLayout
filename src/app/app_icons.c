@@ -298,6 +298,18 @@ static void draw_delete(cairo_t *cr)
     cairo_stroke(cr);
 }
 
+static void draw_heart(cairo_t *cr)
+{
+    ink(cr, "#c8506a", 2.5);
+    cairo_move_to(cr, 16, 26);
+    cairo_curve_to(cr, 9, 21, 5, 17, 5, 12);
+    cairo_curve_to(cr, 5, 6, 13, 5, 16, 11);
+    cairo_curve_to(cr, 19, 5, 27, 6, 27, 12);
+    cairo_curve_to(cr, 27, 17, 23, 21, 16, 26);
+    cairo_close_path(cr);
+    cairo_stroke(cr);
+}
+
 static void draw_magic(cairo_t *cr)
 {
     ink(cr, "#37474f", 2.8);
@@ -376,7 +388,7 @@ static const IconEntry ICONS[] = {
     {"opening", draw_opening}, {"tile_move", draw_tile_move}, {"fit", draw_fit},
     {"covering", draw_covering}, {"svp", draw_svp}, {"numbers", draw_numbers},
     {"lock", draw_lock_closed}, {"unlock", draw_lock_open}, {"house", draw_house},
-    {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print},
+    {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print}, {"heart", draw_heart},
     {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint},
 };
 

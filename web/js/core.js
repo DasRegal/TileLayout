@@ -34,6 +34,7 @@ export async function loadCore() {
       }
     },
     save: () => text(module._tl_web_save()),
+    version: () => text(module._tl_web_version()),
     scene: () => JSON.parse(text(module._tl_web_scene())),
     spaceAt: (x, y) => module._tl_web_space_at(x, y),
     spaceTile: (id) => JSON.parse(text(module._tl_web_space_tile(id))),

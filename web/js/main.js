@@ -436,6 +436,7 @@ const commands = {
   house: addHouse,
   png: exportPng,
   print: openPrintDialog,
+  thanks: () => document.getElementById('thanks-dialog').showModal(),
 };
 
 // ---- вид, PNG, печать ------------------------------------------------------------
@@ -644,6 +645,7 @@ async function start() {
     return;
   }
   document.body.classList.remove('loading');
+  document.getElementById('version').textContent = `версия ${state.core.version()}`;
   const draft = readDraft();
   let message = 'Пример проекта. Щёлкните комнату, чтобы настроить плитку; откройте свой файл кнопкой «Открыть».';
   if (draft) {

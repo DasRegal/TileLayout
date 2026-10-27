@@ -10,7 +10,7 @@
 </head>
 <body class="loading">
   <header class="bar">
-    <a class="brand" href="./"><img src="icon.svg" alt="" width="26" height="26"> TileLayout</a>
+    <a class="brand" href="./"><img src="icon.svg" alt="" width="26" height="26"><span class="brand-text">TileLayout<small id="version"></small></span></a>
     <nav class="tools" aria-label="Проект">
       <button type="button" data-action="open" data-icon="open" title="Открыть файл проекта (Ctrl+O)">Открыть</button>
       <button type="button" data-action="save" data-icon="save" title="Сохранить проект файлом (Ctrl+S)">Сохранить</button>
@@ -55,6 +55,7 @@
 
     <section class="plan-area" aria-label="План">
       <canvas id="plan"></canvas>
+      <button type="button" class="thanks" data-action="thanks" data-icon="heart">Сказать спасибо автору</button>
       <p id="status" class="status" role="status">Загрузка…</p>
       <div class="zoom" aria-label="Масштаб">
         <button type="button" data-action="zoom-out" data-icon="minus" class="icon-only" title="Отдалить" aria-label="Отдалить"></button>
@@ -186,6 +187,14 @@
       <label class="row"><span class="caption">Масштаб плана</span>
         <span class="control"><select id="print-scale"></select></span></label>
       <footer><span class="spacer"></span><button value="cancel">Отмена</button><button value="ok" class="primary">Печать…</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="thanks-dialog" class="small-dialog thanks-dialog">
+    <form method="dialog">
+      <p class="thanks-mail">minuscreets@gmail.com</p>
+      <p class="wallet">1DonatDAJiLsHMz5S23fmtXSPMmuS6AwT</p>
+      <footer><span class="spacer"></span><button value="ok" class="primary" autofocus>ОК</button></footer>
     </form>
   </dialog>
 

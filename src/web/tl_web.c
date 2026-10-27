@@ -76,6 +76,12 @@ bool tl_web_open(const char *json)
 
 const char *tl_web_error(void) { return web.error; }
 
+#ifndef TL_VERSION
+#define TL_VERSION "?"
+#endif
+
+const char *tl_web_version(void) { return TL_VERSION; }
+
 const char *tl_web_save(void)
 {
     free(web.saved);

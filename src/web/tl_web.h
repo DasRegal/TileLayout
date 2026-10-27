@@ -19,6 +19,8 @@ void tl_web_new_demo(void);
 /* Проект из текста файла; false — ошибка (см. tl_web_error), проект прежний. */
 bool tl_web_open(const char *json);
 const char *tl_web_error(void);
+/* Версия программы (project() в CMakeLists.txt). */
+const char *tl_web_version(void);
 /* Проект — текстом файла (*.tilelayout.json, как у настольной программы). */
 const char *tl_web_save(void);
 
