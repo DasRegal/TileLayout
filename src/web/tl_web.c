@@ -210,19 +210,22 @@ static bool set_fields_of(TlSpace *const *spaces, size_t count, const TlJson *fi
 {
     if (count == 0 || count > MAX_ROOMS || tl_json_type(fields) != TL_JSON_OBJECT)
         return false;
-    TlTileSettings changed[MAX_ROOMS];
-    bool remembered = false;
-    for (size_t i = 0; i < count; i++) {
+    /* в куче: у WebAssembly стек мал (64 КБ), а настройки комнаты — сотни байт */
+    TlTileSettings *changed = malloc(count * sizeof *changed);
+    bool remembered = false, ok = changed != NULL;
+    for (size_t i = 0; ok && i < count; i++) {
         changed[i] = *tl_space_effective_tile(spaces[i]);
-        if (!apply_fields(&changed[i], fields, &remembered))
-            return false;
+        ok = apply_fields(&changed[i], fields, &remembered);
     }
-    tl_history_checkpoint(web.history, web.project, merge_key, now_seconds);
-    for (size_t i = 0; i < count; i++)
-        *tl_space_effective_tile(spaces[i]) = changed[i];
-    if (remembered)
-        tl_tile_settings_remember_as_default(&changed[0]);
-    return true;
+    if (ok) {
+        tl_history_checkpoint(web.history, web.project, merge_key, now_seconds);
+        for (size_t i = 0; i < count; i++)
+            *tl_space_effective_tile(spaces[i]) = changed[i];
+        if (remembered)
+            tl_tile_settings_remember_as_default(&changed[0]);
+    }
+    free(changed);
+    return ok;
 }
 
 static bool set_fields(int space_id, const TlJson *fields, const char *merge_key, double now_seconds)
