@@ -4,7 +4,7 @@
 версии — [семантические](https://semver.org/lang/ru/): новые возможности поднимают вторую цифру,
 исправления — третью.
 
-## [Не выпущено]
+## [1.10] — 2026-10-27
 
 ### Добавлено
 
@@ -294,6 +294,7 @@
 областей; раскладка и расчёт плитки, клея и СВП; печать и PDF с чертежами подрезок; переносная
 сборка для Windows x64.
 
+[1.10]: https://github.com/DasRegal/TileLayout/compare/v1.9...v1.10
 [1.9]: https://github.com/DasRegal/TileLayout/compare/v1.8...v1.9
 [1.8]: https://github.com/DasRegal/TileLayout/compare/v1.7...v1.8
 [1.7]: https://github.com/DasRegal/TileLayout/compare/v1.6...v1.7
