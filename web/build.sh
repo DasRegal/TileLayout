@@ -36,5 +36,15 @@ cp "$build/wasm/tilelayout.js" "$build/wasm/tilelayout.wasm" "$output/"
 cp "$source_dir/packaging/linux/tilelayout.svg" "$output/icon.svg"
 cp -r "$source_dir/data/catalogs" "$output/catalogs"
 "$build/native/tl_catalog_index" "$source_dir/data/catalogs" "$output/catalogs.json"
+step "Метка сборки в адресах файлов"
+# GitHub Pages разрешает браузеру 10 минут держать файлы в кэше: без метки после
+# обновления браузер мог взять новую страницу со старыми скриптами. Метка — коммит
+# (или время сборки вне git): у каждой сборки свои адреса, всё грузится одной версией.
+stamp=$(git -C "$source_dir" rev-parse --short HEAD 2>/dev/null || date +%s)
+sed -i -e "s#href=\"style.css\"#href=\"style.css?v=$stamp\"#" \
+       -e "s#src=\"tilelayout.js\"#src=\"tilelayout.js?v=$stamp\"#" \
+       -e "s#src=\"js/main.js\"#src=\"js/main.js?v=$stamp\"#" "$output/index.html"
+sed -i -E "s#from '(\./[a-z_]+\.js)'#from '\1?v=$stamp'#" "$output"/js/*.js
+sed -i "s#tilelayout\.wasm#tilelayout.wasm?v=$stamp#g" "$output/tilelayout.js"
 touch "$output/.nojekyll" # GitHub Pages: отдавать файлы как есть
 du -sh "$output"
