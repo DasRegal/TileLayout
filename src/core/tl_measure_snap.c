@@ -141,16 +141,18 @@ static void offer_tiles(SnapSearch *search, TlProject *project)
 {
     for (size_t i = 0; i < project->spaces.count; i++) {
         TlSpace *space = project->spaces.items[i];
-        const TlTileSettings *tile = tl_space_effective_tile(space);
-        if (!tile->enabled)
+        if (!tl_space_effective_tile(space)->enabled)
             continue;
-        TlLayout *layout = tl_space_layout(space);
-        if (!layout || layout->too_many)
-            continue;
-        TlAffine world_to_local = tl_affine_inverted(&layout->local_to_world);
-        TlVec2 local_probe = tl_affine_apply(&world_to_local, search->probe);
-        for (size_t t = 0; t < layout->tiles.count; t++)
-            offer_tile_joints(search, layout, layout->tiles.items[t].rect, tile->joint_width / 2, local_probe);
+        for (size_t l = 0; l < tl_space_layout_count(space); l++) { /* основной пол и зоны */
+            const TlTileSettings *tile = tl_space_layout_tile(space, l);
+            TlLayout *layout = tl_space_layout_at(space, l);
+            if (!layout || layout->too_many)
+                continue;
+            TlAffine world_to_local = tl_affine_inverted(&layout->local_to_world);
+            TlVec2 local_probe = tl_affine_apply(&world_to_local, search->probe);
+            for (size_t t = 0; t < layout->tiles.count; t++)
+                offer_tile_joints(search, layout, layout->tiles.items[t].rect, tile->joint_width / 2, local_probe);
+        }
     }
 }
 

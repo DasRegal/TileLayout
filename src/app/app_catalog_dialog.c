@@ -279,7 +279,16 @@ static void open_user_folder(GtkWindow *parent)
     g_free(uri);
 }
 
-void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
+/* Выбранное — основному полу (zone == TL_ZONE_COUNT) или зоне пола. */
+static void apply_choice(AppDocument *document, TlZoneKind zone, const TlCatalog *catalog, const TlCatalogTile *tile)
+{
+    if (zone == TL_ZONE_COUNT)
+        app_command_set_tile_texture(document, catalog, tile);
+    else
+        app_command_set_zone_texture(document, zone, catalog, tile);
+}
+
+static void run_dialog(GtkWindow *parent, AppDocument *document, TlZoneKind zone)
 {
     TlSpace *space = document->selection.kind == APP_SELECT_SPACE ? document->selection.space : NULL;
     if (!space) {
@@ -288,7 +297,7 @@ void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
     }
     Picker picker = {0};
     build(&picker, parent);
-    const char *current = tl_space_effective_tile(space)->texture;
+    const char *current = zone == TL_ZONE_COUNT ? tl_space_effective_tile(space)->texture : space->zones[zone].tile.texture;
     fill_catalogs(&picker);
     fill_tiles(&picker, current);
     on_tile_selected(GTK_FLOW_BOX(picker.tiles), &picker);
@@ -306,13 +315,13 @@ void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
             continue;
         }
         if (response == RESPONSE_COLOR_ONLY) {
-            app_command_set_tile_texture(document, NULL, NULL);
+            apply_choice(document, zone, NULL, NULL);
         } else if (response == GTK_RESPONSE_ACCEPT) {
             GList *selected = gtk_flow_box_get_selected_children(GTK_FLOW_BOX(picker.tiles));
             const TlCatalog *catalog;
             const TlCatalogTile *tile;
             if (selected && card_tile(selected->data, &catalog, &tile))
-                app_command_set_tile_texture(document, catalog, tile);
+                apply_choice(document, zone, catalog, tile);
             g_list_free(selected);
         }
         break;
@@ -320,4 +329,14 @@ void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
     g_signal_handlers_disconnect_by_data(gtk_tree_view_get_selection(GTK_TREE_VIEW(picker.catalogs)), &picker);
     gtk_widget_destroy(picker.dialog);
     g_free(picker.group);
+}
+
+void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
+{
+    run_dialog(parent, document, TL_ZONE_COUNT);
+}
+
+void app_catalog_dialog_for_zone(GtkWindow *parent, AppDocument *document, TlZoneKind zone)
+{
+    run_dialog(parent, document, zone);
 }

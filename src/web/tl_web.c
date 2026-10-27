@@ -156,6 +156,23 @@ const char *tl_web_space_tile(int space_id)
         tl_json_array_push(formats, tl_json_string(name));
     }
     tl_json_object_set(result, "formats", formats);
+    TlJson *zones = tl_json_object();
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++) {
+        const TlZone *zone = &space->zones[kind];
+        TlJson *json = tl_json_object();
+        tl_json_object_set(json, "enabled", tl_json_bool(zone->enabled));
+        tl_json_object_set(json, "width", tl_json_number(zone->width));
+        tl_json_object_set(json, "height", tl_json_number(zone->height));
+        tl_json_object_set(json, "dx", tl_json_number(zone->dx));
+        tl_json_object_set(json, "dy", tl_json_number(zone->dy));
+        tl_json_object_set(json, "fit", tl_json_bool(zone->fit));
+        TlZone laid = tl_zone_effective(zone, (TlZoneKind)kind);
+        tl_json_object_set(json, "laid_width", tl_json_number(round(laid.width * 10) / 10));
+        tl_json_object_set(json, "laid_height", tl_json_number(round(laid.height * 10) / 10));
+        tl_json_object_set(json, "tile", tl_web_tile_json(&zone->tile));
+        tl_json_object_set(zones, tl_zone_key((TlZoneKind)kind), json);
+    }
+    tl_json_object_set(result, "zones", zones);
     TlJson *doors_json = tl_json_array();
     TlOpeningList doors = tl_project_space_doors(project, space);
     for (size_t i = 0; i < doors.count; i++)
@@ -323,6 +340,76 @@ bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, dou
     if (present == 1)
         snprintf(merge_key, sizeof merge_key, "tile_%s_%s", space_ids, key);
     bool ok = count > 0 && parsed && set_fields_of(spaces, count, parsed, merge_key, now_seconds);
+    tl_json_free(parsed);
+    return ok;
+}
+
+/* Зона комнаты по ключу "border" / "carpet"; TL_ZONE_COUNT — нет такой. */
+static TlZoneKind zone_kind(const char *key)
+{
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++)
+        if (strcmp(tl_zone_key((TlZoneKind)kind), key) == 0)
+            return (TlZoneKind)kind;
+    return TL_ZONE_COUNT;
+}
+
+/* Поля зоны из объекта: геометрия ("enabled", "width", "height", "dx", "dy") и поля плитки. */
+static bool apply_zone_fields(TlZone *zone, const TlJson *fields)
+{
+    static const char *const NUMBERS[] = {"width", "height", "dx", "dy"};
+    double *const targets[] = {&zone->width, &zone->height, &zone->dx, &zone->dy};
+    bool *const flags[] = {&zone->enabled, &zone->fit};
+    static const char *const FLAGS[] = {"enabled", "fit"};
+    for (size_t i = 0; i < 2; i++) {
+        const TlJson *value = tl_json_get(fields, FLAGS[i]);
+        if (!value)
+            continue;
+        if (tl_json_type(value) != TL_JSON_BOOL)
+            return false;
+        *flags[i] = tl_json_bool_or(value, false);
+    }
+    for (size_t i = 0; i < 4; i++) {
+        const TlJson *value = tl_json_get(fields, NUMBERS[i]);
+        if (!value)
+            continue;
+        double number = tl_json_number_or(value, NAN);
+        if (tl_json_type(value) != TL_JSON_NUMBER || !isfinite(number))
+            return false;
+        *targets[i] = number;
+    }
+    bool any_tile_field = false; /* "enabled" — у зоны свой, не плитки */
+    size_t count;
+    const TlTileField *table = tl_tile_settings_fields(&count);
+    for (size_t i = 0; i < count; i++)
+        any_tile_field |= strcmp(table[i].key, "enabled") != 0 && tl_json_get(fields, table[i].key) != NULL;
+    bool remembered = false, was_enabled = zone->tile.enabled;
+    bool ok = !any_tile_field || apply_fields(&zone->tile, fields, &remembered);
+    zone->tile.enabled = was_enabled;
+    return ok;
+}
+
+bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char *fields, double now_seconds)
+{
+    TlSpace *spaces[MAX_ROOMS];
+    size_t count = spaces_by_ids(space_ids, spaces);
+    TlZoneKind kind = zone_kind(zone);
+    TlJson *parsed = tl_json_parse(fields, NULL, 0);
+    bool ok = count > 0 && kind < TL_ZONE_COUNT && parsed && tl_json_type(parsed) == TL_JSON_OBJECT;
+    TlZone *changed = ok ? malloc(count * sizeof *changed) : NULL; /* в куче: стек WebAssembly мал */
+    ok = ok && changed;
+    for (size_t i = 0; ok && i < count; i++) {
+        changed[i] = spaces[i]->zones[kind];
+        ok = apply_zone_fields(&changed[i], parsed);
+    }
+    if (ok) { /* одно поле — серия правок склеивается */
+        char merge_key[200] = "";
+        if (tl_json_length(parsed) == 1)
+            snprintf(merge_key, sizeof merge_key, "zone_%s_%s_%s", zone, space_ids, tl_json_key_at(parsed, 0));
+        tl_web_checkpoint(merge_key, now_seconds);
+        for (size_t i = 0; i < count; i++)
+            spaces[i]->zones[kind] = changed[i];
+    }
+    free(changed);
     tl_json_free(parsed);
     return ok;
 }

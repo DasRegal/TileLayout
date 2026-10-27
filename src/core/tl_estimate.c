@@ -29,7 +29,7 @@ static void add_packs(TlEstimate *estimate, const TlPackLineList *packs, const c
     }
 }
 
-/* Укладка — по площади под плитку, строки — по цене за м². */
+/* Укладка — по площади под плитку (основной пол и зоны — у каждой своя цена), строки — по цене за м². */
 static void add_work(TlEstimate *estimate, const TlSummary *summary)
 {
     double prices[64];
@@ -37,19 +37,21 @@ static void add_work(TlEstimate *estimate, const TlSummary *summary)
     size_t count = 0;
     for (size_t i = 0; i < summary->rooms.count; i++) {
         const TlRoomSummary *room = &summary->rooms.items[i];
-        double price = tl_space_effective_tile(room->space)->price_work_m2;
-        if (!room->tiled || !(price > 0))
-            continue;
-        size_t k = 0;
-        while (k < count && prices[k] != price)
-            k++;
-        if (k == count) {
-            if (count == sizeof prices / sizeof prices[0])
+        for (size_t l = 0; room->tiled && l < tl_space_layout_count(room->space); l++) {
+            double price = tl_space_layout_tile(room->space, l)->price_work_m2;
+            if (!(price > 0))
                 continue;
-            prices[count] = price;
-            areas[count++] = 0;
+            size_t k = 0;
+            while (k < count && prices[k] != price)
+                k++;
+            if (k == count) {
+                if (count == sizeof prices / sizeof prices[0])
+                    continue;
+                prices[count] = price;
+                areas[count++] = 0;
+            }
+            areas[k] += tl_space_layout_at(room->space, l)->floor_area / 1e6;
         }
-        areas[k] += room->layout->floor_area / 1e6;
     }
     for (size_t k = 0; k < count; k++)
         add_line(estimate, TL_ESTIMATE_WORK, "Укладка плитки", NULL, areas[k], "м²", prices[k]);

@@ -62,6 +62,34 @@ static void append_estimate(GString *text, const TlSummary *summary)
     tl_estimate_free(&estimate);
 }
 
+/* Плитки зоны (бордюр — все стены вместе). */
+static void append_zone(GString *text, TlSpace *space, TlZoneKind kind)
+{
+    int whole = 0, cut = 0, narrow = 0;
+    double area = 0;
+    bool found = false;
+    for (size_t l = 1; l < tl_space_layout_count(space); l++) {
+        if (tl_space_layout_zone(space, l) != kind)
+            continue;
+        const TlLayout *layout = tl_space_layout_at(space, l);
+        whole += layout->whole_count;
+        cut += layout->cut_count;
+        narrow += layout->narrow_count;
+        area += layout->floor_area;
+        found = true;
+    }
+    if (!found)
+        return;
+    char size[64];
+    tl_report_tile_name(&space->zones[kind].tile, size, sizeof size);
+    g_string_append_printf(text, "<span foreground=\"%s\">■</span> %s %s: <b>%d</b> шт. (целых %d, с подрезкой %d",
+                           space->zones[kind].tile.color, tl_zone_name(kind), size, whole + cut + narrow, whole,
+                           cut + narrow);
+    if (narrow)
+        g_string_append_printf(text, ", <span foreground=\"#c0392b\">узких %d</span>", narrow);
+    g_string_append_printf(text, "), %.2f м²\n", area / 1e6);
+}
+
 static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
@@ -72,9 +100,9 @@ static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
         g_string_append(text, "<b>Слишком мелкая плитка для такой комнаты</b>\n");
         return;
     }
+    const TlRoomSummary *room = tl_summary_room(summary, space);
     int total = tl_layout_total(layout);
     int with_reserve = (int)ceil(total * (1 + tile->reserve_percent / 100.0) - 1e-9);
-    double kg = tl_layout_glue_kg(space, layout);
     char *name = g_markup_escape_text(space->name, -1);
     g_string_append_printf(text, "<b>%s</b>\n", name);
     g_free(name);
@@ -86,20 +114,26 @@ static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
     double buy_area = append_room_specs(text, layout, tile->reserve_percent);
     g_string_append_printf(text, "С запасом %.0f%%: <b>%d</b> шт. = <b>%.2f м²</b>\n", tile->reserve_percent,
                            with_reserve, buy_area);
-    g_string_append_printf(text, "Под плитку (с полом под дверью): %.2f м²\n", layout->floor_area / 1e6);
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++)
+        append_zone(text, space, (TlZoneKind)kind);
+    if (!room)
+        return;
+    /* клей, СВП, затирка, грунт — по основному полу и зонам */
+    double area = room->tiled_area / 1e6;
+    g_string_append_printf(text, "Под плитку (с полом под дверью): %.2f м²\n", area);
     g_string_append_printf(text, "Клей: %.2f м² × %.2f кг × %.1f мм = <b>%.1f кг</b> → <b>%d</b> мешк. по %g кг\n",
-                           layout->floor_area / 1e6, tile->glue_kg_per_m2_mm, tile->glue_layer_mm, kg,
-                           tl_layout_glue_bags(space, layout), tile->glue_bag_kg);
-    g_string_append_printf(text, "СВП: <b>%zu</b> шт. (%d + %d на сторону) → <b>%d</b> уп. по %d\n",
-                           layout->clip_points.count, tile->clips_per_long_side, tile->clips_per_short_side,
-                           tl_layout_clip_packs(space, layout), tile->clips_per_pack);
-    double grout = tl_layout_grout_kg(space, layout);
+                           area, tile->glue_kg_per_m2_mm, tile->glue_layer_mm, room->glue_kg,
+                           tile->glue_bag_kg > 0 ? (int)ceil(room->glue_kg / tile->glue_bag_kg - 1e-9) : 0,
+                           tile->glue_bag_kg);
+    g_string_append_printf(text, "СВП: <b>%d</b> шт. (%d + %d на сторону) → <b>%d</b> уп. по %d\n", room->clip_count,
+                           tile->clips_per_long_side, tile->clips_per_short_side,
+                           tile->clips_per_pack > 0 ? (room->clip_count + tile->clips_per_pack - 1) / tile->clips_per_pack : 0,
+                           tile->clips_per_pack);
     g_string_append_printf(text, "Затирка: %.1f м швов × %g × %g мм = <b>%.2f кг</b>\n",
-                           tl_layout_joint_length(layout) / 1000, tile->joint_width, tile->tile_thickness, grout);
-    g_string_append_printf(text, "Грунт: %.2f м² × %g л = <b>%.1f л</b>\n", layout->floor_area / 1e6,
-                           tile->primer_l_per_m2, tl_layout_primer_l(space, layout));
-    const TlRoomSummary *room = tl_summary_room(summary, space);
-    if (room && room->shared_tiles)
+                           tl_layout_joint_length(layout) / 1000, tile->joint_width, tile->tile_thickness, room->grout_kg);
+    g_string_append_printf(text, "Грунт: %.2f м² × %g л = <b>%.1f л</b>\n", area, tile->primer_l_per_m2,
+                           room->primer_l);
+    if (room->shared_tiles)
         g_string_append_printf(text, "<small>Из них <b>%d</b> плиток общие с соседней комнатой: "
                                      "одна плитка на обе (учтено в итоге по проекту).</small>\n",
                                room->shared_tiles);

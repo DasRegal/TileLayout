@@ -9,8 +9,10 @@
 #include "tl_outline.h"
 #include "tl_pipe.h"
 #include "tl_tile_settings.h"
+#include "tl_zone.h"
 
 struct TlLayoutCache;
+struct TlZoneCache;
 
 typedef struct TlSpace {
     int id;
@@ -27,7 +29,10 @@ typedef struct TlSpace {
     TlOutline *house;              /* дом, в котором комната */
     struct TlSpace *layout_source; /* чья раскладка используется (сама или источник) */
 
+    TlZone zones[TL_ZONE_COUNT];   /* бордюр и ковёр — свои у комнаты */
+
     struct TlLayoutCache *layout_cache; /* ведёт модуль раскладки */
+    struct TlZoneCache *zone_cache;     /* раскладки зон — tl_space_zones.c */
 } TlSpace;
 
 TL_ARRAY_DEFINE(TlSpaceList, TlSpace *, tl_space_list)

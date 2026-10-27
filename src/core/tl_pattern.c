@@ -14,18 +14,44 @@ static int add_spec(TlPatternUnit *unit, double width, double height, double lai
         const TlTileSpec *spec = &unit->specs[i];
         bool same_size = (fabs(spec->width - width) < 0.05 && fabs(spec->height - height) < 0.05) ||
                          (fabs(spec->width - height) < 0.05 && fabs(spec->height - width) < 0.05);
-        if (same_size && strcmp(spec->color, color) == 0 && spec->textured == textured)
+        if (same_size && strcmp(spec->color, color) == 0 && spec->textured == textured && !spec->variant[0])
             return (int)i;
     }
     TlTileSpec *spec = &unit->specs[unit->spec_count];
-    *spec = (TlTileSpec){width, height, laid_width, laid_height, "", textured};
+    *spec = (TlTileSpec){width, height, laid_width, laid_height, "", textured, true, ""};
     snprintf(spec->color, sizeof spec->color, "%s", color);
+    return (int)unit->spec_count++;
+}
+
+/* Отдельное исполнение того же размера и цвета (левая, правая). */
+static int add_variant(TlPatternUnit *unit, double width, double height, double laid_width, double laid_height,
+                       const char *color, const char *variant)
+{
+    TlTileSpec *spec = &unit->specs[unit->spec_count];
+    *spec = (TlTileSpec){width, height, laid_width, laid_height, "", true, true, ""};
+    snprintf(spec->color, sizeof spec->color, "%s", color);
+    snprintf(spec->variant, sizeof spec->variant, "%s", variant);
     return (int)unit->spec_count++;
 }
 
 static void add_tile(TlPatternUnit *unit, TlRect rect, int spec)
 {
-    unit->tiles[unit->tile_count++] = (TlPatternTile){rect, spec};
+    unit->tiles[unit->tile_count++] = (TlPatternTile){.rect = rect, .spec = spec};
+}
+
+/* Плитка-многоугольник; габарит — по её углам. */
+static void add_shape(TlPatternUnit *unit, const TlVec2 *points, size_t count, int spec)
+{
+    TlPatternTile *tile = &unit->tiles[unit->tile_count++];
+    *tile = (TlPatternTile){.spec = spec, .shape_count = count};
+    TlRect rect = {INFINITY, INFINITY, -INFINITY, -INFINITY};
+    for (size_t i = 0; i < count; i++) {
+        tile->shape[i] = points[i];
+        rect = (TlRect){fmin(rect.left, points[i].x), fmin(rect.top, points[i].y), fmax(rect.right, points[i].x),
+                        fmax(rect.bottom, points[i].y)};
+    }
+    tile->rect = rect;
+    unit->specs[spec].rectangular = false;
 }
 
 static void main_spec(TlPatternUnit *unit, const TlTileSettings *s)
@@ -67,6 +93,66 @@ static void herringbone_unit(const TlTileSettings *s, TlPatternUnit *unit)
     add_tile(unit, (TlRect){long_side + gap, short_side - long_side, long_side + gap + short_side, short_side}, 0);
     unit->a = tl_vec2(short_side + gap, short_side + gap);
     unit->b = tl_vec2(long_side + gap, -(long_side + gap));
+}
+
+/* Шеврон (французская ёлочка): параллелограммы длиной L по длинной стороне и шириной W,
+ * торцы срезаны вертикально под углом α к длинной стороне. Левое плечо поднимается
+ * вправо, правое (через вертикальный шов) опускается — «ёлочка» остриём вверх.
+ *     плечо по горизонтали a = L·cos α, подъём L·sin α, высота торца W / cos α;
+ * следующая пара — выше на высоту торца и шов поперёк плитки (шов / cos α по вертикали). */
+static void chevron_unit(const TlTileSettings *s, TlPatternUnit *unit)
+{
+    double angle = fmin(75, fmax(15, s->pattern_angle)) * TL_PI / 180;
+    double length = fmax(s->tile_width, s->tile_height), width = fmin(s->tile_width, s->tile_height);
+    double gap = s->joint_width;
+    double run = length * cos(angle), rise = length * sin(angle), end = width / cos(angle);
+    /* плитки шеврона зеркальны: левые и правые продаются отдельно (или парами в коробке) */
+    int left_spec = add_variant(unit, length, width, run, rise + end, s->color, "левая");
+    int right_spec = add_variant(unit, length, width, run, rise + end, s->color, "правая");
+    const TlVec2 left[] = {{0, rise}, {run, 0}, {run, end}, {0, rise + end}};
+    const TlVec2 right[] = {{run + gap, 0}, {2 * run + gap, rise}, {2 * run + gap, rise + end}, {run + gap, end}};
+    add_shape(unit, left, 4, left_spec);
+    add_shape(unit, right, 4, right_spec);
+    unit->a = tl_vec2(2 * (run + gap), 0);
+    unit->b = tl_vec2(0, end + gap / cos(angle));
+}
+
+/* Со вставкой: плитка L×H со срезанными углами и квадратная вставка (кабошон) стороной s,
+ * повёрнутая на 45°, в стыке четырёх плиток. Срез угла k — чтобы от вставки до плитки был шов:
+ *     (s/2 + шов)·√2 − шов. */
+static void insert_unit(const TlTileSettings *s, TlPatternUnit *unit)
+{
+    double w = s->tile_width, h = s->tile_height, gap = s->joint_width;
+    double side = fmax(1, s->insert_size);
+    double cut = fmin((side / 2 + gap) * sqrt(2) - gap, fmin(w, h) / 2 - 1);
+    int tile_spec = add_spec(unit, w, h, w, h, s->color, true);
+    int insert_spec = add_spec(unit, side, side, side * sqrt(2), side * sqrt(2), s->color2, false);
+    const TlVec2 octagon[] = {{cut, 0},     {w - cut, 0}, {w, cut},     {w, h - cut},
+                              {w - cut, h}, {cut, h},     {0, h - cut}, {0, cut}};
+    add_shape(unit, octagon, 8, tile_spec);
+    TlVec2 c = {w + gap / 2, h + gap / 2};
+    double r = side / sqrt(2);
+    const TlVec2 diamond[] = {{c.x, c.y - r}, {c.x + r, c.y}, {c.x, c.y + r}, {c.x - r, c.y}};
+    add_shape(unit, diamond, 4, insert_spec);
+    unit->a = tl_vec2(w + gap, 0);
+    unit->b = tl_vec2(0, h + gap);
+}
+
+/* Корзинка: квадрат со стороной L из n плиток L×W (n — сколько ширин входит в длину со
+ * швами), рядом — такой же поперёк. Плитки чуть шире или уже W, если n·(W + шов) ≠ L + шов. */
+static void basket_unit(const TlTileSettings *s, TlPatternUnit *unit)
+{
+    double length = fmax(s->tile_width, s->tile_height), width = fmin(s->tile_width, s->tile_height);
+    double gap = s->joint_width, pitch = length + gap;
+    int count = (int)fmin(TL_PATTERN_MAX_TILES / 2, fmax(1, round(pitch / (width + gap))));
+    double step = pitch / count, laid = step - gap;
+    int spec = add_spec(unit, length, width, length, laid, s->color, true);
+    for (int k = 0; k < count; k++)
+        add_tile(unit, (TlRect){0, k * step, length, k * step + laid}, spec);
+    for (int k = 0; k < count; k++)
+        add_tile(unit, (TlRect){pitch + k * step, 0, pitch + k * step + laid, length}, spec);
+    unit->a = tl_vec2(2 * pitch, 0);
+    unit->b = tl_vec2(pitch, pitch);
 }
 
 /* Модульные рисунки: плитки и шаги решётки — в клетках. */
@@ -128,6 +214,9 @@ static const PatternEntry PATTERNS[] = {
     {{"hopscotch", "Модульная: 2 формата", false, false, true}, hopscotch_unit},
     {{"modular3", "Модульная: 3 формата", false, false, true}, three_formats_unit},
     {{"versailles", "Версаль: 4 формата", false, false, true}, versailles_unit},
+    {{"chevron", "Французская ёлочка (шеврон)", false, false, false}, chevron_unit},
+    {{"insert", "Со вставкой (кабошон)", false, true, false}, insert_unit},
+    {{"basket", "Корзинка", false, false, false}, basket_unit},
 };
 
 #define PATTERN_COUNT (sizeof PATTERNS / sizeof PATTERNS[0])
@@ -229,9 +318,12 @@ void tl_pattern_cover(const TlPatternUnit *unit, TlVec2 offset, TlRect bounds, T
                     continue;
                 const TlTileSpec *spec = &unit->specs[tile->spec];
                 bool square = fabs(spec->laid_width - spec->laid_height) < 0.5;
-                TlPlacedTile placed = {rect, {i, j, (int)k}, tile->spec,
-                                       !square && lies_lengthwise(tl_rect_width(rect), tl_rect_height(rect)) !=
-                                                      lies_lengthwise(spec->laid_width, spec->laid_height)};
+                TlPlacedTile placed = {.rect = rect, .shape_count = tile->shape_count, .cell = {i, j, (int)k},
+                                       .spec = tile->spec,
+                                       .turned = !square && lies_lengthwise(tl_rect_width(rect), tl_rect_height(rect)) !=
+                                                                lies_lengthwise(spec->laid_width, spec->laid_height)};
+                for (size_t p = 0; p < tile->shape_count; p++)
+                    placed.shape[p] = tl_vec2_add(origin, tile->shape[p]);
                 visit(&placed, context);
             }
         }
@@ -265,7 +357,8 @@ TlVec2 tl_pattern_reduce(const TlPatternUnit *unit, TlVec2 offset)
 
 void tl_tile_spec_name(const TlTileSpec *spec, char *text, size_t size)
 {
-    snprintf(text, size, "%g×%g мм", fmax(spec->width, spec->height), fmin(spec->width, spec->height));
+    snprintf(text, size, spec->variant[0] ? "%g×%g мм, %s" : "%g×%g мм%s", fmax(spec->width, spec->height),
+             fmin(spec->width, spec->height), spec->variant);
 }
 
 double tl_tile_spec_area_m2(const TlTileSpec *spec) { return spec->width * spec->height / 1e6; }
@@ -274,7 +367,7 @@ bool tl_tile_specs_same(const TlTileSpec *a, const TlTileSpec *b)
 {
     double a_long = fmax(a->width, a->height), a_short = fmin(a->width, a->height);
     double b_long = fmax(b->width, b->height), b_short = fmin(b->width, b->height);
-    if (fabs(a_long - b_long) > 0.05 || fabs(a_short - b_short) > 0.05)
+    if (fabs(a_long - b_long) > 0.05 || fabs(a_short - b_short) > 0.05 || strcmp(a->variant, b->variant) != 0)
         return false;
     for (size_t i = 0; i < TL_COLOR_LENGTH && (a->color[i] || b->color[i]); i++)
         if (tolower((unsigned char)a->color[i]) != tolower((unsigned char)b->color[i]))

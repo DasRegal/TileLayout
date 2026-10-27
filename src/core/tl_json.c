@@ -113,9 +113,14 @@ const TlJson *tl_json_get(const TlJson *object, const char *key)
     return NULL;
 }
 
+const char *tl_json_key_at(const TlJson *object, size_t index)
+{
+    return object && object->type == TL_JSON_OBJECT && index < object->count ? object->keys[index] : NULL;
+}
+
 size_t tl_json_length(const TlJson *array)
 {
-    return array && array->type == TL_JSON_ARRAY ? array->count : 0;
+    return array && (array->type == TL_JSON_ARRAY || array->type == TL_JSON_OBJECT) ? array->count : 0;
 }
 
 const TlJson *tl_json_at(const TlJson *array, size_t index)

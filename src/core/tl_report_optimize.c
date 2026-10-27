@@ -6,13 +6,15 @@
 /* Пары обрезков группы — по каждому виду плитки рисунка отдельно. */
 static int group_offcut_pairs(const TlLayoutGroup *group)
 {
-    const TlTileSettings *tile = &group->source->tile;
+    const TlTileSettings *tile = group->tile;
     if (!tile->reuse_offcuts)
         return 0;
     const TlPatternUnit *pattern = &group->layouts.items[0]->pattern;
     TlPieceList pieces = tl_group_unshared_pieces(group);
     int pairs_count = 0;
     for (size_t s = 0; s < pattern->spec_count; s++) {
+        if (!pattern->specs[s].rectangular)
+            continue;
         TlPieceList of_spec = {0};
         for (size_t i = 0; i < pieces.count; i++)
             if (pieces.items[i].spec == (int)s)

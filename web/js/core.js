@@ -46,6 +46,10 @@ export async function loadCore() {
     setRoomsTileFields: (ids, fields) =>
       withString(JSON.stringify(ids), (i) =>
         withString(JSON.stringify(fields), (f) => module._tl_web_set_rooms_tile_fields(i, f, now()))) !== 0,
+    /** Зона пола ('border' | 'carpet') у комнат ids: {enabled, width, height, dx, dy, поля плитки}. */
+    setZoneFields: (ids, zone, fields) =>
+      withString(JSON.stringify(ids), (i) =>
+        withString(zone, (z) => withString(JSON.stringify(fields), (f) => module._tl_web_set_zone_fields(i, z, f, now())))) !== 0,
     swapTiles: (ids) => withString(JSON.stringify(ids), (i) => module._tl_web_swap_tiles(i, now())) !== 0,
     /** Раскладка комнаты по правилу (от угла, по центру, минимум плиток) → {ok, message}. */
     alignTiles: (id, mode) => withString(mode, (m) => JSON.parse(text(module._tl_web_align_tiles(id, m, now())))),

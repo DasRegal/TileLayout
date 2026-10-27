@@ -74,7 +74,9 @@ const tools = new Tools({
 });
 const panel = new Panel(document.getElementById('panel'), {
   setField: (key, value) => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { [key]: value })),
+  setZoneField: (zone, key, value) => editRoom(() => state.core.setZoneFields(selectedSpaces(), zone, { [key]: value })),
   chooseTile: () => pickTile(),
+  chooseZoneTile: (zone) => pickZoneTile(zone),
   colorOnly: () => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '' })),
   toggleMulti: () => {
     state.multi = !state.multi;
@@ -352,6 +354,19 @@ function openProject({ name, text }) {
   changed();
   fitView();
   say(`Открыт «${name}». Щёлкните комнату, чтобы настроить плитку.`);
+}
+
+/** Плитка зоны пола (бордюр, ковёр) из каталога: размер, рисунок и цвет. */
+async function pickZoneTile(zone) {
+  if (!selectedSpace()) return;
+  const room = state.core.spaceTile(selectedSpace());
+  const choice = await chooseTile(catalogs, room.zones[zone].tile.texture);
+  if (choice === 'color-only') {
+    editRoom(() => state.core.setZoneFields(selectedSpaces(), zone, { texture: '' }));
+  } else if (choice) {
+    const fields = await catalogs.fieldsFor(choice.catalog, choice.tile);
+    editRoom(() => state.core.setZoneFields(selectedSpaces(), zone, fields));
+  }
 }
 
 async function pickTile() {

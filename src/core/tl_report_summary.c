@@ -151,8 +151,8 @@ void tl_report_tile_name(const TlTileSettings *tile, char *text, size_t size)
 
 const TlTileSpec *tl_report_piece_spec(const TlPieceRef *ref)
 {
-    TlLayout *layout = tl_space_layout(ref->space);
-    const TlTile *tile = tl_layout_tile_at(layout, ref->cell);
+    TlLayout *layout = tl_space_layout_at(ref->space, ref->layout);
+    const TlTile *tile = layout ? tl_layout_tile_at(layout, ref->cell) : NULL;
     return tile ? tl_layout_spec(layout, tile) : NULL;
 }
 
@@ -247,7 +247,7 @@ static SpecCount count_spec(const TlLayoutGroup *group, int spec)
 static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group, int spec_index,
                            SpecCount count, double area)
 {
-    const TlTileSettings *tile = &group->source->tile;
+    const TlTileSettings *tile = group->tile;
     const TlTileSpec *spec = &group->layouts.items[0]->pattern.specs[spec_index];
     TlTileTypeSummary *type = type_for(&summary->types, spec, tile);
     size_t index = (size_t)(type - summary->types.items);
@@ -264,7 +264,7 @@ static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlL
 
     /* Остатки подрезок идут в подрезки любой комнаты с той же плиткой. Плитка
      * 600×300 в одной комнате и 300×600 в другой — одна: куски поворачиваются. */
-    if (tile->reuse_offcuts) {
+    if (tile->reuse_offcuts && spec->rectangular) { /* куски шеврона и вставки — не полосы */
         bool turned = lies_lengthwise(spec) != lies_lengthwise(&type->spec);
         TlPieceList pieces = tl_group_unshared_pieces(group);
         for (size_t i = 0; i < pieces.count; i++) {
@@ -325,19 +325,28 @@ static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *
     tl_piece_list_free(&tally->pieces);
 }
 
+/* Клей, СВП, затирка, грунт комнаты — по всем её раскладкам (основной пол и зоны). */
 static void summarize_room_materials(TlSummary *summary, TlRoomSummary *room)
 {
-    const TlTileSettings *tile = tl_space_effective_tile(room->space);
-    TlLayout *layout = room->layout;
-    room->glue_kg = tl_layout_glue_kg(room->space, layout);
-    room->clip_count = (int)layout->clip_points.count;
-    room->grout_kg = tl_layout_grout_kg(room->space, layout);
-    room->primer_l = tl_layout_primer_l(room->space, layout);
-    summary->tiled_area += layout->floor_area;
-    add_to_pack_line(&summary->glue, tile->glue_bag_kg, tile->price_glue_bag, room->glue_kg);
-    add_to_pack_line(&summary->clips, tile->clips_per_pack, tile->price_clip_pack, room->clip_count);
-    add_to_pack_line(&summary->grout, tile->grout_pack_kg, tile->price_grout_pack, room->grout_kg);
-    add_to_pack_line(&summary->primer, tile->primer_can_l, tile->price_primer_can, room->primer_l);
+    for (size_t i = 0; i < tl_space_layout_count(room->space); i++) {
+        const TlTileSettings *tile = tl_space_layout_tile(room->space, i);
+        TlLayout *layout = tl_space_layout_at(room->space, i);
+        if (layout->too_many)
+            continue;
+        double glue = tl_layout_glue_kg(tile, layout), grout = tl_layout_grout_kg(tile, layout);
+        double primer = tl_layout_primer_l(tile, layout);
+        int clips = (int)layout->clip_points.count;
+        room->glue_kg += glue;
+        room->clip_count += clips;
+        room->grout_kg += grout;
+        room->primer_l += primer;
+        room->tiled_area += layout->floor_area;
+        summary->tiled_area += layout->floor_area;
+        add_to_pack_line(&summary->glue, tile->glue_bag_kg, tile->price_glue_bag, glue);
+        add_to_pack_line(&summary->clips, tile->clips_per_pack, tile->price_clip_pack, clips);
+        add_to_pack_line(&summary->grout, tile->grout_pack_kg, tile->price_grout_pack, grout);
+        add_to_pack_line(&summary->primer, tile->primer_can_l, tile->price_primer_can, primer);
+    }
     summary->glue_total_kg += room->glue_kg;
     summary->clip_total += room->clip_count;
     summary->grout_total_kg += room->grout_kg;

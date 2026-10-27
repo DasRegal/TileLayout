@@ -23,5 +23,6 @@ int main(void)
     spec_pattern();
     spec_estimate();
     spec_pipes();
+    spec_zones();
     return spec_report() == 0 ? 0 : 1;
 }

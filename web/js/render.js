@@ -212,6 +212,14 @@ function drawFloor(ctx, space, view, px, options) {
     ctx.fillStyle = C.gap;
     ctx.fill('evenodd');
   }
+  drawLayout(ctx, tile, layout, view, px, options);
+  for (const zone of space.zones) if (!zone.too_many) drawLayout(ctx, zone.tile, zone, view, px, options); // бордюр, ковёр
+  ctx.restore();
+}
+
+/** Одна раскладка (основной пол или зона): швы — заливкой пола, поверх — плитки. */
+function drawLayout(ctx, tile, layout, view, px, options) {
+  ctx.save();
   const [a, b, c, d, tx, ty] = layout.matrix;
   ctx.transform(a, b, c, d, tx, ty);
   polygonPath(ctx, layout.floor, true);
@@ -219,42 +227,52 @@ function drawFloor(ctx, space, view, px, options) {
   ctx.clip('evenodd');
   ctx.fillStyle = C.grout;
   ctx.fill('evenodd');
-  drawTiles(ctx, space, view, px, options.image(tile.texture), options);
+  drawTiles(ctx, tile, layout, view, px, options.image(tile.texture), options);
   ctx.restore();
 }
 
-function drawTiles(ctx, space, view, px, image, options) {
-  const tile = space.tile;
-  const { tiles, specs } = space.layout;
+function drawTiles(ctx, tile, layout, view, px, image, options) {
+  const { tiles, specs, shapes } = layout;
   const thinJoints = options.mono || tile.gap * view.scale < 1.2; // в ч/б — контур каждой плитки
   /* цвета по видам плитки рисунка (у шахматки вторая — своим цветом): целая, подрезка, узкая */
   const palettes = specs.map((spec) =>
     options.mono ? ['#ffffff', '#ffffff', '#ffffff'] : [spec.color, darker(spec.color, 1.12), C.narrow]);
-  for (let i = 0; i < tiles.length; i += TILE_STRIDE) {
+  for (let i = 0, n = 0; i < tiles.length; i += TILE_STRIDE, n++) {
     const left = tiles[i];
     const top = tiles[i + 1];
     const w = tiles[i + 2] - left;
     const h = tiles[i + 3] - top;
     const kind = tiles[i + 4];
     const spec = specs[tiles[i + 5]];
+    const shape = shapes[n]; // шеврон, вставка — многоугольник
+    const path = () => {
+      ctx.beginPath();
+      if (shape) polygonPath(ctx, shape, false);
+      else ctx.rect(left, top, w, h);
+    };
+    path();
     if (image && spec.textured) {
+      ctx.save();
+      ctx.clip();
       drawTexture(ctx, image, left, top, w, h);
       if (kind !== TILE_KIND.whole) {
         ctx.fillStyle = kind === TILE_KIND.narrow ? 'rgba(232, 130, 110, 0.7)' : 'rgba(0, 0, 0, 0.12)';
         ctx.fillRect(left, top, w, h);
       }
+      ctx.restore();
     } else {
       ctx.fillStyle = palettes[tiles[i + 5]][kind];
-      ctx.fillRect(left, top, w, h);
+      ctx.fill();
     }
     if (thinJoints) {
+      path();
       ctx.lineWidth = px(options.mono ? 0.5 : 0.6);
       ctx.strokeStyle = options.mono ? '#000000' : darker(spec.color, 1.5);
-      ctx.strokeRect(left, top, w, h);
+      ctx.stroke();
     }
   }
   if (options.layers.clips && Math.min(tile.w, tile.h) * view.scale > 24) {
-    const clips = space.layout.clips;
+    const clips = layout.clips;
     const size = px(5);
     ctx.fillStyle = C.clip;
     for (let i = 0; i < clips.length; i += 2) ctx.fillRect(clips[i] - size / 2, clips[i + 1] - size / 2, size, size);
@@ -523,7 +541,9 @@ function drawRoomLengths(ctx, space, view) {
 /** Подпись комнаты: название, площадь, плиток, общий пол. */
 function drawRoomLabel(ctx, space, view) {
   const lines = [space.name, `${space.area.toFixed(2)} м²`];
-  if (space.layout && !space.layout.too_many) lines.push(`плиток: ${space.layout.count}`);
+  if (space.layout && !space.layout.too_many) { // с зонами: бордюр, ковёр
+    lines.push(`плиток: ${space.zones.reduce((sum, zone) => sum + zone.count, space.layout.count)}`);
+  }
   if (space.source) lines.push(`пол как: ${space.source}`);
   const [x, y] = view.toScreen(...space.label);
   const size = 12.7;

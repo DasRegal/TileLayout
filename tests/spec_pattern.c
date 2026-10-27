@@ -34,6 +34,12 @@ typedef struct Coverage {
 static void count_hit(const TlPlacedTile *tile, void *context)
 {
     Coverage *coverage = context;
+    if (tile->shape_count) { /* многоугольник — проверяется без швов (half_gap = 0) */
+        TlPolygon shape = tl_polygon_from_points(tile->shape, tile->shape_count);
+        coverage->hits += tl_polygon_contains(&shape, coverage->point);
+        tl_polygon_free(&shape);
+        return;
+    }
     TlRect r = tile->rect;
     double g = coverage->half_gap;
     if (coverage->point.x >= r.left - g && coverage->point.x < r.right + g && coverage->point.y >= r.top - g &&
@@ -84,6 +90,13 @@ void spec_pattern(void)
                 set_pattern(&tile, patterns[i].id);
                 tile.joint_width = 3;
                 tile.row_shift = 1.0 / 3;
+                bool polygons = strcmp(patterns[i].id, "chevron") == 0 || strcmp(patterns[i].id, "insert") == 0;
+                if (polygons) /* у многоугольников покрытие проверяется без швов */
+                    tile.joint_width = 0;
+                if (strcmp(patterns[i].id, "insert") == 0)
+                    tile.tile_width = tile.tile_height = 330;
+                if (strcmp(patterns[i].id, "basket") == 0)
+                    tile.tile_height = 200; /* 600×200 — три в квадрате */
                 if (patterns[i].modular)
                     tile.tile_width = tile.tile_height = 200;
                 bool ok = covers_once(&tile);
@@ -101,6 +114,68 @@ void spec_pattern(void)
             EXPECT(covers_once(&tile));
             tile.tile_width = tile.tile_height = 400;
             EXPECT(covers_once(&tile));
+        }
+        IT("шеврон, вставка и корзинка — швы между плитками тоже ровно шов (точки посреди швов не заняты)")
+        {
+            const char *ids[] = {"chevron", "insert", "basket"};
+            for (size_t i = 0; i < 3; i++) {
+                TlTileSettings tile = tl_tile_settings_factory();
+                set_pattern(&tile, ids[i]);
+                tile.joint_width = 3;
+                if (i == 1)
+                    tile.tile_width = tile.tile_height = 330;
+                if (i == 2)
+                    tile.tile_height = 200;
+                TlPatternUnit unit;
+                EXPECT(tl_pattern_unit(&tile, &unit));
+                /* площадь плиток модуля меньше площади ячейки решётки ровно на швы — плитки не
+                   налезают друг на друга: сумма площадей < |a × b| */
+                double area = 0;
+                for (size_t k = 0; k < unit.tile_count; k++) {
+                    const TlPatternTile *t = &unit.tiles[k];
+                    TlPolygon p = t->shape_count ? tl_polygon_from_points(t->shape, t->shape_count)
+                                                 : tl_polygon_from_rect(t->rect);
+                    area += tl_polygon_area(&p);
+                    tl_polygon_free(&p);
+                }
+                double cell = fabs(unit.a.x * unit.b.y - unit.a.y * unit.b.x);
+                EXPECT(area < cell && area > cell * 0.9);
+            }
+        }
+        IT("шеврон: к покупке — левые и правые плитки отдельно; остатки подрезок не парятся (плитка не прямоугольная)")
+        {
+            TlProject *project = room_project(3000, 2000);
+            TlTileSettings *tile = &only_space(project)->tile;
+            set_pattern(tile, "chevron");
+            tile->tile_width = 600;
+            tile->tile_height = 100;
+            TlLayout *layout = tl_space_layout(only_space(project));
+            EXPECT(layout->tiles.count > 50);
+            EXPECT(layout->whole_count > 0 && layout->cut_count > 0);
+            EXPECT(layout->tiles.items[0].outline.count == 4);
+            EXPECT(layout->clip_points.count > 0);
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 2); /* левые и правые — разные позиции */
+            EXPECT(type_named(&summary, "600×100 мм, левая") != NULL);
+            EXPECT(type_named(&summary, "600×100 мм, правая") != NULL);
+            for (size_t i = 0; i < summary.types.count; i++) {
+                EXPECT_INT(summary.types.items[i].offcut_saving, 0);
+                EXPECT_NEAR(tl_tile_spec_area_m2(&summary.types.items[i].spec), 0.06, 1e-9);
+            }
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("со вставкой: плитка 330×330 и кабошон 70×70 — два вида к покупке, кабошонов столько же, сколько плиток")
+        {
+            TlProject *project = room_project(3302, 3302); /* 10 × 10 плиток со швом 0 */
+            TlTileSettings *tile = &only_space(project)->tile;
+            set_pattern(tile, "insert");
+            tile->tile_width = tile->tile_height = 330;
+            tile->joint_width = 0;
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 2);
+            tl_summary_free(&summary);
+            tl_project_free(project);
         }
         IT("неизвестный рисунок — прямая; пустой — тоже")
         {

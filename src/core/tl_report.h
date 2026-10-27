@@ -17,12 +17,13 @@
 
 typedef struct TlRoomSummary {
     TlSpace *space;
-    TlLayout *layout;
+    TlLayout *layout;            /* основной пол; зоны — tl_space_layout_at(space, 1…) */
     bool tiled;
     double glue_kg;
     int clip_count;
     double grout_kg;
     double primer_l;
+    double tiled_area;           /* мм² под плитку — основной пол и зоны */
     int shared_tiles;            /* плиток, вторая часть которых — в другой комнате */
 } TlRoomSummary;
 
@@ -49,6 +50,7 @@ typedef struct TlPackLine {
 /* Два куска из одной плитки. */
 typedef struct TlPieceRef {
     TlSpace *space;
+    size_t layout;   /* номер раскладки комнаты: 0 — основной пол, дальше — зоны */
     TlCell cell;
 } TlPieceRef;
 
@@ -107,10 +109,11 @@ TL_ARRAY_DEFINE(TlCutPartList, TlCutPart, tl_cut_part_list)
 typedef struct TlCutCard {
     TlCutCardKind kind;
     int number;            /* для сортировки */
-    char title[256];
+    char title[300];
     char subtitle[160];
     const TlTileSettings *tile;   /* настройки раскладки: узкая подрезка, шов */
     double width, height;         /* плитка карточки — как лежит, в осях кусков */
+    TlPolygon outline;            /* плитка-многоугольник от угла габарита; пусто — прямоугольник */
     char color[TL_COLOR_LENGTH];
     TlCutPartList parts;
     bool narrow;

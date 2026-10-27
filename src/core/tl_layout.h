@@ -11,8 +11,9 @@
  * проходит, режет на куски по обе стороны от шва. Труба (tl_pipe.h) сверлит
  * плитку: у плитки — отверстия (drills).
  *
- * Раскладка не знает, что она на полу: поверхность — контур с дырами в своих
- * осях. Стена получит раскладку так же — из своей развёртки.
+ * Раскладка не знает, что она на полу: поверхность (TlSurface) — контур с
+ * дырами, оси и настройки плитки. Пол комнаты, зона пола (бордюр вдоль стены,
+ * ковёр — tl_zone.h) и в будущем развёртка стены раскладываются одинаково.
  */
 #ifndef TL_LAYOUT_H
 #define TL_LAYOUT_H
@@ -44,6 +45,7 @@ typedef struct TlTile {
     bool figured;          /* кусок не прямоугольный */
     TlPolygonList shapes;  /* контуры куска от угла плитки: первый — внешний, далее дыры */
     TlCircleList drills;   /* отверстия под трубы: центр — от угла плитки, в осях раскладки */
+    TlPolygon outline;     /* плитка-многоугольник (шеврон, вставка) от угла габарита; пусто — прямоугольник */
 } TlTile;
 
 TL_ARRAY_DEFINE(TlTileList, TlTile, tl_tile_list)
@@ -68,12 +70,45 @@ typedef struct TlLayoutOptions {
     double offset_x, offset_y;
 } TlLayoutOptions;
 
+/* Поверхность под плитку (всё — в мире). */
+typedef struct TlSurface {
+    const TlPolygon *outline;
+    const double *insets;               /* отступ плитки от каждой стороны контура, мм; NULL — от стен
+                                           wall_gap, у стыков в проёмах (threshold_strips) — 0 */
+    const TlPolygonList *holes;         /* перегородки — плитка отступает от них на wall_gap */
+    const TlPolygonList *cutouts;       /* вырезанные зоны — как есть (шов к ним уже учтён) */
+    const TlPolygonList *joint_strips;  /* деформационные швы */
+    const TlPolygonList *threshold_strips;
+    const TlCircleList *pipes;
+    TlVec2 origin;                      /* оси раскладки: начало */
+    double angle;                       /* направление оси X, ° (поворот плитки — сверх него) */
+    const TlTileSettings *tile;
+} TlSurface;
+
 struct TlLayoutCache;
 
+TlLayout *tl_layout_compute_surface(const TlSurface *surface, const TlLayoutOptions *options);
+/* Основной пол комнаты — без зон. */
 TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options);
 void tl_layout_free(TlLayout *layout);
-/* Раскладка комнаты из кэша (пересчитывается, если комната изменилась). */
+/* Основная раскладка комнаты из кэша (пересчитывается, если комната изменилась). */
 TlLayout *tl_space_layout(TlSpace *space);
+
+/* ---- зоны пола (tl_space_zones.c) -------------------------------------------------
+ * Раскладки комнаты по номерам: 0 — основной пол, дальше — зоны: бордюр (своя
+ * раскладка у каждой стены), ковёр. */
+
+size_t tl_space_layout_count(TlSpace *space);
+TlLayout *tl_space_layout_at(TlSpace *space, size_t index);
+/* Настройки плитки раскладки index (у зоны — tl_zone_tile). */
+const TlTileSettings *tl_space_layout_tile(TlSpace *space, size_t index);
+/* Чья раскладка: зона или TL_ZONE_COUNT — основной пол. */
+TlZoneKind tl_space_layout_zone(TlSpace *space, size_t index);
+/* Плиток на укладку в комнате — основной пол и зоны. */
+int tl_space_tile_total(TlSpace *space);
+/* Что зоны вырезают из основного пола (со швом основной плитки). */
+TlPolygonList tl_space_zone_cutouts(TlSpace *space);
+void tl_zone_cache_free(struct TlZoneCache *cache);
 void tl_layout_cache_free(struct TlLayoutCache *cache);
 
 int tl_layout_total(const TlLayout *layout);
@@ -86,15 +121,16 @@ void tl_tile_laid_size(const TlLayout *layout, const TlTile *tile, double *width
 
 /* ---- материалы ---------------------------------------------------------------- */
 
-double tl_layout_glue_kg(TlSpace *space, const TlLayout *layout);
-int tl_layout_glue_bags(TlSpace *space, const TlLayout *layout);
-int tl_layout_clip_packs(TlSpace *space, const TlLayout *layout);
+/* Материалы — по настройкам плитки раскладки (tl_space_layout_tile). */
+double tl_layout_glue_kg(const TlTileSettings *tile, const TlLayout *layout);
+int tl_layout_glue_bags(const TlTileSettings *tile, const TlLayout *layout);
+int tl_layout_clip_packs(const TlTileSettings *tile, const TlLayout *layout);
 /* Длина швов, мм: у каждой плитки (куска) — половина периметра, у соседей шов общий. */
 double tl_layout_joint_length(const TlLayout *layout);
 /* Затирка: длина швов × ширина шва × толщина плитки × плотность. */
-double tl_layout_grout_kg(TlSpace *space, const TlLayout *layout);
+double tl_layout_grout_kg(const TlTileSettings *tile, const TlLayout *layout);
 /* Грунт: площадь под плитку × расход. */
-double tl_layout_primer_l(TlSpace *space, const TlLayout *layout);
+double tl_layout_primer_l(const TlTileSettings *tile, const TlLayout *layout);
 
 /* ---- смещение сетки ------------------------------------------------------- */
 

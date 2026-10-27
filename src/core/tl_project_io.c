@@ -26,10 +26,9 @@ static TlJson *tile_to_json(const TlTileSettings *tile)
     return object;
 }
 
-/* Отсутствующие в файле поля — из настроек для новой комнаты. */
-static TlTileSettings tile_from_json(const TlJson *object)
+/* Отсутствующие в файле поля — из base. */
+static TlTileSettings tile_from_json_over(const TlJson *object, TlTileSettings tile)
 {
-    TlTileSettings tile = tl_tile_settings_for_new_room();
     char *base = (char *)&tile;
     size_t count;
     const TlTileField *fields = tl_tile_settings_fields(&count);
@@ -50,6 +49,51 @@ static TlTileSettings tile_from_json(const TlJson *object)
         }
     }
     return tile;
+}
+
+/* Отсутствующие в файле поля — из настроек для новой комнаты. */
+static TlTileSettings tile_from_json(const TlJson *object)
+{
+    return tile_from_json_over(object, tl_tile_settings_for_new_room());
+}
+
+/* ---- зоны пола комнаты --------------------------------------------------- */
+
+static TlJson *zones_to_json(const TlSpace *space)
+{
+    TlJson *zones = tl_json_object();
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++) {
+        const TlZone *zone = &space->zones[kind];
+        TlJson *json = tl_json_object();
+        tl_json_object_set(json, "enabled", tl_json_bool(zone->enabled));
+        tl_json_object_set(json, "width", tl_json_number(zone->width));
+        tl_json_object_set(json, "fit", tl_json_bool(zone->fit));
+        if (kind == TL_ZONE_CARPET) {
+            tl_json_object_set(json, "height", tl_json_number(zone->height));
+            tl_json_object_set(json, "dx", tl_json_number(zone->dx));
+            tl_json_object_set(json, "dy", tl_json_number(zone->dy));
+        }
+        tl_json_object_set(json, "tile", tile_to_json(&zone->tile));
+        tl_json_object_set(zones, tl_zone_key((TlZoneKind)kind), json);
+    }
+    return zones;
+}
+
+static void zones_from_json(TlSpace *space, const TlJson *zones)
+{
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++) {
+        const TlJson *json = tl_json_get(zones, tl_zone_key((TlZoneKind)kind));
+        if (!json)
+            continue;
+        TlZone *zone = &space->zones[kind];
+        zone->enabled = tl_json_bool_or(tl_json_get(json, "enabled"), false);
+        zone->width = tl_json_number_or(tl_json_get(json, "width"), zone->width);
+        zone->fit = tl_json_bool_or(tl_json_get(json, "fit"), zone->fit);
+        zone->height = tl_json_number_or(tl_json_get(json, "height"), zone->height);
+        zone->dx = tl_json_number_or(tl_json_get(json, "dx"), 0);
+        zone->dy = tl_json_number_or(tl_json_get(json, "dy"), 0);
+        zone->tile = tile_from_json_over(tl_json_get(json, "tile"), zone->tile);
+    }
 }
 
 /* ---- точки и списки ---------------------------------------------------- */
@@ -239,6 +283,7 @@ static TlJson *space_to_json(const TlSpace *space)
     tl_json_object_set(object, "tile", tile_to_json(&space->tile));
     tl_json_object_set(object, "source", space->source_id ? tl_json_number(space->source_id) : tl_json_null());
     tl_json_object_set(object, "pts", polygon_to_json(&space->outline));
+    tl_json_object_set(object, "zones", zones_to_json(space));
     return object;
 }
 
@@ -249,6 +294,7 @@ static TlSpace *space_from_json(const TlJson *object)
                                   tile_from_json(tl_json_get(object, "tile")));
     space->source_id = (int)tl_json_number_or(tl_json_get(object, "source"), 0);
     space->outline = polygon_from_json(tl_json_get(object, "pts"));
+    zones_from_json(space, tl_json_get(object, "zones"));
     return space;
 }
 

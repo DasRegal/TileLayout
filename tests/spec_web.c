@@ -489,5 +489,34 @@ void spec_web(void)
             EXPECT(tl_web_delete("pipe", pipe, 0, 0, 7));
             EXPECT(answer_is(tl_web_pick(1300, 900, 5), "kind", "space"));
         }
+        IT("зоны пола: бордюр и ковёр по полям, в сцене — свои раскладки; шеврон — контуры плиток")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            char ids[32];
+            snprintf(ids, sizeof ids, "[%d]", living);
+            EXPECT(tl_web_set_zone_fields(ids, "border", "{\"enabled\": true, \"width\": 300}", 1));
+            EXPECT(tl_web_set_zone_fields(ids, "carpet", "{\"enabled\": true, \"w\": 400, \"color\": \"#102030\"}", 2));
+            EXPECT(!tl_web_set_zone_fields(ids, "frieze", "{\"enabled\": true}", 3));
+            EXPECT(!tl_web_set_zone_fields(ids, "border", "{\"width\": \"широко\"}", 3));
+            TlJson *room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            const TlJson *carpet = tl_json_get(tl_json_get(room, "zones"), "carpet");
+            EXPECT(tl_json_bool_or(tl_json_get(carpet, "enabled"), false));
+            EXPECT_STR(tl_json_string_or(tl_json_get(tl_json_get(carpet, "tile"), "color"), ""), "#102030");
+            tl_json_free(room);
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            const TlJson *space = NULL;
+            for (size_t i = 0; i < tl_json_length(tl_json_get(scene, "spaces")); i++)
+                if ((int)tl_json_number_or(tl_json_get(tl_json_at(tl_json_get(scene, "spaces"), i), "id"), 0) == living)
+                    space = tl_json_at(tl_json_get(scene, "spaces"), i);
+            EXPECT(tl_json_length(tl_json_get(space, "zones")) >= 5); /* стены гостиной и ковёр */
+            tl_json_free(scene);
+            EXPECT(tl_web_undo());
+            EXPECT(tl_web_set_rooms_tile_fields(ids, "{\"pattern\": \"chevron\", \"h\": 100}", 4));
+            scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            const TlJson *layout = tl_json_get(tl_json_at(tl_json_get(scene, "spaces"), 0), "layout");
+            EXPECT(tl_json_length(tl_json_get(layout, "shapes")) > 0);
+            tl_json_free(scene);
+        }
     }
 }

@@ -39,7 +39,7 @@ void spec_estimate(void)
             TlSpace *space = only_space(project);
             TlLayout *layout = tl_space_layout(space);
             EXPECT_NEAR(tl_layout_joint_length(layout), 3600, 0.01);
-            EXPECT_NEAR(tl_layout_grout_kg(space, layout), 3600 * 2 * 9 * 1.6e-6, 1e-9);
+            EXPECT_NEAR(tl_layout_grout_kg(tl_space_effective_tile(space), layout), 3600 * 2 * 9 * 1.6e-6, 1e-9);
             tl_project_free(project);
         }
         IT("затирка на м² совпадает с формулой производителей (A + B) / (A·B) · шов · глубина · плотность")
@@ -48,7 +48,7 @@ void spec_estimate(void)
             TlSpace *space = only_space(project);
             space->tile.tile_width = space->tile.tile_height = 300;
             TlLayout *layout = tl_space_layout(space);
-            double per_m2 = tl_layout_grout_kg(space, layout) / (layout->floor_area / 1e6);
+            double per_m2 = tl_layout_grout_kg(tl_space_effective_tile(space), layout) / (layout->floor_area / 1e6);
             double formula = (300.0 + 300) / (300.0 * 300) * 2 * 9 * 1.6;
             EXPECT_NEAR(per_m2, formula, formula * 0.01);
             tl_project_free(project);
@@ -57,7 +57,7 @@ void spec_estimate(void)
         {
             TlProject *project = room_project(5000, 4000);
             TlSpace *space = only_space(project);
-            EXPECT_NEAR(tl_layout_primer_l(space, tl_space_layout(space)), 20 * 0.2, 1e-9);
+            EXPECT_NEAR(tl_layout_primer_l(tl_space_effective_tile(space), tl_space_layout(space)), 20 * 0.2, 1e-9);
             TlSummary summary = tl_report_summarize(project);
             EXPECT_NEAR(summary.primer_total_l, 4, 1e-9);
             EXPECT_INT(summary.primer.count, 1);

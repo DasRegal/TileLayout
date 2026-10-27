@@ -250,7 +250,13 @@ function drawCard(ctx, card, x, y, w, h, mono) {
   ctx.setLineDash([3, 3]);
   ctx.strokeStyle = mono ? '#000000' : '#7a8087';
   ctx.lineWidth = 0.8;
-  ctx.strokeRect(ox, oy, tile.w * scale, tile.h * scale);
+  if (card.outline) { // шеврон, вставка — контур плитки, а не габарит
+    ctx.beginPath();
+    shapePath(ctx, card.outline, scale, ox, oy);
+    ctx.stroke();
+  } else {
+    ctx.strokeRect(ox, oy, tile.w * scale, tile.h * scale);
+  }
   ctx.setLineDash([]);
 
   for (const part of card.parts) {
@@ -260,7 +266,7 @@ function drawCard(ctx, card, x, y, w, h, mono) {
     ctx.fill('evenodd');
   }
   const labels = new Labels([x + 2, y + 26, x + w - 2, y + h - 2]);
-  for (const part of card.parts) for (const shape of part.shapes) pieceLines(ctx, labels, shape, tile, scale, ox, oy, mono);
+  for (const part of card.parts) for (const shape of part.shapes) pieceLines(ctx, labels, shape, card, scale, ox, oy, mono);
   for (const part of card.parts) for (const drill of part.drills) drawDrill(ctx, labels, drill, part, scale, ox, oy, mono);
   if (card.kind !== 'drilled') { // у целой плитки размеры — в подписи
     for (const part of card.parts) for (const shape of part.shapes) pieceDimensions(ctx, labels, shape, scale, ox, oy);
@@ -329,15 +335,37 @@ function fitText(ctx, text, x, y, width) {
 }
 
 /** Контур куска: заводская кромка — тонко, линия реза — толсто (красным). Линии — препятствия для подписей. */
-function pieceLines(ctx, labels, shape, tile, scale, ox, oy, mono) {
+/** Отрезок a—b лежит на кромке плитки (у многоугольника — на одной из его сторон). */
+function onTileEdge(card, ax, ay, bx, by) {
+  const outline = card.outline;
+  if (outline) {
+    const n = outline.length / 2;
+    for (let i = 0; i < n; i++) {
+      const [px, py, qx, qy] = [outline[2 * i], outline[2 * i + 1], outline[(2 * i + 2) % outline.length], outline[(2 * i + 3) % outline.length]];
+      if (segmentDistance(ax, ay, px, py, qx, qy) < 0.5 && segmentDistance(bx, by, px, py, qx, qy) < 0.5) return true;
+    }
+    return false;
+  }
+  const tile = card.tile;
+  return (Math.abs(ay - by) < 0.5 && (Math.abs(ay) < 0.5 || Math.abs(ay - tile.h) < 0.5)) ||
+    (Math.abs(ax - bx) < 0.5 && (Math.abs(ax) < 0.5 || Math.abs(ax - tile.w) < 0.5));
+}
+
+function segmentDistance(x, y, ax, ay, bx, by) {
+  const [dx, dy] = [bx - ax, by - ay];
+  const length = dx * dx + dy * dy;
+  const t = length ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / length)) : 0;
+  return Math.hypot(x - ax - t * dx, y - ay - t * dy);
+}
+
+function pieceLines(ctx, labels, shape, card, scale, ox, oy, mono) {
   const n = shape.length / 2;
   for (let i = 0; i < n; i++) {
     const [ax, ay] = [shape[2 * i], shape[2 * i + 1]];
     const [bx, by] = [shape[(2 * i + 2) % shape.length], shape[(2 * i + 3) % shape.length]];
     const horizontal = Math.abs(ay - by) < 0.5;
     const vertical = Math.abs(ax - bx) < 0.5;
-    const edge = (horizontal && (Math.abs(ay) < 0.5 || Math.abs(ay - tile.h) < 0.5)) ||
-      (vertical && (Math.abs(ax) < 0.5 || Math.abs(ax - tile.w) < 0.5));
+    const edge = onTileEdge(card, ax, ay, bx, by);
     ctx.beginPath();
     ctx.moveTo(ox + ax * scale, oy + ay * scale);
     ctx.lineTo(ox + bx * scale, oy + by * scale);

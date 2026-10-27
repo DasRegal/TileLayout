@@ -36,7 +36,10 @@ void tl_json_object_set(TlJson *object, const char *key, TlJson *value);
 
 TlJsonType tl_json_type(const TlJson *value);
 const TlJson *tl_json_get(const TlJson *object, const char *key);
+/* Элементов массива или полей объекта. */
 size_t tl_json_length(const TlJson *array);
+/* Ключ index-го поля объекта (в порядке записи); NULL — нет такого. */
+const char *tl_json_key_at(const TlJson *object, size_t index);
 const TlJson *tl_json_at(const TlJson *array, size_t index);
 double tl_json_number_or(const TlJson *value, double fallback);
 bool tl_json_bool_or(const TlJson *value, bool fallback);

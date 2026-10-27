@@ -149,9 +149,8 @@ static void set_texture_source(cairo_t *cr, cairo_pattern_t *pattern, cairo_surf
 }
 
 static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
-                         TlSpace *space, TlLayout *layout)
+                         const TlTileSettings *tile, TlLayout *layout)
 {
-    const TlTileSettings *tile = tl_space_effective_tile(space);
     cairo_matrix_t to_screen = local_to_screen(view, &layout->local_to_world);
     cairo_transform(cr, &to_screen);
     local_polygon_path(cr, &layout->floor_outline);
@@ -174,7 +173,14 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
     for (size_t i = 0; i < layout->tiles.count; i++) {
         const TlTile *t = &layout->tiles.items[i];
         const TlTileSpec *spec = tl_layout_spec(layout, t); /* у шахматки вторая плитка — своим цветом */
-        cairo_rectangle(cr, t->rect.left, t->rect.top, tl_rect_width(t->rect), tl_rect_height(t->rect));
+        if (t->outline.count) { /* шеврон, вставка — многоугольник от угла габарита */
+            for (size_t p = 0; p < t->outline.count; p++)
+                (p ? cairo_line_to : cairo_move_to)(cr, t->rect.left + t->outline.items[p].x,
+                                                    t->rect.top + t->outline.items[p].y);
+            cairo_close_path(cr);
+        } else {
+            cairo_rectangle(cr, t->rect.left, t->rect.top, tl_rect_width(t->rect), tl_rect_height(t->rect));
+        }
         if (texture && spec->textured) { /* рисунок, подрезки чуть темнее, узкие — красным поверх */
             set_texture_source(cr, texture, image, t->rect);
             cairo_fill_preserve(cr);
@@ -232,7 +238,14 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
         cairo_fill(cr);
     }
     cairo_new_path(cr);
-    render_tiles(cr, view, options, space, layout);
+    for (size_t i = 0; i < tl_space_layout_count(space); i++) { /* основной пол, затем зоны */
+        TlLayout *part = tl_space_layout_at(space, i);
+        if (part->too_many)
+            continue;
+        cairo_save(cr);
+        render_tiles(cr, view, options, tl_space_layout_tile(space, i), part);
+        cairo_restore(cr);
+    }
     cairo_restore(cr);
 }
 
@@ -429,34 +442,45 @@ static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOpt
 
 /* ---- номера плиток ---------------------------------------------------------- */
 
+static void render_layout_numbers(cairo_t *cr, const AppView *view, const AppTextStyle *style, const TlLayout *layout)
+{
+    const TlAffine *m = &layout->local_to_world;
+    double rotation = atan2(m->b, m->a) * 180 / TL_PI; /* оси раскладки: у бордюра — вдоль стены */
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        const TlTile *t = &layout->tiles.items[i];
+        char text[16];
+        snprintf(text, sizeof text, "%d", t->number);
+        double box_w = (t->kind == TL_TILE_WHOLE ? tl_rect_width(t->rect) : t->piece_width) * view->scale;
+        double box_h = (t->kind == TL_TILE_WHOLE ? tl_rect_height(t->rect) : t->piece_height) * view->scale;
+        double text_w;
+        app_text_size(text, style, &text_w, NULL);
+        double angle = rotation;
+        if (text_w + 4 > box_w && box_h > box_w)
+            angle += 90; /* узкая полоса — вдоль неё */
+        angle = fmod(angle + 90 + 3600, 180) - 90;
+        TlVec2 world = tl_affine_apply(&layout->local_to_world, t->center);
+        app_text_centered(cr, text, style, app_view_to_screen(view, world), angle);
+    }
+}
+
 static void render_tile_numbers(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
                                 TlProject *project)
 {
     tl_report_assign_numbers(project);
+    AppTextStyle style = {options->printing ? 8.7 : 10, true, app_color_hex("#20242a"),
+                          app_color_rgba(255, 255, 255, options->printing ? 1.0 : 0.67)};
     for (size_t s = 0; s < project->spaces.count; s++) {
         TlSpace *space = project->spaces.items[s];
-        const TlTileSettings *tile = tl_space_effective_tile(space);
-        TlLayout *layout = tl_space_layout(space);
-        if (!tile->enabled || layout->too_many)
+        if (!tl_space_effective_tile(space)->enabled)
             continue;
-        if (!options->printing && fmin(tile->tile_width, tile->tile_height) * view->scale < 18)
-            continue;
-        AppTextStyle style = {options->printing ? 8.7 : 10, true, app_color_hex("#20242a"),
-                              app_color_rgba(255, 255, 255, options->printing ? 1.0 : 0.67)};
-        for (size_t i = 0; i < layout->tiles.count; i++) {
-            const TlTile *t = &layout->tiles.items[i];
-            char text[16];
-            snprintf(text, sizeof text, "%d", t->number);
-            double box_w = (t->kind == TL_TILE_WHOLE ? tl_rect_width(t->rect) : t->piece_width) * view->scale;
-            double box_h = (t->kind == TL_TILE_WHOLE ? tl_rect_height(t->rect) : t->piece_height) * view->scale;
-            double text_w;
-            app_text_size(text, &style, &text_w, NULL);
-            double angle = tile->rotation_degrees;
-            if (text_w + 4 > box_w && box_h > box_w)
-                angle += 90; /* узкая полоса — вдоль неё */
-            angle = fmod(angle + 90 + 3600, 180) - 90;
-            TlVec2 world = tl_affine_apply(&layout->local_to_world, t->center);
-            app_text_centered(cr, text, &style, app_view_to_screen(view, world), angle);
+        for (size_t l = 0; l < tl_space_layout_count(space); l++) {
+            const TlTileSettings *tile = tl_space_layout_tile(space, l);
+            TlLayout *layout = tl_space_layout_at(space, l);
+            if (layout->too_many)
+                continue;
+            if (!options->printing && fmin(tile->tile_width, tile->tile_height) * view->scale < 18)
+                continue;
+            render_layout_numbers(cr, view, &style, layout);
         }
     }
 }
@@ -586,9 +610,8 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
     snprintf(area, sizeof area, "%.2f м²", tl_space_room_area(space) / 1e6);
     const TlTileSettings *tile = tl_space_effective_tile(space);
     if (tile->enabled) {
-        TlLayout *layout = tl_space_layout(space);
-        if (!layout->too_many) {
-            snprintf(tiles, sizeof tiles, "плиток: %d", tl_layout_total(layout));
+        if (!tl_space_layout(space)->too_many) { /* с зонами: бордюр, ковёр */
+            snprintf(tiles, sizeof tiles, "плиток: %d", tl_space_tile_total(space));
             lines[count++] = tiles;
         }
     }

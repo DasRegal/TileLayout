@@ -25,7 +25,9 @@ typedef struct TlTileSettings {
     double rotation_degrees;         /* поворот раскладки */
     double row_shift;                /* сдвиг каждого ряда в долях плитки (0, 1/2, 1/3…) */
     char pattern[TL_PATTERN_LENGTH]; /* рисунок укладки (tl_pattern.h); пусто — прямая */
-    char color2[TL_COLOR_LENGTH];    /* вторая плитка рисунка (шахматка) */
+    char color2[TL_COLOR_LENGTH];    /* вторая плитка рисунка (шахматка, вставка) */
+    double pattern_angle;            /* угол среза у шеврона (французской ёлочки), ° */
+    double insert_size;              /* сторона квадратной вставки (кабошона), мм */
     double min_cut_width;            /* подрезки уже этого — «узкие», мм */
     double reserve_percent;          /* запас на бой и подрезку */
     char color[TL_COLOR_LENGTH];     /* у плитки с рисунком — его средний цвет */

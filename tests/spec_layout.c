@@ -84,8 +84,8 @@ void spec_layout(void)
             TlSpace *space = only_space(project);
             space->tile.glue_layer_mm = 4;
             TlLayout *layout = tl_space_layout(space);
-            EXPECT_NEAR(tl_layout_glue_kg(space, layout), 4.0 * 1.5 * 4, 1e-9);
-            EXPECT_INT(tl_layout_glue_bags(space, layout), 1);
+            EXPECT_NEAR(tl_layout_glue_kg(tl_space_effective_tile(space), layout), 4.0 * 1.5 * 4, 1e-9);
+            EXPECT_INT(tl_layout_glue_bags(tl_space_effective_tile(space), layout), 1);
             tl_project_free(project);
         }
     }

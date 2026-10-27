@@ -10,6 +10,7 @@
 #define FIGURED_RATIO 0.99      /* площадь меньше этой доли габарита — фигурный кусок */
 #define MIN_PIECE_AREA 1.0      /* мм² */
 #define CLIP_PROBE 3.0          /* мм от шва внутрь плитки при проверке СВП */
+#define CLIP_MIN_EDGE 120.0     /* мм: на короткие стороны (срезанный угол, вставка, мозаика) СВП не ставят */
 #define OPTIMIZE_STEPS 12
 
 /* Пол комнаты в осях раскладки (с отступом от стен). */
@@ -22,7 +23,7 @@ typedef struct LocalFloor {
 struct TlLayoutCache {
     TlLayout *layout;
     TlPolygon outline, frame;
-    TlPolygonList holes, joint_strips;
+    TlPolygonList holes, joint_strips, cutouts;
     TlCircleList pipes;
     TlTileSettings tile;
 };
@@ -35,6 +36,11 @@ static TlAffine local_frame(const TlPolygon *frame, double rotation_degrees)
     return tl_affine_rotation_translation(tl_vec2(bounds.left, bounds.top), rotation_degrees);
 }
 
+static TlAffine surface_frame(const TlSurface *surface)
+{
+    return tl_affine_rotation_translation(surface->origin, surface->angle + surface->tile->rotation_degrees);
+}
+
 static TlAffine world_to_local(TlSpace *space)
 {
     TlAffine to_world = local_frame(tl_space_frame(space), tl_space_effective_tile(space)->rotation_degrees);
@@ -44,11 +50,11 @@ static TlAffine world_to_local(TlSpace *space)
 #define ON_THRESHOLD_MM 0.3
 
 /* Край пола лежит на стыке в проёме: там плитка без отступа от стен — зазор задан швом двери. */
-static bool on_threshold(const TlSpace *space, TlVec2 a, TlVec2 b)
+static bool on_threshold(const TlPolygonList *threshold_strips, TlVec2 a, TlVec2 b)
 {
     TlVec2 middle = tl_vec2_midpoint(a, b);
-    for (size_t i = 0; i < space->threshold_strips.count; i++) {
-        const TlPolygon *strip = &space->threshold_strips.items[i];
+    for (size_t i = 0; i < threshold_strips->count; i++) {
+        const TlPolygon *strip = &threshold_strips->items[i];
         if (tl_polygon_contains(strip, middle))
             return true;
         for (size_t k = 0; k < strip->count; k++)
@@ -59,31 +65,41 @@ static bool on_threshold(const TlSpace *space, TlVec2 a, TlVec2 b)
     return false;
 }
 
-static LocalFloor make_local_floor(TlSpace *space, const TlAffine *to_local, double wall_gap)
+static void push_local(TlPolygonList *list, const TlAffine *to_local, const TlPolygonList *world)
+{
+    for (size_t i = 0; world && i < world->count; i++)
+        tl_polygon_list_push(list, tl_affine_apply_polygon(to_local, &world->items[i]));
+}
+
+static LocalFloor make_local_floor(const TlSurface *surface, const TlAffine *to_local)
 {
     LocalFloor floor = {0};
-    TlPolygon outline = tl_affine_apply_polygon(to_local, &space->outline);
-    if (wall_gap > 0) {
-        double *distances = tl_malloc(outline.count * sizeof(double));
-        for (size_t i = 0; i < outline.count; i++) {
-            const TlPolygon *world = &space->outline;
-            bool threshold = on_threshold(space, world->items[i], world->items[(i + 1) % world->count]);
-            distances[i] = threshold ? 0 : -wall_gap;
-        }
-        floor.outline = tl_polygon_offset(&outline, distances);
-        free(distances);
-    } else {
-        floor.outline = tl_polygon_copy(&outline);
+    double wall_gap = surface->tile->wall_gap;
+    const TlPolygon *world = surface->outline;
+    TlPolygon outline = tl_affine_apply_polygon(to_local, world);
+    double *distances = tl_malloc((outline.count ? outline.count : 1) * sizeof(double));
+    bool any = false;
+    for (size_t i = 0; i < outline.count; i++) {
+        if (surface->insets)
+            distances[i] = -surface->insets[i];
+        else
+            distances[i] = surface->threshold_strips &&
+                                   on_threshold(surface->threshold_strips, world->items[i], world->items[(i + 1) % world->count])
+                               ? 0
+                               : -wall_gap;
+        any |= distances[i] != 0;
     }
+    floor.outline = any ? tl_polygon_offset(&outline, distances) : tl_polygon_copy(&outline);
+    free(distances);
     tl_polygon_free(&outline);
-    for (size_t i = 0; i < space->holes.count; i++) {
-        TlPolygon hole = tl_affine_apply_polygon(to_local, &space->holes.items[i]);
+    for (size_t i = 0; surface->holes && i < surface->holes->count; i++) {
+        TlPolygon hole = tl_affine_apply_polygon(to_local, &surface->holes->items[i]);
         tl_polygon_list_push(&floor.holes,
                              wall_gap > 0 ? tl_polygon_offset_uniform(&hole, wall_gap) : tl_polygon_copy(&hole));
         tl_polygon_free(&hole);
     }
-    for (size_t i = 0; i < space->joint_strips.count; i++)
-        tl_polygon_list_push(&floor.joint_strips, tl_affine_apply_polygon(to_local, &space->joint_strips.items[i]));
+    push_local(&floor.holes, to_local, surface->cutouts); /* зоны: шов к ним уже учтён */
+    push_local(&floor.joint_strips, to_local, surface->joint_strips);
     return floor;
 }
 
@@ -106,6 +122,7 @@ static bool floor_contains(const TlLayout *layout, TlVec2 point)
 
 static void free_tile(TlTile *tile)
 {
+    tl_polygon_free(&tile->outline);
     tl_polygon_list_free_all(&tile->shapes);
     tl_circle_list_free(&tile->drills);
 }
@@ -117,15 +134,14 @@ static TlPolygon shape_from_tile_corner(TlPolygon clipped, TlRect rect)
     return clipped;
 }
 
-static bool crosses_joint(const LocalFloor *floor, TlRect rect)
+static bool crosses_joint(const LocalFloor *floor, const TlPolygon *tile_outline)
 {
-    TlPolygon tile_outline = tl_polygon_from_rect(rect);
-    bool crosses = false;
-    for (size_t i = 0; i < floor->joint_strips.count && !crosses; i++)
-        crosses = tl_rect_intersects(tl_polygon_bounds(&floor->joint_strips.items[i]), rect) &&
-                  tl_polygons_overlap_area(&floor->joint_strips.items[i], &tile_outline) >= MIN_PIECE_AREA;
-    tl_polygon_free(&tile_outline);
-    return crosses;
+    TlRect rect = tl_polygon_bounds(tile_outline);
+    for (size_t i = 0; i < floor->joint_strips.count; i++)
+        if (tl_rect_intersects(tl_polygon_bounds(&floor->joint_strips.items[i]), rect) &&
+            tl_polygons_overlap_area(&floor->joint_strips.items[i], tile_outline) >= MIN_PIECE_AREA)
+            return true;
+    return false;
 }
 
 /* Многоугольники для разбиения: плитка, пол, затем всё, что пол вырезает. */
@@ -149,14 +165,14 @@ static void set_piece_size(TlTile *tile, TlRect piece_bounds)
 
 static double rect_area(TlRect rect) { return tl_rect_width(rect) * tl_rect_height(rect); }
 
-/* Плитка, через которую проходит шов: куски по обе стороны — разбиением
-   плоскости (плитка ∩ пол − перегородки − швы). Номер — на самом большом
-   куске, размеры подрезки — по нему же; узкая — если узкий хоть один кусок. */
-static bool classify_tile_across_joint(const LocalFloor *floor, TlRect rect, const TlTileSettings *settings,
-                                       bool fast, TlTile *tile)
+/* Плитка-многоугольник или плитка, через которую проходит шов: куски — разбиением
+   плоскости (плитка ∩ пол − перегородки − швы). Номер — на самом большом куске,
+   размеры подрезки — по нему же; узкая — если узкий хоть один кусок. */
+static bool classify_by_regions(const LocalFloor *floor, const TlPolygon *tile_outline, TlRect rect,
+                                const TlTileSettings *settings, bool fast, TlTile *tile)
 {
     TlPolygonList cutters = {0};
-    tl_polygon_list_push(&cutters, tl_polygon_from_rect(rect));
+    tl_polygon_list_push(&cutters, tl_polygon_copy(tile_outline));
     tl_polygon_list_push(&cutters, tl_polygon_copy(&floor->outline));
     for (size_t i = 0; i < floor->holes.count; i++)
         tl_polygon_list_push(&cutters, tl_polygon_copy(&floor->holes.items[i]));
@@ -185,7 +201,7 @@ static bool classify_tile_across_joint(const LocalFloor *floor, TlRect rect, con
         return false;
     }
     *tile = (TlTile){.rect = rect, .center = tl_rect_center(rect)};
-    if (area >= rect_area(rect) * FULL_TILE_RATIO) {
+    if (area >= tl_polygon_area(tile_outline) * FULL_TILE_RATIO) {
         tile->kind = TL_TILE_WHOLE;
         tl_region_list_free_all(&pieces);
         return true;
@@ -203,13 +219,10 @@ static bool classify_tile_across_joint(const LocalFloor *floor, TlRect rect, con
     return true;
 }
 
-/* Заполняет tile, если плитка задевает пол; false — не задевает. */
-static bool classify_tile(const LocalFloor *floor, TlRect rect, const TlTileSettings *settings,
-                          bool fast, TlTile *tile)
+/* Прямоугольная плитка: пол обрезается по ней (быстро). */
+static bool classify_rect(const LocalFloor *floor, TlRect rect, const TlTileSettings *settings, bool fast,
+                          TlTile *tile)
 {
-    if (crosses_joint(floor, rect))
-        return classify_tile_across_joint(floor, rect, settings, fast, tile);
-
     TlPolygon clipped = tl_polygon_clip_rect(&floor->outline, rect);
     double area = tl_polygon_area(&clipped);
     TlPolygonList hole_pieces = {0};
@@ -251,31 +264,66 @@ static bool classify_tile(const LocalFloor *floor, TlRect rect, const TlTileSett
     return true;
 }
 
+/* Заполняет tile, если плитка задевает пол; false — не задевает. */
+static bool classify_tile(const LocalFloor *floor, const TlPlacedTile *placed, const TlTileSettings *settings,
+                          bool fast, TlTile *tile)
+{
+    TlPolygon outline = placed->shape_count ? tl_polygon_from_points(placed->shape, placed->shape_count)
+                                            : tl_polygon_from_rect(placed->rect);
+    bool touches = placed->shape_count || crosses_joint(floor, &outline)
+                       ? classify_by_regions(floor, &outline, placed->rect, settings, fast, tile)
+                       : classify_rect(floor, placed->rect, settings, fast, tile);
+    if (touches && placed->shape_count && !fast) /* контур плитки — для чертежа и рисования */
+        tile->outline = shape_from_tile_corner(tl_polygon_copy(&outline), placed->rect);
+    tl_polygon_free(&outline);
+    return touches;
+}
+
 /* ---- СВП -------------------------------------------------------------------- */
 
-/* СВП — в швах между двумя плитками: на нижней и правой стороне каждой
- * плитки (шов считается один раз). Точка ставится, только если по обе
- * стороны шва есть пол: у стен и перегородок СВП нет. */
+/* Контур плитки в осях раскладки: прямоугольник или многоугольник. */
+static TlPolygon tile_polygon(const TlTile *tile)
+{
+    if (!tile->outline.count)
+        return tl_polygon_from_rect(tile->rect);
+    TlPolygon polygon = tl_polygon_copy(&tile->outline);
+    tl_polygon_translate(&polygon, tl_vec2(tile->rect.left, tile->rect.top));
+    return polygon;
+}
+
+/* СВП — в швах между двумя плитками: по сторонам каждой плитки, чья наружная
+ * нормаль смотрит вправо (или строго вниз), — так шов между соседями считается
+ * один раз. На длинную сторону — clips_per_long_side, на остальные —
+ * clips_per_short_side; на стороны короче CLIP_MIN_EDGE — нет. Точка ставится, только если по обе стороны шва есть
+ * пол: у стен и перегородок СВП нет. */
 static void place_clips(TlLayout *layout, const TlTileSettings *settings)
 {
     double gap = settings->joint_width;
     for (size_t i = 0; i < layout->tiles.count; i++) {
-        TlRect r = layout->tiles.items[i].rect;
-        double w = tl_rect_width(r), h = tl_rect_height(r);
-        int along_width = w >= h ? settings->clips_per_long_side : settings->clips_per_short_side;
-        int along_height = h >= w ? settings->clips_per_long_side : settings->clips_per_short_side;
-        for (int k = 0; k < along_width; k++) {
-            double x = r.left + w * (k + 0.5) / along_width;
-            if (floor_contains(layout, tl_vec2(x, r.bottom - CLIP_PROBE)) &&
-                floor_contains(layout, tl_vec2(x, r.bottom + gap + CLIP_PROBE)))
-                tl_polygon_push(&layout->clip_points, tl_vec2(x, r.bottom + gap / 2));
+        TlPolygon polygon = tile_polygon(&layout->tiles.items[i]);
+        double orientation = tl_polygon_signed_area(&polygon) > 0 ? 1 : -1;
+        double longest = 0;
+        for (size_t e = 0; e < polygon.count; e++)
+            longest = fmax(longest, tl_polygon_edge_length(&polygon, e));
+        for (size_t e = 0; e < polygon.count; e++) {
+            TlVec2 a = tl_polygon_edge_start(&polygon, e), b = tl_polygon_edge_end(&polygon, e);
+            double length = tl_distance(a, b);
+            if (length < CLIP_MIN_EDGE)
+                continue;
+            TlVec2 direction = tl_vec2_scale(tl_vec2_sub(b, a), 1 / length);
+            /* наружу: при обходе против часовой (площадь > 0 в осях y вниз — по часовой на экране) */
+            TlVec2 normal = tl_vec2_scale(tl_vec2(direction.y, -direction.x), orientation);
+            if (!(normal.x > 1e-6 || (fabs(normal.x) <= 1e-6 && normal.y > 0)))
+                continue;
+            int count = length >= longest - 0.5 ? settings->clips_per_long_side : settings->clips_per_short_side;
+            for (int k = 0; k < count; k++) {
+                TlVec2 p = tl_vec2_lerp(a, b, (k + 0.5) / count);
+                if (floor_contains(layout, tl_vec2_sub(p, tl_vec2_scale(normal, CLIP_PROBE))) &&
+                    floor_contains(layout, tl_vec2_add(p, tl_vec2_scale(normal, gap + CLIP_PROBE))))
+                    tl_polygon_push(&layout->clip_points, tl_vec2_add(p, tl_vec2_scale(normal, gap / 2)));
+            }
         }
-        for (int k = 0; k < along_height; k++) {
-            double y = r.top + h * (k + 0.5) / along_height;
-            if (floor_contains(layout, tl_vec2(r.right - CLIP_PROBE, y)) &&
-                floor_contains(layout, tl_vec2(r.right + gap + CLIP_PROBE, y)))
-                tl_polygon_push(&layout->clip_points, tl_vec2(r.right + gap / 2, y));
-        }
+        tl_polygon_free(&polygon);
     }
 }
 
@@ -298,6 +346,17 @@ static void drill_tile(TlTile *tile, const TlCircleList *pipes)
         TlCircle pipe = pipes->items[i];
         if (!tl_circle_touches_rect(pipe, tile->rect))
             continue;
+        if (tile->outline.count) { /* у многоугольника — по самому контуру */
+            TlPolygon polygon = tile_polygon(tile);
+            bool inside = tl_polygon_contains(&polygon, pipe.center);
+            double distance = INFINITY;
+            for (size_t e = 0; e < polygon.count; e++)
+                distance = fmin(distance, tl_point_segment_distance(pipe.center, tl_polygon_edge_start(&polygon, e),
+                                                                    tl_polygon_edge_end(&polygon, e), NULL));
+            tl_polygon_free(&polygon);
+            if (!inside && distance >= pipe.diameter / 2 - 0.5)
+                continue;
+        }
         pipe.center = tl_vec2_sub(pipe.center, tl_vec2(tile->rect.left, tile->rect.top));
         tl_circle_list_push(&tile->drills, pipe);
     }
@@ -315,7 +374,7 @@ static void place_tile(const TlPlacedTile *placed, void *context)
 {
     Placing *placing = context;
     TlTile tile;
-    if (!classify_tile(placing->floor, placed->rect, placing->settings, placing->fast, &tile))
+    if (!classify_tile(placing->floor, placed, placing->settings, placing->fast, &tile))
         return;
     tile.cell = placed->cell;
     tile.spec = placed->spec;
@@ -327,20 +386,29 @@ static void place_tile(const TlPlacedTile *placed, void *context)
     count_tile(placing->layout, tile.kind);
 }
 
-TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
+static double polygons_area(const TlPolygonList *list)
+{
+    double area = 0;
+    for (size_t i = 0; list && i < list->count; i++)
+        area += tl_polygon_area(&list->items[i]);
+    return area;
+}
+
+TlLayout *tl_layout_compute_surface(const TlSurface *surface, const TlLayoutOptions *options)
 {
     const TlLayoutOptions defaults = {0};
     if (!options)
         options = &defaults;
-    const TlTileSettings *settings = tl_space_effective_tile(space);
+    const TlTileSettings *settings = surface->tile;
     TlLayout *layout = TL_NEW(TlLayout);
-    layout->local_to_world = local_frame(tl_space_frame(space), settings->rotation_degrees);
-    layout->floor_area = tl_space_area(space);
-    if (space->outline.count < 3)
+    layout->local_to_world = surface_frame(surface);
+    layout->floor_area =
+        tl_polygon_area(surface->outline) - polygons_area(surface->holes) - polygons_area(surface->cutouts);
+    if (surface->outline->count < 3)
         return layout;
 
     TlAffine to_local = tl_affine_inverted(&layout->local_to_world);
-    LocalFloor room_floor = make_local_floor(space, &to_local, settings->wall_gap);
+    LocalFloor room_floor = make_local_floor(surface, &to_local);
     layout->floor_outline = room_floor.outline;
     layout->floor_holes = room_floor.holes;
     layout->joint_strips = room_floor.joint_strips;
@@ -354,8 +422,8 @@ TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
     }
 
     TlCircleList pipes = {0};
-    for (size_t i = 0; i < space->pipes.count; i++) {
-        TlCircle pipe = space->pipes.items[i];
+    for (size_t i = 0; surface->pipes && i < surface->pipes->count; i++) {
+        TlCircle pipe = surface->pipes->items[i];
         pipe.center = tl_affine_apply(&to_local, pipe.center);
         tl_circle_list_push(&pipes, pipe);
     }
@@ -366,6 +434,30 @@ TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
     tl_circle_list_free(&pipes);
     if (!options->fast)
         place_clips(layout, settings);
+    return layout;
+}
+
+/* Основной пол комнаты: оси — от угла габарита (у общего пола — комнаты-источника). */
+static TlSurface main_surface(TlSpace *space, const TlPolygonList *cutouts)
+{
+    TlRect bounds = tl_polygon_bounds(tl_space_frame(space));
+    return (TlSurface){.outline = &space->outline,
+                       .holes = &space->holes,
+                       .cutouts = cutouts,
+                       .joint_strips = &space->joint_strips,
+                       .threshold_strips = &space->threshold_strips,
+                       .pipes = &space->pipes,
+                       .origin = tl_vec2(bounds.left, bounds.top),
+                       .angle = 0,
+                       .tile = tl_space_effective_tile(space)};
+}
+
+TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
+{
+    TlPolygonList cutouts = tl_space_zone_cutouts(space);
+    TlSurface surface = main_surface(space, &cutouts);
+    TlLayout *layout = tl_layout_compute_surface(&surface, options);
+    tl_polygon_list_free_all(&cutouts);
     return layout;
 }
 
@@ -445,13 +537,15 @@ void tl_layout_cache_free(struct TlLayoutCache *cache)
     tl_polygon_free(&cache->frame);
     tl_polygon_list_free_all(&cache->holes);
     tl_polygon_list_free_all(&cache->joint_strips);
+    tl_polygon_list_free_all(&cache->cutouts);
     tl_circle_list_free(&cache->pipes);
     free(cache);
 }
 
-static bool cache_is_current(const struct TlLayoutCache *cache, TlSpace *space)
+static bool cache_is_current(const struct TlLayoutCache *cache, TlSpace *space, const TlPolygonList *cutouts)
 {
     return cache && polygons_equal(&cache->outline, &space->outline) &&
+           polygon_lists_equal(&cache->cutouts, cutouts) &&
            polygon_lists_equal(&cache->holes, &space->holes) &&
            polygon_lists_equal(&cache->joint_strips, &space->joint_strips) &&
            circle_lists_equal(&cache->pipes, &space->pipes) &&
@@ -461,11 +555,16 @@ static bool cache_is_current(const struct TlLayoutCache *cache, TlSpace *space)
 
 TlLayout *tl_space_layout(TlSpace *space)
 {
-    if (cache_is_current(space->layout_cache, space))
+    TlPolygonList cutouts = tl_space_zone_cutouts(space);
+    if (cache_is_current(space->layout_cache, space, &cutouts)) {
+        tl_polygon_list_free_all(&cutouts);
         return space->layout_cache->layout;
+    }
     tl_layout_cache_free(space->layout_cache);
     struct TlLayoutCache *cache = TL_NEW(struct TlLayoutCache);
-    cache->layout = tl_layout_compute(space, NULL);
+    TlSurface surface = main_surface(space, &cutouts);
+    cache->layout = tl_layout_compute_surface(&surface, NULL);
+    cache->cutouts = cutouts;
     cache->outline = tl_polygon_copy(&space->outline);
     cache->frame = tl_polygon_copy(tl_space_frame(space));
     cache->holes = tl_polygon_list_deep_copy(&space->holes);
@@ -483,20 +582,19 @@ static int bags_for(double amount, double per_bag)
     return per_bag > 0 ? (int)ceil(amount / per_bag - 1e-9) : 0;
 }
 
-double tl_layout_glue_kg(TlSpace *space, const TlLayout *layout)
+double tl_layout_glue_kg(const TlTileSettings *tile, const TlLayout *layout)
 {
-    const TlTileSettings *settings = tl_space_effective_tile(space);
-    return layout->floor_area / 1e6 * settings->glue_kg_per_m2_mm * settings->glue_layer_mm;
+    return layout->floor_area / 1e6 * tile->glue_kg_per_m2_mm * tile->glue_layer_mm;
 }
 
-int tl_layout_glue_bags(TlSpace *space, const TlLayout *layout)
+int tl_layout_glue_bags(const TlTileSettings *tile, const TlLayout *layout)
 {
-    return bags_for(tl_layout_glue_kg(space, layout), tl_space_effective_tile(space)->glue_bag_kg);
+    return bags_for(tl_layout_glue_kg(tile, layout), tile->glue_bag_kg);
 }
 
-int tl_layout_clip_packs(TlSpace *space, const TlLayout *layout)
+int tl_layout_clip_packs(const TlTileSettings *tile, const TlLayout *layout)
 {
-    return bags_for((double)layout->clip_points.count, tl_space_effective_tile(space)->clips_per_pack);
+    return bags_for((double)layout->clip_points.count, tile->clips_per_pack);
 }
 
 double tl_layout_joint_length(const TlLayout *layout)
@@ -504,22 +602,25 @@ double tl_layout_joint_length(const TlLayout *layout)
     double length = 0;
     for (size_t i = 0; i < layout->tiles.count; i++) {
         const TlTile *tile = &layout->tiles.items[i];
-        length += tile->kind == TL_TILE_WHOLE ? tl_rect_width(tile->rect) + tl_rect_height(tile->rect)
-                                              : tile->piece_width + tile->piece_height;
+        if (tile->kind != TL_TILE_WHOLE)
+            length += tile->piece_width + tile->piece_height;
+        else if (tile->outline.count)
+            length += tl_polygon_perimeter(&tile->outline) / 2;
+        else
+            length += tl_rect_width(tile->rect) + tl_rect_height(tile->rect);
     }
     return length;
 }
 
-double tl_layout_grout_kg(TlSpace *space, const TlLayout *layout)
+double tl_layout_grout_kg(const TlTileSettings *s, const TlLayout *layout)
 {
-    const TlTileSettings *s = tl_space_effective_tile(space);
     /* мм³ × г/см³ = 1e-6 кг */
     return tl_layout_joint_length(layout) * s->joint_width * s->tile_thickness * s->grout_density * 1e-6;
 }
 
-double tl_layout_primer_l(TlSpace *space, const TlLayout *layout)
+double tl_layout_primer_l(const TlTileSettings *tile, const TlLayout *layout)
 {
-    return layout->floor_area / 1e6 * tl_space_effective_tile(space)->primer_l_per_m2;
+    return layout->floor_area / 1e6 * tile->primer_l_per_m2;
 }
 
 /* ---- смещение сетки --------------------------------------------------------- */

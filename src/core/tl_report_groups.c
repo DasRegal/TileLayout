@@ -7,26 +7,32 @@ static int compare_owners(const void *left, const void *right)
     return tl_compare_cells(((const TlCellOwner *)left)->cell, ((const TlCellOwner *)right)->cell);
 }
 
-static bool space_is_tiled(TlSpace *space, TlLayout *layout)
-{
-    return tl_space_effective_tile(space)->enabled && !layout->too_many;
-}
-
-static TlLayoutGroup *group_for(TlLayoutGroupList *groups, TlSpace *source, bool owns_layouts)
+static TlLayoutGroup *group_for(TlLayoutGroupList *groups, TlSpace *source, size_t layout,
+                                const TlTileSettings *tile, bool owns_layouts)
 {
     for (size_t i = 0; i < groups->count; i++)
-        if (groups->items[i].source == source)
+        if (groups->items[i].source == source && groups->items[i].layout == layout)
             return &groups->items[i];
-    TlLayoutGroup group = {.source = source, .owns_layouts = owns_layouts};
+    TlLayoutGroup group = {.source = source, .layout = layout, .tile = tile, .owns_layouts = owns_layouts};
     tl_layout_group_list_push(groups, group);
     return tl_layout_group_list_last(groups);
+}
+
+static void add_member(TlLayoutGroup *group, TlSpace *space, size_t index, TlLayout *layout)
+{
+    tl_space_list_push(&group->members, space);
+    tl_layout_ptr_list_push(&group->layouts, layout);
+    for (size_t t = 0; t < layout->tiles.count; t++) {
+        TlCellOwner owner = {layout->tiles.items[t].cell, space, index, &layout->tiles.items[t]};
+        tl_cell_owner_list_push(&group->owners, owner);
+    }
 }
 
 TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptions *options,
                                          TlSpace *only_source)
 {
     TlLayoutGroupList groups = {0};
-    bool fresh = options != NULL;
+    bool fresh = options != NULL; /* перебор смещений — только основной пол */
     for (size_t i = 0; i < project->spaces.count; i++) {
         TlSpace *space = project->spaces.items[i];
         if (only_source && space->layout_source != only_source)
@@ -34,17 +40,17 @@ TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptio
         if (!tl_space_effective_tile(space)->enabled)
             continue;
         TlLayout *layout = fresh ? tl_layout_compute(space, options) : tl_space_layout(space);
-        if (!space_is_tiled(space, layout)) {
+        if (layout->too_many) {
             if (fresh)
                 tl_layout_free(layout);
-            continue;
+        } else {
+            TlLayoutGroup *group = group_for(&groups, space->layout_source, 0, tl_space_effective_tile(space), fresh);
+            add_member(group, space, 0, layout);
         }
-        TlLayoutGroup *group = group_for(&groups, space->layout_source, fresh);
-        tl_space_list_push(&group->members, space);
-        tl_layout_ptr_list_push(&group->layouts, layout);
-        for (size_t t = 0; t < layout->tiles.count; t++) {
-            TlCellOwner owner = {layout->tiles.items[t].cell, space, &layout->tiles.items[t]};
-            tl_cell_owner_list_push(&group->owners, owner);
+        for (size_t z = 1; !fresh && z < tl_space_layout_count(space); z++) {
+            TlLayout *zone = tl_space_layout_at(space, z);
+            if (!zone->too_many)
+                add_member(group_for(&groups, space, z, tl_space_layout_tile(space, z), false), space, z, zone);
         }
     }
     for (size_t g = 0; g < groups.count; g++)
@@ -104,7 +110,7 @@ TlPieceList tl_group_unshared_pieces(const TlLayoutGroup *group)
         if (owner->tile->kind == TL_TILE_WHOLE || owner->tile->drills.count > 0 ||
             tl_group_cell_owners(group, owner->cell, NULL) > 1)
             continue;
-        TlPiece piece = {{owner->space, owner->cell}, 0, 0, owner->tile->spec};
+        TlPiece piece = {{owner->space, owner->layout, owner->cell}, 0, 0, owner->tile->spec};
         tl_tile_piece_size(owner->tile, &piece.width, &piece.height);
         tl_piece_list_push(&pieces, piece);
     }

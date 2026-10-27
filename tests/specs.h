@@ -22,5 +22,6 @@ void spec_drag(void);
 void spec_pattern(void);
 void spec_estimate(void);
 void spec_pipes(void);
+void spec_zones(void);
 
 #endif

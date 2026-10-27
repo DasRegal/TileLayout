@@ -17,6 +17,9 @@ const PATTERNS = [
   ['Модульная: 2 формата', 'hopscotch'],
   ['Модульная: 3 формата', 'modular3'],
   ['Версаль: 4 формата', 'versailles'],
+  ['Французская ёлочка (шеврон)', 'chevron'],
+  ['Со вставкой (кабошон)', 'insert'],
+  ['Корзинка', 'basket'],
 ];
 const MODULAR = ['hopscotch', 'modular3', 'versailles'];
 const patternOf = (tile) => (PATTERNS.some(([, id]) => id === tile.pattern) ? tile.pattern : 'straight');
@@ -27,8 +30,43 @@ function patternNote(room) {
   if (MODULAR.includes(pattern)) return `Длина и ширина — клетка модуля. Форматы: ${room.formats.join(', ')}.`;
   if (pattern === 'herringbone') return 'Длинная сторона — вдоль ряда. Ёлочка по диагонали комнаты — поворот 45°.';
   if (pattern === 'checker') return 'Плитки двух цветов через одну: вторая — отдельная позиция к покупке.';
+  if (pattern === 'chevron') return 'Длина — по длинной стороне плитки-параллелограмма, торцы срезаны под углом шеврона.';
+  if (pattern === 'insert') return 'Углы плитки срезаны под квадратную вставку (кабошон) — её размер и цвет ниже.';
+  if (pattern === 'basket') return 'Квадрат из нескольких плиток вдоль, рядом — поперёк. Ровно, если длина = n × ширина + швы.';
   return '';
 }
+
+/* Зоны пола (src/core/tl_zone.h): у зоны своя плитка, рисунок и цена; клей и затирка — от комнаты. */
+const ZONES = [
+  {
+    key: 'border',
+    title: 'Бордюр вдоль стен',
+    check: 'Бордюр по периметру комнаты',
+    fields: [{ key: 'width', label: 'Ширина полосы', min: 10, max: 5000, step: 10, unit: 'мм' }],
+  },
+  {
+    key: 'carpet',
+    title: 'Ковёр (панно) в центре',
+    check: 'Ковёр другой плиткой в центре',
+    fields: [
+      { key: 'width', label: 'Размер по X', min: 10, max: 50000, step: 10, unit: 'мм' },
+      { key: 'height', label: 'Размер по Y', min: 10, max: 50000, step: 10, unit: 'мм' },
+      { key: 'dx', label: 'Сдвиг X от центра', min: -50000, max: 50000, step: 10, unit: 'мм' },
+      { key: 'dy', label: 'Сдвиг Y от центра', min: -50000, max: 50000, step: 10, unit: 'мм' },
+    ],
+  },
+];
+const ZONE_TILE_FIELDS = [
+  { key: 'pattern', label: 'Укладка', options: PATTERNS, tile: true },
+  { key: 'w', label: 'Длина плитки', min: 10, max: 5000, step: 10, unit: 'мм', tile: true },
+  { key: 'h', label: 'Ширина плитки', min: 10, max: 5000, step: 10, unit: 'мм', tile: true },
+  { key: 'gap', label: 'Шов', min: 0, max: 50, step: 0.5, unit: 'мм', tile: true },
+  { key: 'angle', label: 'Поворот', min: -180, max: 180, step: 5, unit: '°', tile: true },
+  { key: 'color', label: 'Цвет', color: true, tile: true },
+  { key: 'color2', label: 'Цвет второй плитки', color: true, tile: true },
+  { key: 'price_tile', label: 'Цена плитки', min: 0, max: 1e6, step: 50, unit: '₽/м²', tile: true },
+  { key: 'price_work', label: 'Цена укладки', min: 0, max: 1e6, step: 50, unit: '₽/м²', tile: true },
+];
 
 const SECTIONS = [
   {
@@ -38,6 +76,8 @@ const SECTIONS = [
       { key: 'w', label: 'Длина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
       { key: 'h', label: 'Ширина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
       { key: 'gap', label: 'Шов (зазор)', min: 0, max: 50, step: 0.5, unit: 'мм' },
+      { key: 'pattern_angle', label: 'Угол шеврона', min: 15, max: 75, step: 5, unit: '°', when: (tile) => patternOf(tile) === 'chevron' },
+      { key: 'insert', label: 'Вставка (кабошон)', min: 10, max: 500, step: 5, unit: 'мм', when: (tile) => patternOf(tile) === 'insert' },
       { key: 'shift', label: 'Сдвиг рядов', options: ROW_SHIFTS, when: (tile) => patternOf(tile) === 'straight' },
       { key: 'angle', label: 'Поворот', min: -180, max: 180, step: 5, unit: '°' },
       { key: 'off_x', label: 'Смещение X', min: -100000, max: 100000, step: 5, unit: 'мм' },
@@ -48,7 +88,7 @@ const SECTIONS = [
       { key: 'cut_allow', label: 'Запас на рез', min: 0, max: 20, step: 0.5, unit: 'мм' },
       { key: 'reserve', label: 'Запас', min: 0, max: 100, step: 1, unit: '%' },
       { key: 'color', label: 'Цвет', color: true },
-      { key: 'color2', label: 'Цвет второй плитки', color: true, when: (tile) => patternOf(tile) === 'checker' },
+      { key: 'color2', label: 'Цвет второй плитки', color: true, when: (tile) => ['checker', 'insert'].includes(patternOf(tile)) },
     ],
   },
   {
@@ -282,9 +322,49 @@ export class Panel {
       }
       fields.append(block);
     }
+    this.zoneInputs = []; // {zone, field, input}
+    for (const zone of ZONES) fields.append(this.zoneBlock(zone));
   }
 
-  row(field) {
+  /** Раздел зоны: флажок, размеры и плитка зоны. */
+  zoneBlock(zone) {
+    const block = document.createElement('fieldset');
+    const legend = document.createElement('legend');
+    legend.textContent = zone.title;
+    block.append(legend);
+    const enabled = { key: 'enabled', label: zone.check, check: true };
+    const fit = { key: 'fit', label: 'По целой плитке', check: true };
+    for (const field of [enabled, ...zone.fields, fit]) block.append(this.zoneRow(zone, field));
+    const size = hint('');
+    block.append(size);
+    const texture = document.createElement('div');
+    texture.className = 'button-row zone-texture';
+    const name = document.createElement('span');
+    name.className = 'texture-name';
+    const choose = document.createElement('button');
+    choose.type = 'button';
+    choose.textContent = 'Рисунок…';
+    choose.title = 'Плитка зоны из каталога: размер и рисунок';
+    choose.addEventListener('click', () => this.actions.chooseZoneTile(zone.key));
+    const color = document.createElement('button');
+    color.type = 'button';
+    color.textContent = 'Только цвет';
+    color.addEventListener('click', () => this.actions.setZoneField(zone.key, 'texture', ''));
+    texture.append(name, choose, color);
+    block.append(texture);
+    this.zoneExtras = { ...this.zoneExtras, [zone.key]: { size, name, buttons: [choose, color] } };
+    for (const field of ZONE_TILE_FIELDS) block.append(this.zoneRow(zone, field));
+    return block;
+  }
+
+  zoneRow(zone, field) {
+    const row = this.row(field, (value) => this.actions.setZoneField(zone.key, field.key, value), `zone-${zone.key}-`);
+    this.zoneInputs.push({ zone: zone.key, field, input: row.querySelector('input, select') });
+    return row;
+  }
+
+  /** Строка поля; set(value) — что делать с введённым (по умолчанию — поле плитки комнаты). */
+  row(field, set = (value) => this.actions.setField(field.key, value), prefix = 'tile-') {
     const row = document.createElement('label');
     row.className = field.check ? 'row check' : 'row';
     const caption = document.createElement('span');
@@ -297,16 +377,16 @@ export class Panel {
       const mixed = new Option('разные', 'mixed'); // у нескольких комнат значения разные
       mixed.hidden = true;
       input.add(mixed);
-      input.addEventListener('change', () => this.actions.setField(field.key, field.options[input.selectedIndex][1]));
+      input.addEventListener('change', () => set(field.options[input.selectedIndex][1]));
       if (field.key === 'pattern') input.title = 'Как лежит плитка. Ёлочка по диагонали — поворот 45°.';
     } else if (field.check) {
       input = document.createElement('input');
       input.type = 'checkbox';
-      input.addEventListener('change', () => this.actions.setField(field.key, input.checked));
+      input.addEventListener('change', () => set(input.checked));
     } else if (field.color) {
       input = document.createElement('input');
       input.type = 'color';
-      input.addEventListener('change', () => this.actions.setField(field.key, input.value));
+      input.addEventListener('change', () => set(input.value));
     } else {
       input = document.createElement('input');
       input.type = 'number';
@@ -314,13 +394,11 @@ export class Panel {
       Object.assign(input, { min: field.min, max: field.max, step: field.step });
       input.addEventListener('change', () => {
         const value = Number(input.value);
-        if (input.value !== '' && Number.isFinite(value)) {
-          this.actions.setField(field.key, Math.min(field.max, Math.max(field.min, value)));
-        }
+        if (input.value !== '' && Number.isFinite(value)) set(Math.min(field.max, Math.max(field.min, value)));
       });
     }
-    input.id = `tile-${field.key}`;
-    this.inputs.set(field.key, { field, input, row });
+    input.id = `${prefix}${field.key}`;
+    if (prefix === 'tile-') this.inputs.set(field.key, { field, input, row });
     if (field.check) {
       row.append(input, caption);
     } else {
@@ -491,6 +569,26 @@ export class Panel {
     this.showTile(rooms, catalogs);
   }
 
+  /** Зоны первой выделенной комнаты; без флажка зоны её поля недоступны. */
+  showZones(room, catalogs) {
+    for (const zone of ZONES) {
+      const data = room.zones[zone.key];
+      const extras = this.zoneExtras[zone.key];
+      extras.size.textContent = zone.key === 'border'
+        ? `Кладётся полосой ${data.laid_width} мм`
+        : `Кладётся ковром ${data.laid_width} × ${data.laid_height} мм`;
+      const found = data.tile.texture && catalogs.find(data.tile.texture);
+      extras.name.textContent = !data.tile.texture ? 'только цвет' : found ? found.tile.name : data.tile.texture;
+      for (const button of extras.buttons) button.disabled = !data.enabled;
+    }
+    for (const { zone, field, input } of this.zoneInputs) {
+      const data = room.zones[zone];
+      const value = !field.tile ? data[field.key] : data.tile[field.key];
+      showValue(field, input, field.key === 'pattern' ? data.tile.pattern || 'straight' : value);
+      input.disabled = field.key !== 'enabled' && !data.enabled;
+    }
+  }
+
   /** Поля плитки, клея и СВП выделенных комнат. */
   showTile(rooms, catalogs) {
     const tile = rooms[0].tile;
@@ -521,6 +619,7 @@ export class Panel {
         input.placeholder = mixed ? 'разные' : '';
       }
     }
+    this.showZones(rooms[0], catalogs);
     const found = same('texture') && catalogs.find(tile.texture);
     this.colorOnly.hidden = rooms.every((r) => !r.tile.texture);
     this.textureImage.hidden = !found;
@@ -542,6 +641,15 @@ function fillChoice(select, items) {
   if (items.some(([, index]) => String(index) === previous)) select.value = previous;
   select.disabled = !items.length;
   if (!items.length) select.add(new Option('нет', ''));
+}
+
+/** Значение поля ввода: число, флажок, цвет или пункт списка. */
+function showValue(field, input, value) {
+  if (document.activeElement === input) return;
+  if (field.options) input.selectedIndex = nearestIndex(field.options, value);
+  else if (field.check) input.checked = Boolean(value);
+  else if (field.color) input.value = value;
+  else input.value = String(Math.round(value * 100) / 100);
 }
 
 function hint(text) {

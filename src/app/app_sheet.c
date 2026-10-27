@@ -252,7 +252,7 @@ static void add_rooms(AppSheet *sheet, const TlSummary *summary, bool mono)
                                     tile->rotation_degrees != 0 ? ", повёрнута" : "");
         g_free(pattern);
         char *tiled = g_strdup_printf("%.2f", room->layout->floor_area / 1e6);
-        char *count = g_strdup_printf("%d", tl_layout_total(room->layout));
+        char *count = g_strdup_printf("%d", tl_space_tile_total(space));
         char *glue = g_strdup_printf("%.1f", room->glue_kg);
         char *clips = g_strdup_printf("%d", room->clip_count);
         add_row(sheet, 2, ROOM_COLUMNS, ROOM_ALIGN, 7, false, cells_from(name, floor, tiled, how, count, glue, clips, NULL));

@@ -3,50 +3,62 @@
  * карточки чертежей подрезок.
  *
  * tl_web_tile_numbers:
- * [{"space": id, "numbers": [x, y, номер, ширина куска, высота куска, …]}] —
- * центр куска в мм плана, габарит куска по осям плитки; "rotation" — поворот
- * раскладки, °.
+ * [{"space": id, "numbers": [x, y, номер, ширина куска, высота куска, …]}] — по
+ * раскладке комнаты (основной пол и зоны): центр куска в мм плана, габарит
+ * куска по осям плитки; "rotation" — поворот раскладки, °.
  *
  * tl_web_cut_cards:
  * [{"kind": "single" | "shared" | "offcut" | "drilled", "title", "subtitle", "narrow": bool,
  *   "tile": {"w", "h", "color", "min_cut"},
+ *   "outline": [x0, y0, …] | null — плитка-многоугольник (шеврон, вставка) от угла габарита,
  *   "parts": [{"room", "number", "shapes": [[x0, y0, …], …], "drills": [[x, y, диаметр], …]}]}] —
  * контуры и центры отверстий от угла плитки, мм; первый контур части — внешний, далее дыры.
  */
+#include <math.h>
+
 #include "tl_report.h"
 #include "tl_web.h"
 #include "tl_web_internal.h"
+
+/* Номера одной раскладки комнаты: у бордюра — поворот вдоль своей стены. */
+static TlJson *layout_numbers(const TlSpace *space, const TlLayout *layout)
+{
+    TlJson *numbers = tl_json_array();
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        const TlTile *t = &layout->tiles.items[i];
+        TlVec2 world = tl_affine_apply(&layout->local_to_world, t->center);
+        bool whole = t->kind == TL_TILE_WHOLE;
+        tl_json_array_push(numbers, tl_web_number(world.x));
+        tl_json_array_push(numbers, tl_web_number(world.y));
+        tl_json_array_push(numbers, tl_json_number(t->number));
+        tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_width(t->rect) : t->piece_width));
+        tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_height(t->rect) : t->piece_height));
+    }
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "space", tl_json_number(space->id));
+    const TlAffine *m = &layout->local_to_world;
+    tl_json_object_set(json, "rotation", tl_json_number(atan2(m->b, m->a) * 180 / TL_PI));
+    tl_json_object_set(json, "numbers", numbers);
+    return json;
+}
 
 const char *tl_web_tile_numbers(void)
 {
     static char *text;
     TlProject *project = tl_web_project();
     tl_report_assign_numbers(project);
-    TlJson *spaces = tl_json_array();
+    TlJson *layouts = tl_json_array();
     for (size_t s = 0; s < project->spaces.count; s++) {
         TlSpace *space = project->spaces.items[s];
-        const TlTileSettings *tile = tl_space_effective_tile(space);
-        TlLayout *layout = tl_space_layout(space);
-        if (!tile->enabled || layout->too_many)
+        if (!tl_space_effective_tile(space)->enabled)
             continue;
-        TlJson *numbers = tl_json_array();
-        for (size_t i = 0; i < layout->tiles.count; i++) {
-            const TlTile *t = &layout->tiles.items[i];
-            TlVec2 world = tl_affine_apply(&layout->local_to_world, t->center);
-            bool whole = t->kind == TL_TILE_WHOLE;
-            tl_json_array_push(numbers, tl_web_number(world.x));
-            tl_json_array_push(numbers, tl_web_number(world.y));
-            tl_json_array_push(numbers, tl_json_number(t->number));
-            tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_width(t->rect) : t->piece_width));
-            tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_height(t->rect) : t->piece_height));
+        for (size_t l = 0; l < tl_space_layout_count(space); l++) { /* основной пол и зоны */
+            const TlLayout *layout = tl_space_layout_at(space, l);
+            if (!layout->too_many)
+                tl_json_array_push(layouts, layout_numbers(space, layout));
         }
-        TlJson *json = tl_json_object();
-        tl_json_object_set(json, "space", tl_json_number(space->id));
-        tl_json_object_set(json, "rotation", tl_json_number(tile->rotation_degrees));
-        tl_json_object_set(json, "numbers", numbers);
-        tl_json_array_push(spaces, json);
     }
-    return tl_web_keep(&text, spaces);
+    return tl_web_keep(&text, layouts);
 }
 
 static const char *card_kind(TlCutCardKind kind)
@@ -77,6 +89,7 @@ const char *tl_web_cut_cards(void)
         tl_json_object_set(tile, "color", tl_json_string(card->color));
         tl_json_object_set(tile, "min_cut", tl_json_number(card->tile->min_cut_width));
         tl_json_object_set(json, "tile", tile);
+        tl_json_object_set(json, "outline", card->outline.count ? tl_web_polygon(&card->outline) : tl_json_null());
         TlJson *parts = tl_json_array();
         for (size_t p = 0; p < card->parts.count; p++) {
             const TlCutPart *part = &card->parts.items[p];

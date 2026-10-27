@@ -9,6 +9,8 @@ TlSpace *tl_space_new(int id, const char *name, TlTileSettings tile)
     space->name = tl_strdup(name);
     space->tile = tile;
     space->layout_source = space;
+    for (int kind = 0; kind < TL_ZONE_COUNT; kind++)
+        space->zones[kind] = tl_zone_factory((TlZoneKind)kind);
     return space;
 }
 
@@ -24,6 +26,7 @@ void tl_space_free(TlSpace *space)
     tl_polygon_list_free_all(&space->threshold_strips);
     tl_circle_list_free(&space->pipes);
     tl_layout_cache_free(space->layout_cache);
+    tl_zone_cache_free(space->zone_cache);
     free(space);
 }
 

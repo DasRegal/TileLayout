@@ -209,19 +209,33 @@ static TlVec2 on_card(TlVec2 p, double scale, double ox, double oy)
     return tl_vec2(ox + p.x * scale, oy + p.y * scale);
 }
 
+/* Отрезок a—b лежит на кромке плитки (у многоугольника — на одной из его сторон). */
+static bool on_tile_edge(const TlCutCard *card, TlVec2 a, TlVec2 b)
+{
+    if (card->outline.count) {
+        for (size_t e = 0; e < card->outline.count; e++) {
+            TlVec2 p = tl_polygon_edge_start(&card->outline, e), q = tl_polygon_edge_end(&card->outline, e);
+            if (tl_point_segment_distance(a, p, q, NULL) < 0.5 && tl_point_segment_distance(b, p, q, NULL) < 0.5)
+                return true;
+        }
+        return false;
+    }
+    bool horizontal = fabs(a.y - b.y) < 0.5, vertical = fabs(a.x - b.x) < 0.5;
+    return (horizontal && (fabs(a.y) < 0.5 || fabs(a.y - card->height) < 0.5)) ||
+           (vertical && (fabs(a.x) < 0.5 || fabs(a.x - card->width) < 0.5));
+}
+
 /* Контур куска: заводская кромка — тонко, линия реза — толсто. Линии — препятствия для подписей. */
 static void piece_lines(cairo_t *cr, AppLabels *labels, const TlPolygon *shape, const TlCutCard *card,
                         double scale, double ox, double oy, bool mono)
 {
     for (size_t i = 0; i < shape->count; i++) {
         TlVec2 a = shape->items[i], b = shape->items[(i + 1) % shape->count];
-        bool horizontal = fabs(a.y - b.y) < 0.5, vertical = fabs(a.x - b.x) < 0.5;
-        bool on_tile_edge = (horizontal && (fabs(a.y) < 0.5 || fabs(a.y - card->height) < 0.5)) ||
-                            (vertical && (fabs(a.x) < 0.5 || fabs(a.x - card->width) < 0.5));
+        bool factory_edge = on_tile_edge(card, a, b);
         TlVec2 sa = on_card(a, scale, ox, oy), sb = on_card(b, scale, ox, oy);
         cairo_move_to(cr, sa.x, sa.y);
         cairo_line_to(cr, sb.x, sb.y);
-        if (on_tile_edge) {
+        if (factory_edge) {
             cairo_set_source_rgb(cr, 0, 0, 0);
             cairo_set_line_width(cr, 0.9);
         } else {
@@ -478,7 +492,14 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     bool has_rest = card->kind == TL_CARD_SHARED_TILE || card->kind == TL_CARD_OFFCUT_PAIR;
     if (has_rest)
         hatch_rest(cr, card, scale, ox, oy, tile_rect, mono);
-    cairo_rectangle(cr, tile_rect.left, tile_rect.top, tl_rect_width(tile_rect), tl_rect_height(tile_rect));
+    if (card->outline.count) { /* шеврон, вставка — контур плитки, а не габарит */
+        for (size_t i = 0; i < card->outline.count; i++)
+            (i ? cairo_line_to : cairo_move_to)(cr, ox + card->outline.items[i].x * scale,
+                                                oy + card->outline.items[i].y * scale);
+        cairo_close_path(cr);
+    } else {
+        cairo_rectangle(cr, tile_rect.left, tile_rect.top, tl_rect_width(tile_rect), tl_rect_height(tile_rect));
+    }
     double dashes[2] = {3, 3};
     cairo_set_dash(cr, dashes, 2, 0);
     cairo_set_source_rgb(cr, mono ? 0 : 0.48, mono ? 0 : 0.5, mono ? 0 : 0.53);

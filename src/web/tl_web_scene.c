@@ -23,9 +23,12 @@
  *                                "tiles": [left, top, right, bottom, вид, плитка, ...],  вид: 0 целая, 1 подрезка,
  *                                          2 узкая; плитка — номер в "specs"
  *                                "specs": [{"color", "textured": рисунок из каталога}],  виды плитки рисунка
- *                                "clips": [x0, y0, ...], "count": плиток}}]}
+ *                                "clips": [x0, y0, ...], "count": плиток,
+ *                                "shapes": {"номер плитки": [x0, y0, …]} — плитки-многоугольники},
+ *              "zones": [раскладки зон — как "layout" и "tile": настройки плитки зоны]}]}
  */
 #include <math.h>
+#include <stdio.h>
 
 #include "tl_layout.h"
 #include "tl_web.h"
@@ -195,9 +198,8 @@ static TlJson *dimensions(TlProject *project)
 
 /* ---- комнаты ------------------------------------------------------------------- */
 
-static TlJson *layout_json(TlSpace *space)
+static TlJson *layout_json(const TlLayout *layout)
 {
-    TlLayout *layout = tl_space_layout(space);
     TlJson *json = tl_json_object();
     const TlAffine *m = &layout->local_to_world;
     const double matrix[6] = {m->a, m->b, m->c, m->d, m->tx, m->ty};
@@ -227,6 +229,19 @@ static TlJson *layout_json(TlSpace *space)
         tl_json_array_push(specs, spec);
     }
     tl_json_object_set(json, "specs", specs);
+    TlJson *shapes = tl_json_object(); /* шеврон, вставка: контур в осях раскладки */
+    for (size_t i = 0; i < layout->tiles.count && !layout->too_many; i++) {
+        const TlTile *tile = &layout->tiles.items[i];
+        if (!tile->outline.count)
+            continue;
+        TlPolygon outline = tl_polygon_copy(&tile->outline);
+        tl_polygon_translate(&outline, tl_vec2(tile->rect.left, tile->rect.top));
+        char key[24];
+        snprintf(key, sizeof key, "%zu", i);
+        tl_json_object_set(shapes, key, tl_web_polygon(&outline));
+        tl_polygon_free(&outline);
+    }
+    tl_json_object_set(json, "shapes", shapes);
     tl_json_object_set(json, "clips", tl_web_polygon(&layout->clip_points));
     tl_json_object_set(json, "count", tl_json_number(layout->too_many ? 0 : tl_layout_total(layout)));
     return json;
@@ -246,7 +261,14 @@ static TlJson *space_json(TlSpace *space)
                                                                         : tl_json_null());
     const TlTileSettings *tile = tl_space_effective_tile(space);
     tl_json_object_set(json, "tile", tl_web_tile_json(tile));
-    tl_json_object_set(json, "layout", tile->enabled ? layout_json(space) : tl_json_null());
+    tl_json_object_set(json, "layout", tile->enabled ? layout_json(tl_space_layout(space)) : tl_json_null());
+    TlJson *zones = tl_json_array(); /* бордюр (по раскладке на стену), ковёр — поверх основного пола */
+    for (size_t l = 1; tile->enabled && l < tl_space_layout_count(space); l++) {
+        TlJson *zone = layout_json(tl_space_layout_at(space, l));
+        tl_json_object_set(zone, "tile", tl_web_tile_json(tl_space_layout_tile(space, l)));
+        tl_json_array_push(zones, zone);
+    }
+    tl_json_object_set(json, "zones", zones);
     return json;
 }
 

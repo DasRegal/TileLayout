@@ -32,6 +32,9 @@ void app_command_set_vertex(AppDocument *document, TlOutline *outline, size_t in
 void app_command_set_node_point(AppDocument *document, const AppSelection *selection, TlVec2 point);
 /* Плитка выделенных комнат (у общего пола — комнаты-источника) из каталога: размер,
    рисунок, цвет; catalog = NULL — убрать рисунок, оставив цвет. */
+/* Плитка из каталога для зоны пола выделенных комнат (catalog == NULL — только цвет). */
+void app_command_set_zone_texture(AppDocument *document, TlZoneKind kind, const TlCatalog *catalog,
+                                  const TlCatalogTile *tile);
 void app_command_set_tile_texture(AppDocument *document, const TlCatalog *catalog,
                                   const TlCatalogTile *tile);
 /* Точка выделенного примыкания — в точку: вдоль бока — скользит, за грань — узел. */

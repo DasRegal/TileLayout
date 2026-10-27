@@ -12,17 +12,19 @@
 
 typedef struct DoneKey {
     const void *owner;   /* источник группы или комната */
+    size_t layout;       /* раскладка: основной пол или зона */
     TlCell cell;
 } DoneKey;
 
 TL_ARRAY_DEFINE(DoneKeyList, DoneKey, done_key_list)
 
-static bool take_once(DoneKeyList *done, const void *owner, TlCell cell)
+static bool take_once(DoneKeyList *done, const void *owner, size_t layout, TlCell cell)
 {
     for (size_t i = 0; i < done->count; i++)
-        if (done->items[i].owner == owner && tl_compare_cells(done->items[i].cell, cell) == 0)
+        if (done->items[i].owner == owner && done->items[i].layout == layout &&
+            tl_compare_cells(done->items[i].cell, cell) == 0)
             return false;
-    done_key_list_push(done, (DoneKey){owner, cell});
+    done_key_list_push(done, (DoneKey){owner, layout, cell});
     return true;
 }
 
@@ -31,8 +33,9 @@ static TlCutPart make_part(const char *room, int number, const TlTile *tile)
     TlCutPart part = {.number = number, .shapes = tl_polygon_list_deep_copy(&tile->shapes),
                       .drills = tl_circle_list_copy(&tile->drills)};
     if (part.shapes.count == 0) /* целая плитка — контур во всю плитку */
-        tl_polygon_list_push(&part.shapes, tl_polygon_from_rect((TlRect){0, 0, tl_rect_width(tile->rect),
-                                                                         tl_rect_height(tile->rect)}));
+        tl_polygon_list_push(&part.shapes, tile->outline.count ? tl_polygon_copy(&tile->outline)
+                                                               : tl_polygon_from_rect((TlRect){0, 0, tl_rect_width(tile->rect),
+                                                                                               tl_rect_height(tile->rect)}));
     snprintf(part.room, sizeof part.room, "%s", room);
     return part;
 }
@@ -42,7 +45,7 @@ static TlCutCard card_for(TlCutCardKind kind, int number, const TlTileSettings *
                           const TlTile *tile)
 {
     TlCutCard card = {.kind = kind, .number = number, .tile = settings, .width = tl_rect_width(tile->rect),
-                      .height = tl_rect_height(tile->rect)};
+                      .height = tl_rect_height(tile->rect), .outline = tl_polygon_copy(&tile->outline)};
     snprintf(card.color, sizeof card.color, "%s", tl_layout_spec(layout, tile)->color);
     return card;
 }
@@ -74,16 +77,21 @@ static void add_pair_parts(TlCutCard *card, bool across_width, const char *first
 
 static bool lies_lengthwise(const TlTileSpec *spec) { return spec->laid_width >= spec->laid_height; }
 
-static const TlOffcutPair *partner_of(const TlSummary *summary, const TlSpace *space, TlCell cell,
+static bool same_piece(const TlPieceRef *ref, const TlSpace *space, size_t layout, TlCell cell)
+{
+    return ref->space == space && ref->layout == layout && tl_compare_cells(ref->cell, cell) == 0;
+}
+
+static const TlOffcutPair *partner_of(const TlSummary *summary, const TlSpace *space, size_t layout, TlCell cell,
                                       TlPieceRef *mate)
 {
     for (size_t i = 0; i < summary->offcut_pairs.count; i++) {
         const TlOffcutPair *pair = &summary->offcut_pairs.items[i];
-        if (pair->first.space == space && tl_compare_cells(pair->first.cell, cell) == 0) {
+        if (same_piece(&pair->first, space, layout, cell)) {
             *mate = pair->second;
             return pair;
         }
-        if (pair->second.space == space && tl_compare_cells(pair->second.cell, cell) == 0) {
+        if (same_piece(&pair->second, space, layout, cell)) {
             *mate = pair->first;
             return pair;
         }
@@ -91,12 +99,27 @@ static const TlOffcutPair *partner_of(const TlSummary *summary, const TlSpace *s
     return NULL;
 }
 
-static TlLayoutGroup *group_of(TlLayoutGroupList *groups, const TlSpace *space)
+/* Группа раскладки: основной пол — по комнате-источнику, зона — своя у комнаты. */
+static TlLayoutGroup *group_of(TlLayoutGroupList *groups, const TlSpace *space, size_t layout)
 {
+    const TlSpace *source = layout == 0 ? space->layout_source : space;
     for (size_t i = 0; i < groups->count; i++)
-        if (groups->items[i].source == space->layout_source)
+        if (groups->items[i].source == source && groups->items[i].layout == layout)
             return &groups->items[i];
     return NULL;
+}
+
+/* «Кухня» или «Кухня · бордюр» — подпись части на карточке. */
+static void layout_name(TlSpace *space, size_t layout, char *text, size_t size)
+{
+    TlZoneKind zone = tl_space_layout_zone(space, layout);
+    if (zone == TL_ZONE_COUNT) {
+        snprintf(text, size, "%s", space->name);
+        return;
+    }
+    char lower[32];
+    snprintf(lower, sizeof lower, "%s", zone == TL_ZONE_BORDER ? "бордюр" : "ковёр");
+    snprintf(text, size, "%s · %s", space->name, lower);
 }
 
 static TlCutCard shared_tile_card(const TlLayoutGroup *group, const TlLayout *layout, const TlTile *tile,
@@ -127,14 +150,14 @@ static void append_drills(char *text, size_t size, const TlTile *tile)
     }
 }
 
-static TlCutCard single_card(const TlSpace *space, const TlLayout *layout, const TlTile *tile,
+static TlCutCard single_card(const char *name, const TlLayout *layout, const TlTile *tile,
                              const TlTileSettings *settings)
 {
     bool whole = tile->kind == TL_TILE_WHOLE;
     TlCutCard card = card_for(whole ? TL_CARD_DRILLED : TL_CARD_SINGLE, tile->number, settings, layout, tile);
     card.narrow = tile->kind == TL_TILE_NARROW;
-    tl_cut_part_list_push(&card.parts, make_part(space->name, tile->number, tile));
-    snprintf(card.title, sizeof card.title, "№%d  %s", tile->number, space->name);
+    tl_cut_part_list_push(&card.parts, make_part(name, tile->number, tile));
+    snprintf(card.title, sizeof card.title, "№%d  %s", tile->number, name);
     if (whole)
         snprintf(card.subtitle, sizeof card.subtitle, "%s", "целая");
     else
@@ -150,6 +173,66 @@ static int compare_cards(const void *left, const void *right)
     return a->number < b->number ? -1 : a->number > b->number;
 }
 
+static void add_layout_cards(TlCutCardList *cards, const TlSummary *summary, TlLayoutGroupList *groups,
+                             DoneKeyList *done, TlSpace *space, size_t index)
+{
+    TlLayout *layout = tl_space_layout_at(space, index);
+    TlLayoutGroup *group = group_of(groups, space, index);
+    if (!layout || !group)
+        return;
+    const TlTileSettings *settings = tl_space_layout_tile(space, index);
+    char name[128];
+    layout_name(space, index, name, sizeof name);
+    for (size_t t = 0; t < layout->tiles.count; t++) {
+        const TlTile *tile = &layout->tiles.items[t];
+        if (tile->kind == TL_TILE_WHOLE && tile->drills.count == 0)
+            continue;
+        if (tl_group_cell_owners(group, tile->cell, NULL) > 1) {
+            if (take_once(done, group->source, index, tile->cell))
+                tl_cut_card_list_push(cards, shared_tile_card(group, layout, tile, settings));
+            continue;
+        }
+        TlPieceRef mate;
+        const TlOffcutPair *pair = partner_of(summary, space, index, tile->cell, &mate);
+        if (!pair) {
+            tl_cut_card_list_push(cards, single_card(name, layout, tile, settings));
+            continue;
+        }
+        if (!take_once(done, space, index, tile->cell))
+            continue;
+        take_once(done, mate.space, mate.layout, mate.cell);
+        TlLayout *mate_layout = tl_space_layout_at(mate.space, mate.layout);
+        const TlTile *mate_tile = mate_layout ? tl_layout_tile_at(mate_layout, mate.cell) : NULL;
+        if (!mate_tile)
+            continue;
+        /* Карточка — в осях вида плитки; в другой комнате та же плитка может лежать
+           повёрнутой: 300×600 вместо 600×300. */
+        const TlTileSpec *spec = tl_layout_spec(layout, tile);
+        double mate_w, mate_h;
+        tl_tile_piece_size(mate_tile, &mate_w, &mate_h);
+        if (lies_lengthwise(spec) != lies_lengthwise(tl_layout_spec(mate_layout, mate_tile))) {
+            double swap = mate_w;
+            mate_w = mate_h;
+            mate_h = swap;
+        }
+        char mate_name[128];
+        layout_name(mate.space, mate.layout, mate_name, sizeof mate_name);
+        TlCutCard card = card_for(TL_CARD_OFFCUT_PAIR, tile->number < mate_tile->number ? tile->number : mate_tile->number,
+                                  settings, layout, tile);
+        card.width = spec->laid_width;
+        card.height = spec->laid_height;
+        card.narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW;
+        add_pair_parts(&card, pair->across_width, name, tile, mate_w, mate_h, mate_name, mate_tile->number);
+        if (strcmp(name, mate_name) == 0)
+            snprintf(card.title, sizeof card.title, "№%d + №%d  %s", tile->number, mate_tile->number, name);
+        else
+            snprintf(card.title, sizeof card.title, "№%d + №%d  %s + %s", tile->number, mate_tile->number, name,
+                     mate_name);
+        snprintf(card.subtitle, sizeof card.subtitle, "%s", "две подрезки из одной плитки");
+        tl_cut_card_list_push(cards, card);
+    }
+}
+
 TlCutCardList tl_report_cut_cards(TlProject *project)
 {
     TlCutCardList cards = {0};
@@ -159,59 +242,8 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
 
     for (size_t r = 0; r < summary.rooms.count; r++) {
         const TlRoomSummary *room = &summary.rooms.items[r];
-        TlLayoutGroup *group = group_of(&groups, room->space);
-        if (!room->tiled || !group)
-            continue;
-        const TlTileSettings *settings = tl_space_effective_tile(room->space);
-        for (size_t t = 0; t < room->layout->tiles.count; t++) {
-            const TlTile *tile = &room->layout->tiles.items[t];
-            if (tile->kind == TL_TILE_WHOLE && tile->drills.count == 0)
-                continue;
-            if (tl_group_cell_owners(group, tile->cell, NULL) > 1) {
-                if (take_once(&done, group->source, tile->cell))
-                    tl_cut_card_list_push(&cards, shared_tile_card(group, room->layout, tile, settings));
-                continue;
-            }
-            TlPieceRef mate;
-            const TlOffcutPair *pair = partner_of(&summary, room->space, tile->cell, &mate);
-            if (pair) {
-                if (!take_once(&done, room->space, tile->cell))
-                    continue;
-                take_once(&done, mate.space, mate.cell);
-                TlLayout *mate_layout = tl_space_layout(mate.space);
-                const TlTile *mate_tile = tl_layout_tile_at(mate_layout, mate.cell);
-                if (!mate_tile)
-                    continue;
-                /* Карточка — в осях вида плитки; в другой комнате та же плитка может лежать
-                   повёрнутой: 300×600 вместо 600×300. */
-                const TlTileSpec *spec = tl_layout_spec(room->layout, tile);
-                double mate_w, mate_h;
-                tl_tile_piece_size(mate_tile, &mate_w, &mate_h);
-                if (lies_lengthwise(spec) != lies_lengthwise(tl_layout_spec(mate_layout, mate_tile))) {
-                    double swap = mate_w;
-                    mate_w = mate_h;
-                    mate_h = swap;
-                }
-                TlCutCard card = card_for(TL_CARD_OFFCUT_PAIR,
-                                          tile->number < mate_tile->number ? tile->number : mate_tile->number,
-                                          settings, room->layout, tile);
-                card.width = spec->laid_width;
-                card.height = spec->laid_height;
-                card.narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW;
-                add_pair_parts(&card, pair->across_width, room->space->name, tile, mate_w, mate_h, mate.space->name,
-                               mate_tile->number);
-                if (mate.space == room->space)
-                    snprintf(card.title, sizeof card.title, "№%d + №%d  %s", tile->number,
-                             mate_tile->number, room->space->name);
-                else
-                    snprintf(card.title, sizeof card.title, "№%d + №%d  %s + %s", tile->number,
-                             mate_tile->number, room->space->name, mate.space->name);
-                snprintf(card.subtitle, sizeof card.subtitle, "%s", "две подрезки из одной плитки");
-                tl_cut_card_list_push(&cards, card);
-                continue;
-            }
-            tl_cut_card_list_push(&cards, single_card(room->space, room->layout, tile, settings));
-        }
+        for (size_t l = 0; room->tiled && l < tl_space_layout_count(room->space); l++)
+            add_layout_cards(&cards, &summary, &groups, &done, room->space, l);
     }
     done_key_list_free(&done);
     tl_report_free_groups(&groups);
@@ -228,6 +260,7 @@ void tl_cut_card_list_free_all(TlCutCardList *cards)
             tl_circle_list_free(&cards->items[i].parts.items[p].drills);
         }
         tl_cut_part_list_free(&cards->items[i].parts);
+        tl_polygon_free(&cards->items[i].outline);
     }
     tl_cut_card_list_free(cards);
 }

@@ -1,7 +1,8 @@
 /*
  * Внутреннее для модуля расчёта: «группы раскладки» — комнаты, которые
  * раскладываются по одной сетке (сама комната и все, у кого пол «как в ней»),
- * и для каждой ячейки сетки — в каких комнатах лежат её части.
+ * и для каждой ячейки сетки — в каких комнатах лежат её части. Каждая
+ * раскладка зоны комнаты (бордюр у стены, ковёр) — своя группа.
  */
 #ifndef TL_REPORT_GROUPS_H
 #define TL_REPORT_GROUPS_H
@@ -11,6 +12,7 @@
 typedef struct TlCellOwner {
     TlCell cell;
     TlSpace *space;
+    size_t layout;   /* номер раскладки комнаты (tl_space_layout_at) */
     TlTile *tile;
 } TlCellOwner;
 
@@ -18,7 +20,9 @@ TL_ARRAY_DEFINE(TlCellOwnerList, TlCellOwner, tl_cell_owner_list)
 TL_ARRAY_DEFINE(TlLayoutPtrList, TlLayout *, tl_layout_ptr_list)
 
 typedef struct TlLayoutGroup {
-    TlSpace *source;
+    TlSpace *source;             /* у основного пола — комната-источник, у зоны — сама комната */
+    size_t layout;               /* номер раскладки в комнатах группы: 0 — основной пол */
+    const TlTileSettings *tile;  /* настройки плитки группы */
     TlSpaceList members;
     TlLayoutPtrList layouts;     /* параллельно members */
     TlCellOwnerList owners;      /* упорядочены по ячейке (ряд, столбец, номер в модуле) */

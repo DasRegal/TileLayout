@@ -50,6 +50,10 @@ bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds
    space_ids — JSON-массив id, fields — JSON-объект {ключ: значение}; серия правок
    одного поля тех же комнат склеивается. false — нет такой комнаты или значение не то. */
 bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, double now_seconds);
+/* Зона пола (zone — "border" | "carpet", tl_zone.h) у комнат space_ids: fields — {"enabled", "fit",
+   "width", "height", "dx", "dy" и поля плитки зоны}; одно поле — серия правок склеивается.
+   В tl_web_space_tile у зоны ещё "laid_width", "laid_height" — размер, как кладут (с fit). */
+bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char *fields, double now_seconds);
 /* Поменять длину и ширину плитки у комнат space_ids (JSON-массив id) — одним шагом. */
 bool tl_web_swap_tiles(const char *space_ids, double now_seconds);
 

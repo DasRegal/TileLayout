@@ -221,6 +221,24 @@ void app_command_set_tile_texture(AppDocument *document, const TlCatalog *catalo
     app_document_commit(document);
 }
 
+void app_command_set_zone_texture(AppDocument *document, TlZoneKind kind, const TlCatalog *catalog,
+                                  const TlCatalogTile *tile)
+{
+    TlSpace *rooms[APP_MAX_ROOMS];
+    size_t count = app_selection_spaces(&document->selection, rooms);
+    if (count == 0)
+        return;
+    app_document_checkpoint(document, "");
+    for (size_t i = 0; i < count; i++) {
+        TlTileSettings *settings = &rooms[i]->zones[kind].tile;
+        if (catalog && tile)
+            app_catalogs_apply(catalog, tile, settings);
+        else
+            settings->texture[0] = '\0';
+    }
+    app_document_commit(document);
+}
+
 /* ---- удаление ---------------------------------------------------------------- */
 
 void app_command_delete_selection(AppDocument *document)
