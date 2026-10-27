@@ -4,6 +4,7 @@
 
 #include "tl_align.h"
 #include "tl_layout.h"
+#include "tl_measure_anchor.h"
 
 TlVec2 tl_node_point(const TlNode *node, int index)
 {
@@ -119,6 +120,7 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
     case TL_DRAG_OPENING:
         if (target.opening->locked || !tl_project_opening_host(project, target.opening, &drag->band))
             return false;
+        drag->measures = tl_measure_anchors_remember(project);
         tl_band_local(&drag->band, target.opening->center, &drag->original_along, NULL);
         return true;
     case TL_DRAG_THRESHOLD:
@@ -141,6 +143,9 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
     case TL_DRAG_JOINT:
         drag->original_start = target.joint->start;
         drag->original_end = target.joint->end;
+        return true;
+    case TL_DRAG_PIPE:
+        drag->original_point = target.pipe->center;
         return true;
     default:
         return false;
@@ -244,6 +249,7 @@ static void drag_opening(TlDrag *drag, TlProject *project, TlVec2 delta, const T
     if (!free)
         along = tl_snap_along(along, opening->width, drag->band.length, snap->grid_step);
     opening->center = tl_band_point(&drag->band, along, tl_band_middle(&drag->band));
+    tl_measure_anchors_apply(project, drag->measures);
     tl_project_update_spaces(project); /* пол проёма переходит с ним */
 }
 
@@ -399,6 +405,12 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
                      delta, snap, free, guides);
         tl_project_update_spaces(project); /* шов режет плитку — раскладка меняется */
         return;
+    case TL_DRAG_PIPE: {
+        TlVec2 center = tl_vec2_add(drag->original_point, delta);
+        drag->target.pipe->center = free || snap->grid_step <= 0 ? center : tl_snap_grid(snap->grid_step, center);
+        tl_project_update_spaces(project); /* отверстие — в другой плитке */
+        return;
+    }
     case TL_DRAG_PARTITION: drag_partition(drag, project, delta, snap, free, guides); break;
     case TL_DRAG_NODE: drag_node(drag, project, delta, snap, free); break;
     case TL_DRAG_TEE: drag_tee(drag, project, delta, snap, free); break;
@@ -425,5 +437,6 @@ void tl_drag_free(TlDrag *drag)
     tl_wall_ref_list_free(&drag->links);
     tl_polygon_list_free_all(&drag->links_original);
     tl_edit_token_free(drag->token);
+    tl_measure_anchors_free(drag->measures);
     *drag = (TlDrag){0};
 }

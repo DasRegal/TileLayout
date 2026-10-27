@@ -12,7 +12,7 @@ import { attachViewControls, View } from './view.js';
 
 const PICK_PX = 6; // допуск выбора предмета, пиксели экрана
 const SNAP_PX = 10; // допуск притягивания при перетаскивании
-const DRAGGABLE = new Set(['vertex', 'wall', 'partition', 'node', 'tee', 'opening', 'threshold', 'ruler', 'joint']);
+const DRAGGABLE = new Set(['vertex', 'wall', 'partition', 'node', 'tee', 'opening', 'threshold', 'ruler', 'joint', 'pipe']);
 const CURSORS = {
   vertex: 'crosshair', node: 'move', tee: 'move', wall: 'move', partition: 'move', opening: 'ew-resize',
   threshold: 'move', ruler: 'move', joint: 'move',
@@ -32,6 +32,7 @@ const state = {
     openingWidth: 800,
     grid: 10,
     jointGap: 10,
+    pipeDiameter: 50,
     keepAngles: true,
     house: { width: 6000, height: 4000 },
     print: { tiles: true, dims: true, clips: true, cuts: true, calc: true, mono: false, landscape: true, scale: 0 },
@@ -114,6 +115,11 @@ const panel = new Panel(document.getElementById('panel'), {
       'threshold.right': () => core.setThreshold(index, value, object.skew),
       'threshold.skew': () => core.setThreshold(index, object.right, value),
       'joint.gap': () => core.setJointGap(index, value),
+      'ruler.name': () => core.setName(selection, value),
+      'opening.name': () => core.setName(selection, value),
+      'pipe.diameter': () => core.setPipe(index, object.x, object.y, value),
+      'pipe.x': () => core.setPipe(index, value, object.y, object.diameter),
+      'pipe.y': () => core.setPipe(index, object.x, value, object.diameter),
       x: () => point(value, object.y),
       y: () => point(object.x, value),
       locked: () => core.setLocked(selection, value),
@@ -592,7 +598,7 @@ function addHouse() {
   dialog.showModal();
 }
 
-const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', l: 'ruler' };
+const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', h: 'pipe', l: 'ruler' };
 
 function onKey(event) {
   const typing = event.target.matches('input, select, textarea');

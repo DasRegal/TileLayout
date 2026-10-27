@@ -1,6 +1,7 @@
 #include "tl_web.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,7 +146,41 @@ const char *tl_web_space_tile(int space_id)
     tl_json_object_set(result, "sources", sources);
     tl_json_object_set(result, "area", tl_json_number(round(tl_space_room_area(space) / 1e4) / 100));
     tl_json_object_set(result, "perimeter", tl_json_number(round(tl_space_room_perimeter(space))));
-    tl_json_object_set(result, "tile", tl_web_tile_json(tl_space_effective_tile(space)));
+    const TlTileSettings *tile = tl_space_effective_tile(space);
+    tl_json_object_set(result, "tile", tl_web_tile_json(tile));
+    TlJson *formats = tl_json_array(); /* виды плитки рисунка: у модульного — несколько размеров */
+    TlPatternUnit unit;
+    for (size_t i = 0; tl_pattern_unit(tile, &unit) && i < unit.spec_count; i++) {
+        char name[64];
+        tl_tile_spec_name(&unit.specs[i], name, sizeof name);
+        tl_json_array_push(formats, tl_json_string(name));
+    }
+    tl_json_object_set(result, "formats", formats);
+    TlJson *doors_json = tl_json_array();
+    TlOpeningList doors = tl_project_space_doors(project, space);
+    for (size_t i = 0; i < doors.count; i++)
+        for (size_t k = 0; k < project->openings.count; k++)
+            if (project->openings.items[k] == doors.items[i]) {
+                TlJson *door = tl_json_object();
+                tl_json_object_set(door, "index", tl_json_number((double)k));
+                tl_json_object_set(door, "name", tl_json_string(doors.items[i]->name));
+                tl_json_array_push(doors_json, door);
+            }
+    tl_opening_list_free(&doors);
+    tl_json_object_set(result, "doors", doors_json);
+    TlJson *rulers_json = tl_json_array();
+    TlRulerList rulers = tl_project_space_rulers(project, space);
+    for (size_t i = 0; i < rulers.count; i++)
+        for (size_t k = 0; k < project->rulers.count; k++)
+            if (project->rulers.items[k] == rulers.items[i]) {
+                TlJson *ruler = tl_json_object();
+                tl_json_object_set(ruler, "index", tl_json_number((double)k));
+                tl_json_object_set(ruler, "name", tl_json_string(rulers.items[i]->name));
+                tl_json_object_set(ruler, "length", tl_json_number(round(tl_ruler_length(rulers.items[i]))));
+                tl_json_array_push(rulers_json, ruler);
+            }
+    tl_ruler_list_free(&rulers);
+    tl_json_object_set(result, "rulers", rulers_json);
     return tl_web_keep(&web.tile, result);
 }
 
@@ -175,8 +210,7 @@ static bool assign(TlTileSettings *tile, const TlTileField *field, const TlJson 
     case TL_FIELD_TEXT: {
         if (type != TL_JSON_STRING)
             return false;
-        size_t size = field->type == TL_FIELD_COLOR ? TL_COLOR_LENGTH : TL_TEXTURE_LENGTH;
-        snprintf(member, size, "%s", tl_json_string_or(value, ""));
+        snprintf(member, field->size, "%s", tl_json_string_or(value, ""));
         return true;
     }
     }
@@ -344,6 +378,55 @@ static void set_offsets(TlSpace *space, double x, double y, double now_seconds)
     tile->offset_y = round(y * 10) / 10;
 }
 
+/* "door:N", "ruler_joint:N" — правило с номером предмета N в проекте; без номера — не тот. */
+static bool numbered_mode(const char *mode, const char *prefix, size_t *index)
+{
+    size_t length = strlen(prefix);
+    if (strncmp(mode, prefix, length) != 0 || (mode[length] != ':' && mode[length] != '\0'))
+        return false;
+    *index = mode[length] == ':' ? (size_t)strtoul(mode + length + 1, NULL, 10) : SIZE_MAX;
+    return true;
+}
+
+static const char *align_to_door(TlProject *project, TlSpace *space, size_t index, double now_seconds)
+{
+    if (index >= project->openings.count)
+        return aligned(false, "Выберите дверь комнаты — у неё нет проёма с полом");
+    const TlOpening *door = project->openings.items[index];
+    char message[200];
+    TlVec2 from, to;
+    double x, y;
+    if (!tl_project_space_door_edge(project, space, door, &from, &to))
+        return aligned(false, "Этот проём — не дверь выбранной комнаты");
+    bool ok = tl_layout_door_offsets(space, from, to, &x, &y);
+    if (ok) {
+        set_offsets(space, x, y, now_seconds);
+        snprintf(message, sizeof message, "От двери «%s»: от порога целый ряд, проём — посередине", door->name);
+    } else {
+        snprintf(message, sizeof message, "%s", "Проём наискосок к плитке — поверните раскладку вдоль стены");
+    }
+    return aligned(ok, message);
+}
+
+static const char *align_to_ruler(TlProject *project, TlSpace *space, size_t index, TlLineAlign mode,
+                                  double now_seconds)
+{
+    if (index >= project->rulers.count)
+        return aligned(false, "Поставьте в комнате линейку по оси — ниши, унитаза, окна");
+    const TlRuler *ruler = project->rulers.items[index];
+    char message[200];
+    double x, y;
+    bool ok = tl_layout_line_offsets(space, ruler->start, ruler->end, mode, tl_space_label_point(space), &x, &y);
+    if (ok) {
+        set_offsets(space, x, y, now_seconds);
+        snprintf(message, sizeof message, "По линейке «%s»: %s", ruler->name,
+                 mode == TL_LINE_JOINT ? "шов по оси" : "середина плитки по оси");
+    } else {
+        snprintf(message, sizeof message, "Линейка «%s» должна идти вдоль рядов плитки", ruler->name);
+    }
+    return aligned(ok, message);
+}
+
 const char *tl_web_align_tiles(int space_id, const char *mode, double now_seconds)
 {
     TlProject *project = tl_web_project();
@@ -388,6 +471,13 @@ const char *tl_web_align_tiles(int space_id, const char *mode, double now_second
                      result.after.tiles);
         return aligned(true, message);
     }
+    size_t index;
+    if (numbered_mode(mode, "door", &index))
+        return align_to_door(project, space, index, now_seconds);
+    if (numbered_mode(mode, "ruler_joint", &index))
+        return align_to_ruler(project, space, index, TL_LINE_JOINT, now_seconds);
+    if (numbered_mode(mode, "ruler_center", &index))
+        return align_to_ruler(project, space, index, TL_LINE_TILE_CENTER, now_seconds);
     return aligned(false, "Неизвестное правило раскладки");
 }
 

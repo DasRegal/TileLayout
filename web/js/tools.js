@@ -1,7 +1,7 @@
 // Инструменты рисования плана — как в настольной программе: прямоугольник и
 // контур (на пустом месте — дом, внутри дома — комната из перегородок),
 // перегородка двумя щелчками, проём щелчком по стене, линейка и деформационный
-// шов двумя щелчками. Точки притягиваются ядром (tl_snap: углы, концы
+// шов двумя щелчками, труба (отверстие в плитке) — щелчком. Точки притягиваются ядром (tl_snap: углы, концы
 // перегородок, грани стен, сетка, выравнивание; у линейки и шва —
 // tl_measure_point: грани, оси стен, швы плитки).
 
@@ -20,13 +20,16 @@ export const TOOL_HINTS = {
   opening: 'Проём: щёлкните по стене или перегородке.',
   ruler: 'Линейка: щёлкните начало и конец. Концы притягиваются к граням и осям стен и к швам плитки.',
   joint: 'Деформационный шов: щёлкните начало и конец. Шов режет плитку щелью заданной ширины.',
+  pipe: 'Труба: щёлкните, где отверстие в плитке под трубу или слив. Плитка с отверстием — в чертежах подрезок.',
 };
+
+const PIPE_COLOR = '#3d5a80';
 
 const MEASURE_TARGETS = { ruler: 'all', joint: 'walls' };
 
 export class Tools {
   /**
-   * env: {core, view, settings: {grid, houseThickness, partitionThickness, openingWidth},
+   * env: {core, view, settings: {grid, houseThickness, partitionThickness, openingWidth, jointGap, pipeDiameter},
    *       edited(selection) — проект изменился, done() — рисование закончено (к «Выбору»), say(text)}
    */
   constructor(env) {
@@ -89,6 +92,11 @@ export class Tools {
       return;
     }
     const point = this.snap(world, free).point;
+    if (this.tool === 'pipe') {
+      const index = core.addPipe(point, settings.pipeDiameter);
+      if (index >= 0) this.env.edited({ kind: 'pipe', index });
+      return;
+    }
     if (MEASURE_TARGETS[this.tool]) {
       if (!this.points.length) {
         this.points = [point];
@@ -197,6 +205,11 @@ export class Tools {
       return;
     }
     const cursor = this.cursor?.point;
+    if (this.tool === 'pipe') {
+      if (cursor) drawPipe(ctx, screen(cursor), this.env.settings.pipeDiameter * view.scale / 2, GREEN);
+      ctx.restore();
+      return;
+    }
     if (this.cursor) {
       for (const [x, y, vertical] of this.cursor.guides) {
         const from = screen([x, y]);
@@ -255,6 +268,26 @@ export class Tools {
     if (cursor && this.cursor.snapped) dot(ctx, screen(cursor), '#c2410c', 4); // притянулось к стене или шву
     ctx.restore();
   }
+}
+
+/** Отверстие под трубу: круг коронки (не меньше 4 px) с крестом в центре. */
+export function drawPipe(ctx, [x, y], radius, color = PIPE_COLOR) {
+  const r = Math.max(4, radius);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 2 * Math.PI);
+  ctx.fillStyle = '#e8eef6';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  const c = r * 0.6;
+  ctx.beginPath();
+  ctx.moveTo(x - c, y);
+  ctx.lineTo(x + c, y);
+  ctx.moveTo(x, y - c);
+  ctx.lineTo(x, y + c);
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 function dot(ctx, [x, y], color, radius) {

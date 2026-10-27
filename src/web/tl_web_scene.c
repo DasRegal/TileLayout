@@ -10,16 +10,19 @@
  *                "cut": [...],                           вырез в стене (у "wall")
  *                "jambs": [[x0, y0, x1, y1], ...],       косяки (у "door")
  *                "threshold": [x0, y0, x1, y1] | null,   стык полов
- *                "width": мм, "from": [x, y], "to": [x, y]}],  подпись ширины — вдоль from→to
+ *                "width": мм, "name": "Д1", "from": [x, y], "to": [x, y]}],  подпись — вдоль from→to
  *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм}],  снаружи дома
- *  "rulers": [{"line": [x0, y0, x1, y1], "length": мм}],
+ *  "rulers": [{"line": [x0, y0, x1, y1], "length": мм, "name": "Л1"}],
  *  "joints": [{"line": [x0, y0, x1, y1], "gap": мм}],         деформационные швы
+ *  "pipes": [{"center": [x, y], "diameter": мм}],              отверстия под трубы
  *  "spaces": [{"id", "name", "outline": [...], "holes": [[...]], "room": [...],      room — для длин стен
  *              "label": [x, y], "area": м², "source": "имя" | null,
  *              "tile": {настройки, ключи как в файле},
  *              "layout": null | {"matrix": [a, b, c, d, tx, ty],  оси раскладки → мм плана
  *                                "floor": [...], "holes": [[...]], "too_many": bool,
- *                                "tiles": [left, top, right, bottom, вид, ...],  вид: 0 целая, 1 подрезка, 2 узкая
+ *                                "tiles": [left, top, right, bottom, вид, плитка, ...],  вид: 0 целая, 1 подрезка,
+ *                                          2 узкая; плитка — номер в "specs"
+ *                                "specs": [{"color", "textured": рисунок из каталога}],  виды плитки рисунка
  *                                "clips": [x0, y0, ...], "count": плиток}}]}
  */
 #include <math.h>
@@ -136,6 +139,7 @@ static TlJson *opening_json(TlProject *project, const TlOpening *opening)
     tl_json_object_set(json, "jambs", jambs);
     tl_json_object_set(json, "threshold", threshold(project, opening, door));
     tl_json_object_set(json, "width", tl_json_number(opening->width));
+    tl_json_object_set(json, "name", tl_json_string(opening->name));
     tl_json_object_set(json, "from", point(width_from));
     tl_json_object_set(json, "to", point(width_to));
     return json;
@@ -212,8 +216,17 @@ static TlJson *layout_json(TlSpace *space)
         tl_json_array_push(tiles, tl_web_number(tile->rect.right));
         tl_json_array_push(tiles, tl_web_number(tile->rect.bottom));
         tl_json_array_push(tiles, tl_json_number(tile->kind));
+        tl_json_array_push(tiles, tl_json_number(tile->spec));
     }
     tl_json_object_set(json, "tiles", tiles);
+    TlJson *specs = tl_json_array();
+    for (size_t i = 0; i < layout->pattern.spec_count; i++) {
+        TlJson *spec = tl_json_object();
+        tl_json_object_set(spec, "color", tl_json_string(layout->pattern.specs[i].color));
+        tl_json_object_set(spec, "textured", tl_json_bool(layout->pattern.specs[i].textured));
+        tl_json_array_push(specs, spec);
+    }
+    tl_json_object_set(json, "specs", specs);
     tl_json_object_set(json, "clips", tl_web_polygon(&layout->clip_points));
     tl_json_object_set(json, "count", tl_json_number(layout->too_many ? 0 : tl_layout_total(layout)));
     return json;
@@ -279,6 +292,7 @@ const char *tl_web_scene(void)
         TlJson *ruler = tl_json_object();
         tl_json_object_set(ruler, "line", segment(project->rulers.items[i]->start, project->rulers.items[i]->end));
         tl_json_object_set(ruler, "length", tl_json_number(round(tl_ruler_length(project->rulers.items[i]))));
+        tl_json_object_set(ruler, "name", tl_json_string(project->rulers.items[i]->name));
         tl_json_array_push(rulers, ruler);
     }
     tl_json_object_set(json, "rulers", rulers);
@@ -291,6 +305,14 @@ const char *tl_web_scene(void)
         tl_json_array_push(joints, joint);
     }
     tl_json_object_set(json, "joints", joints);
+    TlJson *pipes = tl_json_array();
+    for (size_t i = 0; i < project->pipes.count; i++) {
+        TlJson *pipe = tl_json_object();
+        tl_json_object_set(pipe, "center", point(project->pipes.items[i]->center));
+        tl_json_object_set(pipe, "diameter", tl_json_number(project->pipes.items[i]->diameter));
+        tl_json_array_push(pipes, pipe);
+    }
+    tl_json_object_set(json, "pipes", pipes);
     TlJson *spaces = tl_json_array();
     for (size_t s = 0; s < project->spaces.count; s++)
         tl_json_array_push(spaces, space_json(project->spaces.items[s]));

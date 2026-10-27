@@ -12,6 +12,7 @@
  *     косяка — только этот конец (стык наискосок);
  *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием
  *     к стенам и выравниванием по другому концу;
+ *   труба — целиком, по сетке;
  *   сетка плитки комнаты — сдвиг раскладки (целыми мм).
  *
  * Вызывающий решает, когда начинается перетаскивание (порог в пикселях) и
@@ -35,7 +36,8 @@ typedef enum TlDragKind {
     TL_DRAG_THRESHOLD, /* opening, index — см. TL_DRAG_THRESHOLD_* */
     TL_DRAG_RULER,     /* ruler, index — 0 линия, 1 начало, 2 конец */
     TL_DRAG_JOINT,     /* joint (деформационный шов), index — как у линейки */
-    TL_DRAG_TILES      /* space — сетка плитки (у общего пола — комнаты-источника) */
+    TL_DRAG_TILES,     /* space — сетка плитки (у общего пола — комнаты-источника) */
+    TL_DRAG_PIPE       /* pipe — отверстие под трубу */
 } TlDragKind;
 
 #define TL_DRAG_PARTITION_BODY 0
@@ -55,6 +57,7 @@ typedef struct TlDragTarget {
     TlOpening *opening;
     TlRuler *ruler;
     TlExpansionJoint *joint;
+    TlPipe *pipe;
     TlSpace *space;
     int index;
     bool link_walls;
@@ -76,6 +79,7 @@ typedef struct TlDrag {
     double original_share;         /* стык: доля под курсором, когда взяли */
     TlSnapPoint measure;           /* линейка и шов: к чему притянулся конец */
     double original_offset_x, original_offset_y; /* сетка плитки */
+    struct TlMeasureAnchors *measures;   /* проём: концы линеек на его краях едут с ним */
     bool geometry_changed;
     TlEditToken *token;
 } TlDrag;

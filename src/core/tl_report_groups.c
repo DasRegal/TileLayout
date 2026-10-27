@@ -2,13 +2,6 @@
 
 #include <stdlib.h>
 
-int tl_compare_cells(TlCell a, TlCell b)
-{
-    if (a.row != b.row)
-        return a.row < b.row ? -1 : 1;
-    return a.column < b.column ? -1 : a.column > b.column;
-}
-
 static int compare_owners(const void *left, const void *right)
 {
     return tl_compare_cells(((const TlCellOwner *)left)->cell, ((const TlCellOwner *)right)->cell);
@@ -107,9 +100,12 @@ TlPieceList tl_group_unshared_pieces(const TlLayoutGroup *group)
     TlPieceList pieces = {0};
     for (size_t i = 0; i < group->owners.count; i++) {
         const TlCellOwner *owner = &group->owners.items[i];
-        if (owner->tile->kind == TL_TILE_WHOLE || tl_group_cell_owners(group, owner->cell, NULL) > 1)
+        /* кусок с отверстием режут из своей плитки — так проще разметить */
+        if (owner->tile->kind == TL_TILE_WHOLE || owner->tile->drills.count > 0 ||
+            tl_group_cell_owners(group, owner->cell, NULL) > 1)
             continue;
-        TlPiece piece = {{owner->space, owner->cell}, owner->tile->piece_width, owner->tile->piece_height};
+        TlPiece piece = {{owner->space, owner->cell}, 0, 0, owner->tile->spec};
+        tl_tile_piece_size(owner->tile, &piece.width, &piece.height);
         tl_piece_list_push(&pieces, piece);
     }
     return pieces;

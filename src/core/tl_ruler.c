@@ -8,7 +8,12 @@ TlRuler *tl_ruler_new(TlVec2 start, TlVec2 end)
     return ruler;
 }
 
-TlRuler *tl_ruler_clone(const TlRuler *ruler) { return tl_ruler_new(ruler->start, ruler->end); }
+TlRuler *tl_ruler_clone(const TlRuler *ruler)
+{
+    TlRuler *copy = TL_NEW(TlRuler);
+    *copy = *ruler;
+    return copy;
+}
 
 void tl_ruler_free(TlRuler *ruler) { free(ruler); }
 

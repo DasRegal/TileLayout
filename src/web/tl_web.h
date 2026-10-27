@@ -36,7 +36,9 @@ int tl_web_space_at(double x, double y);
 /* Настройки плитки комнаты (у общего пола — комнаты-источника):
    {"space": id, "name": "...", "source": "..." | null, "source_id": id или 0 — «своя раскладка»,
     "sources": [{"id", "name"}] — с кем можно сделать общий пол, "area": м², "perimeter": мм,
-    "tile": {ключ: значение}}.
+    "tile": {ключ: значение}, "formats": ["600×600 мм", …] — виды плитки рисунка укладки,
+    "doors": [{"index", "name"}], "rulers": [{"index", "name", "length"}] — двери и линейки комнаты
+    (index — номер в проекте) для раскладки от двери и по линейке}.
    Ключи — как в файле проекта (tl_tile_settings_fields). */
 const char *tl_web_space_tile(int space_id);
 /* Поле плитки комнаты; value — JSON-значение (число, true/false, строка).
@@ -54,7 +56,9 @@ bool tl_web_swap_tiles(const char *space_ids, double now_seconds);
 /* Раскладка комнаты: смещение сетки по правилу mode — "top_left", "top_right",
    "bottom_left", "bottom_right" (целая плитка в углу), "center" (центр плитки в
    центре комнаты), "center_joint" (там — пересечение швов), "min_tiles"
-   (меньше всего плиток к покупке), "min_narrow" (меньше узких подрезок).
+   (меньше всего плиток к покупке), "min_narrow" (меньше узких подрезок), "door:N" (от проёма N
+   проекта: от порога целый ряд), "ruler_joint:N" / "ruler_center:N" (по линейке N проекта — шов
+   или середина плитки).
    Ответ — {"ok": bool, "message": "что получилось"}. */
 const char *tl_web_align_tiles(int space_id, const char *mode, double now_seconds);
 bool tl_web_set_space_name(int space_id, const char *name, double now_seconds);
@@ -87,6 +91,12 @@ int tl_web_add_opening(double x, double y, double width, double tolerance, doubl
 /* Линейка и деформационный шов (from — to); ответ — номер. Шов режет плитку щелью gap, мм. */
 int tl_web_add_ruler(double x0, double y0, double x1, double y1, double now_seconds);
 int tl_web_add_joint(double x0, double y0, double x1, double y1, double gap, double now_seconds);
+/* Отверстие под трубу диаметром diameter, мм (коронка); ответ — номер или −1. */
+int tl_web_add_pipe(double x, double y, double diameter, double now_seconds);
+/* Имя линейки или проёма (kind "ruler" | "opening"); false — пустое или длиннее TL_NAME_LENGTH байт. */
+bool tl_web_set_name(const char *kind, int index, const char *name, double now_seconds);
+/* Центр и диаметр трубы — по числам с панели. */
+bool tl_web_set_pipe(int index, double x, double y, double diameter, double now_seconds);
 bool tl_web_set_joint_gap(int index, double gap, double now_seconds);
 /* Конец линейки ("all") или шва ("walls"): притягивание к граням, осям, швам
    плитки и выравнивание от anchor. {"point": [x, y], "snapped": bool, "guides": [...]} */
@@ -95,8 +105,8 @@ const char *tl_web_measure_point(double x, double y, bool has_anchor, double anc
 
 /* Предмет под точкой — линейки и швы поверх всего, маркеры важнее тел: угол
    дома, середина узла перегородок, примыкание, свободный конец перегородки,
-   стык полов в проёме, проём, перегородка, стена дома, комната.
-   {"kind": "ruler" | "joint" | "vertex" | "node" | "tee" | "partition" | "threshold" | "opening" | "wall"
+   стык полов в проёме, проём, перегородка, стена дома, комната; трубы — сразу после швов.
+   {"kind": "ruler" | "joint" | "pipe" | "vertex" | "node" | "tee" | "partition" | "threshold" | "opening" | "wall"
             | "space" | "none",
     "index": номер (у угла и стены — дома; у узла и примыкания — перегородки; у стыка — проёма),
     "part": угол или стена дома; у перегородки, линейки, шва 0 — тело, 1 — начало, 2 — конец;
@@ -113,7 +123,7 @@ const char *tl_web_pick(double x, double y, double tolerance);
    "to_end" (мм от краёв стены); стена — "thickness", "length" (внутр.), "outer_length",
    "walls"; стык — "depth", "right", "skew" (мм), "right_room", "left_room" ("" — улица);
    угол и узел — "x", "y"; угол — "walls"; узел — "count" (перегородок); линейка — "length";
-   шов — "gap", "length". */
+   шов — "gap", "length"; труба — "x", "y", "diameter"; у линейки и проёма — "name". */
 const char *tl_web_object(const char *kind, int index, int part, int end);
 bool tl_web_set_partition_thickness(int index, double thickness, double now_seconds);
 /* Длина (конец «начало + длина») и угол перегородки (0° — вправо, против часовой),
@@ -143,7 +153,7 @@ bool tl_web_insert_vertex(int house, int wall, double x, double y, double grid, 
 int tl_web_add_house(double width, double height, double thickness, double now_seconds);
 
 /* Удалить: перегородку, проём, дом (kind "wall" или "house"), угол дома (если углов
-   больше трёх), узел (сломанная перегородка выпрямляется), линейку, шов.
+   больше трёх), узел (сломанная перегородка выпрямляется), линейку, шов, трубу.
    Заблокированное — нельзя. */
 bool tl_web_delete(const char *kind, int index, int part, int end, double now_seconds);
 

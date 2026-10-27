@@ -9,9 +9,10 @@
 #ifndef TL_OPENING_H
 #define TL_OPENING_H
 
-#include "tl_geometry.h"
+#include "tl_ruler.h"
 
 typedef struct TlOpening {
+    char name[TL_NAME_LENGTH]; /* короткое имя («Д1») — для выбора двери в раскладке от двери */
     TlVec2 center;
     double width;
     double threshold, threshold_end;

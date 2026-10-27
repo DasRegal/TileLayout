@@ -92,6 +92,12 @@ export async function loadCore() {
     addRuler: (a, b) => module._tl_web_add_ruler(a[0], a[1], b[0], b[1], now()),
     addJoint: (a, b, gap) => module._tl_web_add_joint(a[0], a[1], b[0], b[1], gap, now()),
     setJointGap: (index, gap) => module._tl_web_set_joint_gap(index, gap, now()) !== 0,
+    /** Отверстие под трубу (диаметр коронки, мм) → номер или −1. */
+    addPipe: (point, diameter) => module._tl_web_add_pipe(point[0], point[1], diameter, now()),
+    setPipe: (index, x, y, diameter) => module._tl_web_set_pipe(index, x, y, diameter, now()) !== 0,
+    /** Имя линейки или проёма ({kind: 'ruler' | 'opening', index}). */
+    setName: ({ kind, index }, name) =>
+      withString(kind, (k) => withString(name, (n) => module._tl_web_set_name(k, index, n, now()))) !== 0,
     /** Конец линейки (targets 'all') или шва ('walls'): притягивание и выравнивание от anchor. */
     measurePoint: (x, y, anchor, targets, tolerance, free) =>
       withString(targets, (t) =>

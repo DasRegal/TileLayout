@@ -1,6 +1,8 @@
 // Рисование плана на Canvas — как в настольной программе (src/app/app_render.c):
-// пол с раскладкой, стены и перегородки одним силуэтом, проёмы, размеры,
+// пол с раскладкой, трубы, стены и перегородки одним силуэтом, проёмы, размеры,
 // подписи комнат. Сцена — от ядра (src/web/tl_web_scene.c), всё в мм.
+
+import { drawPipe } from './tools.js';
 
 const COLOR = {
   background: '#f4f5f7',
@@ -52,6 +54,7 @@ let C = COLOR; // палитра текущей отрисовки
 
 const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
+const TILE_STRIDE = 6; // left, top, right, bottom, вид, плитка рисунка
 
 /**
  * Нарисовать сцену. options: {selected — id выделенных комнат, highlight — контуры
@@ -81,6 +84,9 @@ export function drawScene(ctx, scene, view, options) {
   if (layers.joints) for (const joint of scene.joints) drawJoint(ctx, joint, px);
   drawWalls(ctx, scene, view, px, dpr, options.mono);
   drawOpenings(ctx, scene, view, px);
+  screen(); // трубы — поверх стен: у стены видны целиком
+  for (const pipe of scene.pipes) drawPipe(ctx, view.toScreen(...pipe.center), (pipe.diameter * view.scale) / 2);
+  world();
   const selected = scene.spaces.filter((space) => options.selected?.includes(space.id));
   const outlines = options.printing
     ? []
@@ -119,7 +125,7 @@ function drawTileNumbers(ctx, scene, numbers, view, printing) {
     if (!space || !space.layout || !space.tile.enabled) continue;
     if (!printing && Math.min(space.tile.w, space.tile.h) * view.scale < 18) continue;
     const list = room.numbers;
-    for (let i = 0; i < list.length; i += 5) {
+    for (let i = 0; i < list.length; i += 5) { // x, y, номер, ширина и высота куска
       const [x, y] = view.toScreen(list[i], list[i + 1]);
       const text = String(list[i + 2]);
       const boxW = list[i + 3] * view.scale;
@@ -219,28 +225,31 @@ function drawFloor(ctx, space, view, px, options) {
 
 function drawTiles(ctx, space, view, px, image, options) {
   const tile = space.tile;
-  const tiles = space.layout.tiles;
+  const { tiles, specs } = space.layout;
   const thinJoints = options.mono || tile.gap * view.scale < 1.2; // в ч/б — контур каждой плитки
-  const colors = options.mono ? ['#ffffff', '#ffffff', '#ffffff'] : [tile.color, darker(tile.color, 1.12), C.narrow];
-  for (let i = 0; i < tiles.length; i += 5) {
+  /* цвета по видам плитки рисунка (у шахматки вторая — своим цветом): целая, подрезка, узкая */
+  const palettes = specs.map((spec) =>
+    options.mono ? ['#ffffff', '#ffffff', '#ffffff'] : [spec.color, darker(spec.color, 1.12), C.narrow]);
+  for (let i = 0; i < tiles.length; i += TILE_STRIDE) {
     const left = tiles[i];
     const top = tiles[i + 1];
     const w = tiles[i + 2] - left;
     const h = tiles[i + 3] - top;
     const kind = tiles[i + 4];
-    if (image) {
+    const spec = specs[tiles[i + 5]];
+    if (image && spec.textured) {
       drawTexture(ctx, image, left, top, w, h);
       if (kind !== TILE_KIND.whole) {
         ctx.fillStyle = kind === TILE_KIND.narrow ? 'rgba(232, 130, 110, 0.7)' : 'rgba(0, 0, 0, 0.12)';
         ctx.fillRect(left, top, w, h);
       }
     } else {
-      ctx.fillStyle = colors[kind];
+      ctx.fillStyle = palettes[tiles[i + 5]][kind];
       ctx.fillRect(left, top, w, h);
     }
     if (thinJoints) {
       ctx.lineWidth = px(options.mono ? 0.5 : 0.6);
-      ctx.strokeStyle = options.mono ? '#000000' : darker(tile.color, 1.5);
+      ctx.strokeStyle = options.mono ? '#000000' : darker(spec.color, 1.5);
       ctx.strokeRect(left, top, w, h);
     }
   }
@@ -367,7 +376,8 @@ function drawOpeningWidth(ctx, opening, view) {
   const a = view.toScreen(...opening.from);
   const b = view.toScreen(...opening.to);
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 22) {
-    textAlong(ctx, String(Math.round(opening.width)), a, b, [0, 0], 0, C.openingDim, true);
+    const width = String(Math.round(opening.width));
+    textAlong(ctx, opening.name ? `${opening.name} · ${width}` : width, a, b, [0, 0], 0, C.openingDim, true);
   }
 }
 
@@ -417,7 +427,7 @@ export function drawRuler(ctx, ruler, view, color = C.ruler) {
     ctx.lineTo(end[0] + normal[0] * 4, end[1] + normal[1] * 4);
   }
   stroke(ctx, color, 1);
-  textAlong(ctx, String(ruler.length), a, b, normal, 9, color);
+  textAlong(ctx, ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length), a, b, normal, 9, color);
 }
 
 // ---- подписи (в пикселях экрана) ---------------------------------------------------

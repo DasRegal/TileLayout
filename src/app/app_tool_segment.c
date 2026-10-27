@@ -24,7 +24,7 @@ typedef struct SegmentKind {
 
 static void draw_ruler_preview(AppCanvas *canvas, cairo_t *cr, TlVec2 start, TlVec2 end)
 {
-    TlRuler preview = {start, end};
+    TlRuler preview = {.start = start, .end = end};
     app_render_ruler(cr, &canvas->view, &preview, app_color_hex(APP_BLUE), 1);
 }
 

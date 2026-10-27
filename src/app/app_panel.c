@@ -1,6 +1,7 @@
 #include "app_panel.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_calc_text.h"
@@ -10,9 +11,10 @@
 #include "app_icons.h"
 #include "app_widgets.h"
 #include "tl_layout.h"
+#include "tl_pattern.h"
 #include "tl_report.h"
 
-#define MAX_TILE_BINDINGS 32
+#define MAX_TILE_BINDINGS 48
 
 /* Поле ввода, привязанное к полю настроек плитки (см. tl_tile_settings_fields). */
 typedef struct TileBinding {
@@ -24,7 +26,7 @@ typedef struct TileBinding {
 static const struct {
     const char *title;
     double value;
-} ROW_SHIFTS[] = {{"Прямая (без смещения)", 0.0}, {"Вразбежку 1/2", 0.5}, {"Вразбежку 1/3", 1.0 / 3.0},
+} ROW_SHIFTS[] = {{"Без сдвига", 0.0}, {"Вразбежку 1/2", 0.5}, {"Вразбежку 1/3", 1.0 / 3.0},
                   {"Вразбежку 1/4", 0.25}};
 
 struct AppPanel {
@@ -36,7 +38,8 @@ struct AppPanel {
 
     GtkWidget *room_list;
     char *room_names;            /* для проверки, нужно ли перестраивать список */
-    GtkWidget *partition_thickness, *opening_width, *expansion_joint_gap, *link_walls, *measure_magnet, *auto_align;
+    GtkWidget *partition_thickness, *opening_width, *expansion_joint_gap, *pipe_diameter;
+    GtkWidget *link_walls, *measure_magnet, *auto_align;
     GtkWidget *hint;
 
     AppSection space_section;
@@ -61,19 +64,23 @@ struct AppPanel {
     GtkWidget *vertex_x, *vertex_y;
 
     AppSection ruler_section;
-    GtkWidget *ruler_length, *ruler_count;
+    GtkWidget *ruler_name, *ruler_length, *ruler_count;
 
     AppSection expansion_joint_section;
     GtkWidget *expansion_joint_own_gap, *expansion_joint_length;
 
+    AppSection pipe_section;
+    GtkWidget *pipe_own_diameter, *pipe_x, *pipe_y;
+
     AppSection opening_section;
-    GtkWidget *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
+    GtkWidget *opening_name, *opening_host, *opening_own_width, *opening_from_start, *opening_to_end, *opening_lock;
     GtkWidget *threshold_box, *threshold_title, *threshold_depth_caption, *threshold_depth;
     GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap, *threshold_skew;
 
-    AppSection tile_section, glue_section, clip_section;
-    GtkWidget *shared_note, *row_shift, *color_button, *texture_name;
-    GtkWidget *corners, *centers; /* раскладка от угла и по центру — у каждой комнаты своя */
+    AppSection tile_section, glue_section, clip_section, grout_section, price_section;
+    GtkWidget *shared_note, *pattern, *pattern_note, *row_shift, *color_button, *color2_button, *texture_name;
+    GtkWidget *corners, *centers, *lines; /* раскладка от угла, по центру, от линии — у каждой комнаты своя */
+    GtkWidget *door_choice, *ruler_choice; /* двери и линейки комнаты по именам; id — номер в проекте */
     TileBinding tile_bindings[MAX_TILE_BINDINGS];
     size_t tile_binding_count;
 
@@ -152,8 +159,8 @@ static void commit_tile_field(AppPanel *panel, const TlTileField *field, const v
         case TL_FIELD_BOOL: *(bool *)member = *(const bool *)value; break;
         case TL_FIELD_DOUBLE: *(double *)member = *(const double *)value; break;
         case TL_FIELD_INT: *(int *)member = (int)*(const double *)value; break;
-        case TL_FIELD_COLOR: g_strlcpy(member, value, TL_COLOR_LENGTH); break;
-        case TL_FIELD_TEXT: g_strlcpy(member, value, TL_TEXTURE_LENGTH); break;
+        case TL_FIELD_COLOR:
+        case TL_FIELD_TEXT: g_strlcpy(member, value, field->size); break;
         }
     }
     if (field->remembered_for_new_rooms)
@@ -196,12 +203,11 @@ static GtkWidget *tile_spin(AppPanel *panel, const char *key, double minimum, do
 /* Поле одинаково у всех выделенных комнат? */
 static bool field_same(const TlTileField *field, TlSpace *const *rooms, size_t count)
 {
-    static const size_t SIZES[] = {[TL_FIELD_BOOL] = sizeof(bool), [TL_FIELD_DOUBLE] = sizeof(double),
-                                   [TL_FIELD_INT] = sizeof(int), [TL_FIELD_COLOR] = 0, [TL_FIELD_TEXT] = 0};
+    bool text = field->type == TL_FIELD_COLOR || field->type == TL_FIELD_TEXT;
     const char *first = (const char *)tl_space_effective_tile(rooms[0]) + field->offset;
     for (size_t i = 1; i < count; i++) {
         const char *other = (const char *)tl_space_effective_tile(rooms[i]) + field->offset;
-        if (SIZES[field->type] ? memcmp(first, other, SIZES[field->type]) != 0 : strcmp(first, other) != 0)
+        if (text ? strcmp(first, other) != 0 : memcmp(first, other, field->size) != 0)
             return false;
     }
     return true;
@@ -359,6 +365,7 @@ static void refresh_texture(AppPanel *panel, const TlTileSettings *tile, bool mi
     g_free(text);
 }
 
+/* Цвет кнопки — в поле key ("color" или "color2"). */
 static void on_color(GtkColorButton *button, AppPanel *panel)
 {
     GdkRGBA rgba;
@@ -366,7 +373,101 @@ static void on_color(GtkColorButton *button, AppPanel *panel)
     char hex[TL_COLOR_LENGTH];
     g_snprintf(hex, sizeof hex, "#%02x%02x%02x", (int)round(rgba.red * 255), (int)round(rgba.green * 255),
                (int)round(rgba.blue * 255));
-    commit_tile_field(panel, find_field("color"), hex);
+    commit_tile_field(panel, find_field(g_object_get_data(G_OBJECT(button), "key")), hex);
+}
+
+static void on_pattern(GtkComboBox *combo, AppPanel *panel)
+{
+    size_t count;
+    const TlPatternInfo *patterns = tl_patterns(&count);
+    int index = gtk_combo_box_get_active(combo);
+    if (index >= 0 && (size_t)index < count)
+        commit_tile_field(panel, find_field("pattern"), patterns[index].id);
+}
+
+/* ---- плитка: раскладка от двери и от линейки -------------------------------------- */
+
+/* Номер выбранного в списке предмета (id строки — номер в проекте); −1 — ничего. */
+static long chosen_index(GtkWidget *choice, size_t count)
+{
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(choice));
+    long index = id ? strtol(id, NULL, 10) : -1;
+    return index >= 0 && (size_t)index < count ? index : -1;
+}
+
+static void on_door(GtkButton *button, AppPanel *panel)
+{
+    TlSpace *space = selected_space(panel);
+    TlProject *project = panel->document->project;
+    long index = chosen_index(panel->door_choice, project->openings.count);
+    if (!space)
+        return;
+    if (index < 0) {
+        app_document_status(panel->document, "У комнаты нет проёма с полом — поставьте проём (O)");
+        return;
+    }
+    const TlOpening *door = project->openings.items[index];
+    TlVec2 from, to;
+    double x, y;
+    if (tl_project_space_door_edge(project, space, door, &from, &to) && tl_layout_door_offsets(space, from, to, &x, &y)) {
+        set_offsets(panel, x, y);
+        app_document_status(panel->document, "От двери «%s»: от порога целый ряд, проём — посередине", door->name);
+    } else {
+        app_document_status(panel->document, "Проём наискосок к плитке — поверните раскладку вдоль стены");
+    }
+}
+
+/* Линейка в комнате — ось (ниши, унитаза, окна): по ней шов или середина плитки. */
+static void on_ruler_line(GtkButton *button, AppPanel *panel)
+{
+    TlSpace *space = selected_space(panel);
+    TlProject *project = panel->document->project;
+    long index = chosen_index(panel->ruler_choice, project->rulers.count);
+    if (!space)
+        return;
+    if (index < 0) {
+        app_document_status(panel->document, "Поставьте в комнате линейку (M) по оси — ниши, унитаза, окна");
+        return;
+    }
+    const TlRuler *ruler = project->rulers.items[index];
+    TlLineAlign mode = (TlLineAlign)GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "mode"));
+    double x, y;
+    if (tl_layout_line_offsets(space, ruler->start, ruler->end, mode, tl_space_label_point(space), &x, &y)) {
+        set_offsets(panel, x, y);
+        app_document_status(panel->document, "По линейке «%s»: %s", ruler->name,
+                            mode == TL_LINE_JOINT ? "шов по оси" : "середина плитки по оси");
+    } else {
+        app_document_status(panel->document, "Линейка «%s» должна идти вдоль рядов плитки", ruler->name);
+    }
+}
+
+/* Имя линейки или проёма с панели: Enter или уход из поля. */
+static void rename_selected(GtkEntry *entry, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    char *name = s->kind == APP_SELECT_RULER ? s->ruler->name : s->kind == APP_SELECT_OPENING ? s->opening->name : NULL;
+    const char *text = gtk_entry_get_text(entry);
+    if (panel->updating || !name || !text[0] || strcmp(text, name) == 0)
+        return;
+    app_document_checkpoint(panel->document, "name");
+    g_strlcpy(name, text, TL_NAME_LENGTH);
+    app_document_commit(panel->document);
+}
+
+static gboolean on_name_entry_focus_out(GtkWidget *entry, GdkEvent *event, AppPanel *panel)
+{
+    rename_selected(GTK_ENTRY(entry), panel);
+    return FALSE;
+}
+
+static GtkWidget *name_entry(AppPanel *panel, const char *tooltip)
+{
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(entry), TL_NAME_LENGTH / 2 - 1); /* кириллица — два байта на букву */
+    gtk_widget_set_tooltip_text(entry, tooltip);
+    g_signal_connect(entry, "activate", G_CALLBACK(rename_selected), panel);
+    g_signal_connect(entry, "focus-out-event", G_CALLBACK(on_name_entry_focus_out), panel);
+    return entry;
 }
 
 /* ---- комната, дом, стена ------------------------------------------------------- */
@@ -628,7 +729,7 @@ static void on_opening_width(GtkSpinButton *spin, AppPanel *panel)
     if (!opening)
         return;
     app_document_checkpoint(panel->document, "owidth");
-    opening->width = gtk_spin_button_get_value(spin);
+    tl_project_set_opening_width(panel->document->project, opening, gtk_spin_button_get_value(spin));
     app_document_commit_rooms(panel->document);
 }
 
@@ -789,6 +890,35 @@ static void on_expansion_joint_gap(GtkSpinButton *spin, AppPanel *panel)
 
 static void on_delete_all_rulers(GtkButton *button, AppPanel *panel) { app_command_delete_all_rulers(panel->document); }
 
+static void on_pipe_preference(GtkSpinButton *spin, AppPanel *panel)
+{
+    panel->document->preferences.pipe_diameter = gtk_spin_button_get_value(spin);
+}
+
+/* Диаметр выделенной трубы; он же — для следующих. */
+static void on_pipe_diameter(GtkSpinButton *spin, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    if (panel->updating || s->kind != APP_SELECT_PIPE)
+        return;
+    app_document_checkpoint(panel->document, "pipe_d");
+    s->pipe->diameter = gtk_spin_button_get_value(spin);
+    panel->document->preferences.pipe_diameter = s->pipe->diameter;
+    tl_project_update_spaces(panel->document->project);
+    app_document_commit(panel->document);
+}
+
+static void on_pipe_coordinate(GtkSpinButton *spin, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    if (panel->updating || s->kind != APP_SELECT_PIPE)
+        return;
+    app_document_checkpoint(panel->document, "pipe_xy");
+    s->pipe->center = tl_vec2(spin_value(panel->pipe_x), spin_value(panel->pipe_y));
+    tl_project_update_spaces(panel->document->project);
+    app_document_commit(panel->document);
+}
+
 static void on_keep_angles(GtkToggleButton *check, AppPanel *panel)
 {
     panel->document->preferences.keep_angles = gtk_toggle_button_get_active(check);
@@ -843,7 +973,7 @@ static void build_rooms(AppPanel *panel, GtkWidget *box)
 
 static void build_tools(AppPanel *panel, GtkWidget *box)
 {
-    AppSection section = app_section_new(box, "Перегородки, проёмы, швы, линейки");
+    AppSection section = app_section_new(box, "Перегородки, проёмы, швы, линейки, трубы");
     panel->partition_thickness = app_unit_spin_new(10, 1000, 10, 0, "мм");
     g_signal_connect(panel->partition_thickness, "value-changed", G_CALLBACK(on_partition_preference), panel);
     gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "partition", "Перегородка", APP_TOOL_PARTITION), 0, 0, 1, 1);
@@ -865,7 +995,13 @@ static void build_tools(AppPanel *panel, GtkWidget *box)
                                 "концы деформационного шва — к поверхностям стен. Shift — временно без притягивания.");
     g_signal_connect(panel->measure_magnet, "toggled", G_CALLBACK(on_measure_magnet), panel);
     gtk_grid_attach(GTK_GRID(section.grid), panel->measure_magnet, 1, 3, 1, 1);
-    section.rows = 4;
+    panel->pipe_diameter = app_unit_spin_new(TL_PIPE_MIN_DIAMETER, TL_PIPE_MAX_DIAMETER, 1, 0, "мм");
+    gtk_widget_set_tooltip_text(panel->pipe_diameter, "Диаметр новых отверстий под трубы (коронка): "
+                                                      "канализация 50 и 110, отопление 20–32");
+    g_signal_connect(panel->pipe_diameter, "value-changed", G_CALLBACK(on_pipe_preference), panel);
+    gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "pipe", "Труба", APP_TOOL_PIPE), 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(section.grid), panel->pipe_diameter, 1, 4, 1, 1);
+    section.rows = 5;
     panel->auto_align = gtk_check_button_new_with_label("Автовыравнивание по горизонтали и вертикали");
     gtk_widget_set_tooltip_text(panel->auto_align,
                                 "Почти горизонтальная или вертикальная линейка, стена или перегородка выпрямляется, "
@@ -1011,6 +1147,22 @@ static void build_expansion_joint(AppPanel *panel, GtkWidget *box)
                                        G_CALLBACK(on_delete_selection), panel));
 }
 
+static void build_pipe(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->pipe_section;
+    *s = app_section_new(box, "Труба (отверстие в плитке)");
+    panel->pipe_own_diameter = spin_with(panel, TL_PIPE_MIN_DIAMETER, TL_PIPE_MAX_DIAMETER, 1, 0, "мм",
+                                         G_CALLBACK(on_pipe_diameter));
+    gtk_widget_set_tooltip_text(panel->pipe_own_diameter, "Диаметр коронки — на чертеже подрезки");
+    app_section_row(s, "Диаметр", panel->pipe_own_diameter);
+    panel->pipe_x = spin_with(panel, -1e7, 1e7, 1, 0, "мм", G_CALLBACK(on_pipe_coordinate));
+    app_section_row(s, "Центр X", panel->pipe_x);
+    panel->pipe_y = spin_with(panel, -1e7, 1e7, 1, 0, "мм", G_CALLBACK(on_pipe_coordinate));
+    app_section_row(s, "Центр Y", panel->pipe_y);
+    app_section_wide(s, connect_button(app_icon_button_new("delete", "Удалить трубу"),
+                                       G_CALLBACK(on_delete_selection), panel));
+}
+
 /* ---- точка с координатами: узел перегородок, угол дома ------------------------ */
 
 #define COORDINATE_LIMIT 1e7
@@ -1097,6 +1249,8 @@ static void build_ruler(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->ruler_section;
     *s = app_section_new(box, "Линейка");
+    panel->ruler_name = name_entry(panel, "Имя линейки — по нему её выбирают в «Шов по линейке»");
+    app_section_row(s, "Имя", panel->ruler_name);
     panel->ruler_length = app_section_value_label(s, "Длина");
     panel->ruler_count = app_section_value_label(s, "Всего линеек");
     app_section_wide(s, connect_button(app_icon_button_new("delete", "Удалить линейку"),
@@ -1203,6 +1357,8 @@ static void build_opening(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->opening_section;
     *s = app_section_new(box, "Проём");
+    panel->opening_name = name_entry(panel, "Имя проёма — по нему его выбирают в «От двери»");
+    app_section_row(s, "Имя", panel->opening_name);
     panel->opening_host = app_section_value_label(s, "Где");
     panel->opening_own_width = spin_with(panel, 10, 20000, 50, 0, "мм", G_CALLBACK(on_opening_width));
     app_section_row(s, "Ширина", panel->opening_own_width);
@@ -1247,6 +1403,23 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     gtk_box_pack_start(GTK_BOX(texture), choose, FALSE, FALSE, 0);
     app_section_row(s, "Рисунок", texture);
 
+    panel->pattern = gtk_combo_box_text_new();
+    size_t pattern_count;
+    const TlPatternInfo *patterns = tl_patterns(&pattern_count);
+    for (size_t i = 0; i < pattern_count; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->pattern), patterns[i].name);
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->pattern), "разные"); /* у нескольких комнат */
+    gtk_widget_set_tooltip_text(panel->pattern, "Как лежит плитка: прямая, шахматка, ёлочка, модульная из\n"
+                                                "нескольких форматов. «Ёлочка по диагонали» — поворот 45°.");
+    g_signal_connect(panel->pattern, "changed", G_CALLBACK(on_pattern), panel);
+    app_section_row(s, "Укладка", panel->pattern);
+    panel->pattern_note = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(panel->pattern_note), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->pattern_note), 40);
+    gtk_label_set_xalign(GTK_LABEL(panel->pattern_note), 0);
+    gtk_widget_set_opacity(panel->pattern_note, 0.75);
+    app_section_wide(s, panel->pattern_note);
+
     GtkWidget *length = app_hbox(4);
     gtk_box_pack_start(GTK_BOX(length), tile_spin(panel, "w", 10, 5000, 10, 0, "мм"), TRUE, TRUE, 0);
     GtkWidget *swap = small_button(panel, "⇄", G_CALLBACK(on_swap_tile), NULL, 0);
@@ -1261,7 +1434,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->row_shift), ROW_SHIFTS[i].title);
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(panel->row_shift), "разные"); /* у нескольких комнат */
     g_signal_connect(panel->row_shift, "changed", G_CALLBACK(on_row_shift), panel);
-    app_section_row(s, "Раскладка", panel->row_shift);
+    app_section_row(s, "Сдвиг рядов", panel->row_shift);
 
     app_section_row(s, "Поворот", tile_spin(panel, "angle", -180, 180, 5, 1, "°"));
     GtkWidget *presets = app_hbox(4);
@@ -1303,6 +1476,28 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
                                        "(с учётом общей раскладки соседних комнат и остатков подрезок)");
     gtk_grid_attach(GTK_GRID(centers), count, 1, 1, 1, 1);
     app_section_wide(s, centers);
+    GtkWidget *lines = panel->lines = gtk_grid_new();
+    gtk_grid_set_column_homogeneous(GTK_GRID(lines), TRUE);
+    gtk_grid_set_column_spacing(GTK_GRID(lines), 4);
+    gtk_grid_set_row_spacing(GTK_GRID(lines), 4);
+    panel->door_choice = gtk_combo_box_text_new();
+    gtk_widget_set_tooltip_text(panel->door_choice, "Двери комнаты — по именам на плане (Д1, Д2…)");
+    gtk_grid_attach(GTK_GRID(lines), panel->door_choice, 0, 0, 1, 1);
+    GtkWidget *door = small_button(panel, "От двери", G_CALLBACK(on_door), NULL, 0);
+    gtk_widget_set_tooltip_text(door, "От стыка в проёме в комнату — целый ряд, проём — посередине плитки или шва\n"
+                                      "(где куски у косяков шире)");
+    gtk_grid_attach(GTK_GRID(lines), door, 1, 0, 2, 1);
+    panel->ruler_choice = gtk_combo_box_text_new();
+    gtk_widget_set_tooltip_text(panel->ruler_choice, "Линейки в комнате — по именам на плане (Л1, Л2…):\n"
+                                                     "ось ниши, унитаза, окна");
+    gtk_grid_attach(GTK_GRID(lines), panel->ruler_choice, 0, 1, 1, 1);
+    GtkWidget *joint = small_button(panel, "Шов", G_CALLBACK(on_ruler_line), "mode", TL_LINE_JOINT);
+    gtk_widget_set_tooltip_text(joint, "По линейке пройдёт шов");
+    gtk_grid_attach(GTK_GRID(lines), joint, 1, 1, 1, 1);
+    GtkWidget *middle = small_button(panel, "Плитка", G_CALLBACK(on_ruler_line), "mode", TL_LINE_TILE_CENTER);
+    gtk_widget_set_tooltip_text(middle, "По линейке — середина плитки");
+    gtk_grid_attach(GTK_GRID(lines), middle, 2, 1, 1, 1);
+    app_section_wide(s, lines);
 
     GtkWidget *gap = tile_spin(panel, "wall_gap", 0, 100, 1, 1, "мм");
     gtk_widget_set_tooltip_text(gap, "Плитка не доходит до стен и перегородок на это расстояние\n"
@@ -1322,8 +1517,14 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "Запас на рез", tile_spin(panel, "cut_allow", 0, 20, 0.5, 1, "мм"));
     app_section_row(s, "Запас", tile_spin(panel, "reserve", 0, 100, 1, 0, "%"));
     panel->color_button = gtk_color_button_new();
+    g_object_set_data(G_OBJECT(panel->color_button), "key", "color");
     g_signal_connect(panel->color_button, "color-set", G_CALLBACK(on_color), panel);
     app_section_row(s, "Цвет", panel->color_button);
+    panel->color2_button = gtk_color_button_new();
+    g_object_set_data(G_OBJECT(panel->color2_button), "key", "color2");
+    gtk_widget_set_tooltip_text(panel->color2_button, "Вторая плитка шахматки — отдельная позиция к покупке");
+    g_signal_connect(panel->color2_button, "color-set", G_CALLBACK(on_color), panel);
+    app_section_row(s, "Цвет второй плитки", panel->color2_button);
 
     panel->glue_section = app_section_new(box, "Клей");
     GtkWidget *rate = tile_spin(panel, "glue_rate", 0.1, 10, 0.05, 2, "кг/м²");
@@ -1336,6 +1537,33 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(&panel->clip_section, "На длинную сторону", tile_spin(panel, "svp_long", 0, 20, 1, 0, "шт."));
     app_section_row(&panel->clip_section, "На короткую сторону", tile_spin(panel, "svp_short", 0, 20, 1, 0, "шт."));
     app_section_row(&panel->clip_section, "В упаковке", tile_spin(panel, "svp_pack", 1, 10000, 50, 0, "шт."));
+
+    AppSection *grout = &panel->grout_section;
+    *grout = app_section_new(box, "Затирка и грунт");
+    GtkWidget *thickness = tile_spin(panel, "thickness", 1, 50, 0.5, 1, "мм");
+    gtk_widget_set_tooltip_text(thickness, "Толщина плитки — глубина шва под затирку");
+    app_section_row(grout, "Толщина плитки", thickness);
+    GtkWidget *density = tile_spin(panel, "grout_density", 0.5, 3, 0.05, 2, "кг/дм³");
+    gtk_widget_set_tooltip_text(density, "Плотность затирки: цементная — около 1,6, эпоксидная — 1,4–1,6 (см. упаковку)");
+    app_section_row(grout, "Плотность затирки", density);
+    app_section_row(grout, "Затирка в упаковке", tile_spin(panel, "grout_pack", 0.1, 100, 0.5, 1, "кг"));
+    GtkWidget *primer = tile_spin(panel, "primer_rate", 0, 2, 0.05, 2, "л/м²");
+    gtk_widget_set_tooltip_text(primer, "Расход грунта под плитку (см. канистру): обычно 0,1–0,3 л/м²");
+    app_section_row(grout, "Расход грунта", primer);
+    app_section_row(grout, "Грунт в канистре", tile_spin(panel, "primer_can", 0.5, 100, 0.5, 1, "л"));
+
+    AppSection *prices = &panel->price_section;
+    *prices = app_section_new(box, "Цены для сметы");
+    GtkWidget *note = gtk_label_new("0 — позиция без цены, в смету не идёт.");
+    gtk_label_set_xalign(GTK_LABEL(note), 0);
+    gtk_widget_set_opacity(note, 0.7);
+    app_section_wide(prices, note);
+    app_section_row(prices, "Плитка", tile_spin(panel, "price_tile", 0, 1e6, 50, 0, "₽/м²"));
+    app_section_row(prices, "Клей", tile_spin(panel, "price_glue", 0, 1e6, 10, 0, "₽/мешок"));
+    app_section_row(prices, "СВП", tile_spin(panel, "price_svp", 0, 1e6, 10, 0, "₽/уп."));
+    app_section_row(prices, "Затирка", tile_spin(panel, "price_grout", 0, 1e6, 10, 0, "₽/уп."));
+    app_section_row(prices, "Грунт", tile_spin(panel, "price_primer", 0, 1e6, 10, 0, "₽/кан."));
+    app_section_row(prices, "Укладка", tile_spin(panel, "price_work", 0, 1e6, 50, 0, "₽/м²"));
 }
 
 static void build_calc(AppPanel *panel, GtkWidget *box)
@@ -1433,10 +1661,104 @@ static void refresh_space(AppPanel *panel, TlSpace *space)
     g_free(note);
 }
 
+/* Что значат поля плитки у рисунка: у модульного — клетка и форматы к покупке. */
+static void refresh_pattern_note(AppPanel *panel, const TlTileSettings *tile, const TlPatternInfo *info)
+{
+    GString *note = g_string_new(NULL);
+    TlPatternUnit unit;
+    if (info->modular && tl_pattern_unit(tile, &unit)) {
+        g_string_append(note, "Длина и ширина — клетка модуля. Форматы:");
+        for (size_t i = 0; i < unit.spec_count; i++) {
+            char name[64];
+            tl_tile_spec_name(&unit.specs[i], name, sizeof name);
+            g_string_append_printf(note, "%s %s", i ? "," : "", name);
+        }
+    } else if (strcmp(info->id, "herringbone") == 0) {
+        g_string_append(note, "Длинная сторона — вдоль ряда. Ёлочка по диагонали комнаты — поворот 45°.");
+    } else if (info->uses_second_color) {
+        g_string_append(note, "Плитки двух цветов через одну: вторая — отдельная позиция к покупке.");
+    }
+    gtk_label_set_text(GTK_LABEL(panel->pattern_note), note->str);
+    gtk_widget_set_visible(panel->pattern_note, note->len > 0);
+    g_string_free(note, TRUE);
+}
+
+static void set_color_button(GtkWidget *button, const char *color)
+{
+    GdkRGBA rgba;
+    if (gdk_rgba_parse(&rgba, color))
+        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(button), &rgba);
+}
+
+/* Список имён: id — номер в проекте; выбранный остаётся выбранным, пока он есть. */
+static void fill_choice(GtkWidget *choice, const char *const *names, const size_t *indices, size_t count)
+{
+    char *active = g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(choice)));
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(choice));
+    for (size_t i = 0; i < count; i++) {
+        char id[24];
+        g_snprintf(id, sizeof id, "%zu", indices[i]);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(choice), id, names[i]);
+    }
+    if (!active || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(choice), active))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(choice), count ? 0 : -1);
+    gtk_widget_set_sensitive(choice, count > 0);
+    g_free(active);
+}
+
+static size_t index_in(void *const *items, size_t count, const void *item)
+{
+    for (size_t i = 0; i < count; i++)
+        if (items[i] == item)
+            return i;
+    return 0;
+}
+
+/* Двери и линейки комнаты — для раскладки от двери и по линейке. */
+static void refresh_lines(AppPanel *panel, TlSpace *space)
+{
+    TlProject *project = panel->document->project;
+    TlOpeningList doors = tl_project_space_doors(project, space);
+    const char **names = g_new(const char *, doors.count + 1);
+    size_t *indices = g_new(size_t, doors.count + 1);
+    for (size_t i = 0; i < doors.count; i++) {
+        names[i] = doors.items[i]->name;
+        indices[i] = index_in((void *const *)project->openings.items, project->openings.count, doors.items[i]);
+    }
+    fill_choice(panel->door_choice, names, indices, doors.count);
+    tl_opening_list_free(&doors);
+    g_free(names);
+    g_free(indices);
+
+    TlRulerList rulers = tl_project_space_rulers(project, space);
+    char **labels = g_new0(char *, rulers.count + 1);
+    indices = g_new(size_t, rulers.count + 1);
+    for (size_t i = 0; i < rulers.count; i++) {
+        labels[i] = g_strdup_printf("%s (%.0f мм)", rulers.items[i]->name, tl_ruler_length(rulers.items[i]));
+        indices[i] = index_in((void *const *)project->rulers.items, project->rulers.count, rulers.items[i]);
+    }
+    fill_choice(panel->ruler_choice, (const char *const *)labels, indices, rulers.count);
+    tl_ruler_list_free(&rulers);
+    g_strfreev(labels);
+    g_free(indices);
+}
+
 static void refresh_tile(AppPanel *panel, TlSpace *const *rooms, size_t count)
 {
     const TlTileSettings *tile = tl_space_effective_tile(rooms[0]);
     refresh_tile_bindings(panel, rooms, count);
+    size_t pattern_count;
+    const TlPatternInfo *patterns = tl_patterns(&pattern_count);
+    const TlPatternInfo *pattern = tl_pattern_of(tile);
+    bool same_pattern = true;
+    for (size_t i = 1; i < count; i++)
+        same_pattern = same_pattern && tl_pattern_of(tl_space_effective_tile(rooms[i])) == pattern;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(panel->pattern),
+                             same_pattern ? (int)(pattern - patterns) : (int)pattern_count);
+    refresh_pattern_note(panel, tile, pattern);
+    gtk_widget_set_sensitive(panel->row_shift, !same_pattern || pattern->uses_row_shift);
+    gtk_widget_set_sensitive(panel->color2_button, !same_pattern || pattern->uses_second_color);
+    set_color_button(panel->color2_button, tile->color2);
     size_t shift_index = 0;
     for (size_t i = 0; i < G_N_ELEMENTS(ROW_SHIFTS); i++)
         if (fabs(ROW_SHIFTS[i].value - tile->row_shift) < fabs(ROW_SHIFTS[shift_index].value - tile->row_shift))
@@ -1444,9 +1766,7 @@ static void refresh_tile(AppPanel *panel, TlSpace *const *rooms, size_t count)
     gtk_combo_box_set_active(GTK_COMBO_BOX(panel->row_shift),
                              field_same(find_field("shift"), rooms, count) ? (int)shift_index
                                                                            : (int)G_N_ELEMENTS(ROW_SHIFTS));
-    GdkRGBA rgba;
-    if (gdk_rgba_parse(&rgba, tile->color))
-        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(panel->color_button), &rgba);
+    set_color_button(panel->color_button, tile->color);
     refresh_texture(panel, tile, !field_same(find_field("texture"), rooms, count));
     bool single = count == 1;
     for (size_t i = 0; i < panel->tile_binding_count; i++) {
@@ -1456,6 +1776,9 @@ static void refresh_tile(AppPanel *panel, TlSpace *const *rooms, size_t count)
     }
     gtk_widget_set_sensitive(panel->corners, single);
     gtk_widget_set_sensitive(panel->centers, single);
+    gtk_widget_set_sensitive(panel->lines, single);
+    if (single)
+        refresh_lines(panel, rooms[0]);
 }
 
 static void refresh_wall(AppPanel *panel, TlOutline *outline, size_t wall)
@@ -1506,6 +1829,8 @@ static void refresh_partition(AppPanel *panel, TlPartition *partition)
 
 static void refresh_opening(AppPanel *panel, TlOpening *opening)
 {
+    if (!gtk_widget_has_focus(panel->opening_name))
+        gtk_entry_set_text(GTK_ENTRY(panel->opening_name), opening->name);
     TlBand band;
     bool hosted = tl_project_opening_host(panel->document->project, opening, &band);
     set_spin(panel->opening_own_width, opening->width);
@@ -1546,12 +1871,16 @@ static void refresh(AppPanel *panel)
     set_check(panel->keep_angles, document->preferences.keep_angles);
     set_check(panel->measure_magnet, document->preferences.measure_magnet);
     set_spin(panel->expansion_joint_gap, document->preferences.expansion_joint_gap);
+    set_spin(panel->pipe_diameter, document->preferences.pipe_diameter);
     set_check(panel->auto_align, document->preferences.auto_align);
 
     gtk_widget_set_visible(panel->space_section.frame, room_count == 1);
     gtk_widget_set_visible(panel->tile_section.frame, space != NULL);
     gtk_widget_set_visible(panel->glue_section.frame, space != NULL);
     gtk_widget_set_visible(panel->clip_section.frame, space != NULL);
+    gtk_widget_set_visible(panel->grout_section.frame, space != NULL);
+    gtk_widget_set_visible(panel->price_section.frame, space != NULL);
+    gtk_widget_set_visible(panel->pipe_section.frame, s->kind == APP_SELECT_PIPE);
     gtk_widget_set_visible(panel->outline_section.frame, outline != NULL);
     gtk_widget_set_visible(panel->wall_section.frame, s->kind == APP_SELECT_WALL);
     gtk_widget_set_visible(panel->partition_section.frame, s->kind == APP_SELECT_PARTITION);
@@ -1585,8 +1914,15 @@ static void refresh(AppPanel *panel)
         set_spin(panel->vertex_y, s->outline->inner.items[s->index].y);
     }
     if (s->kind == APP_SELECT_RULER) {
+        if (!gtk_widget_has_focus(panel->ruler_name))
+            gtk_entry_set_text(GTK_ENTRY(panel->ruler_name), s->ruler->name);
         set_label(panel->ruler_length, "%.0f мм", tl_ruler_length(s->ruler));
         set_label(panel->ruler_count, "%.0f", (double)document->project->rulers.count);
+    }
+    if (s->kind == APP_SELECT_PIPE) {
+        set_spin(panel->pipe_own_diameter, s->pipe->diameter);
+        set_spin(panel->pipe_x, s->pipe->center.x);
+        set_spin(panel->pipe_y, s->pipe->center.y);
     }
     if (s->kind == APP_SELECT_EXPANSION_JOINT) {
         set_spin(panel->expansion_joint_own_gap, s->expansion_joint->gap);
@@ -1617,7 +1953,7 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     gtk_container_set_border_width(GTK_CONTAINER(box), 6);
     build_rooms(panel, box);
     build_tools(panel, box);
-    panel->hint = gtk_label_new("Выберите комнату, стену, перегородку, проём, шов или линейку.");
+    panel->hint = gtk_label_new("Выберите комнату, стену, перегородку, проём, шов, трубу или линейку.");
     gtk_label_set_line_wrap(GTK_LABEL(panel->hint), TRUE);
     gtk_widget_set_no_show_all(panel->hint, TRUE);
     gtk_box_pack_start(GTK_BOX(box), panel->hint, FALSE, FALSE, 0);
@@ -1627,6 +1963,7 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_partition(panel, box);
     build_opening(panel, box);
     build_expansion_joint(panel, box);
+    build_pipe(panel, box);
     build_node(panel, box);
     build_vertex(panel, box);
     build_ruler(panel, box);
@@ -1634,9 +1971,10 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_calc(panel, box);
     AppSection *conditional[] = {&panel->space_section, &panel->outline_section, &panel->wall_section,
                                  &panel->partition_section, &panel->opening_section, &panel->ruler_section,
-                                 &panel->expansion_joint_section,
+                                 &panel->expansion_joint_section, &panel->pipe_section,
                                  &panel->tile_section,
-                                 &panel->glue_section, &panel->clip_section};
+                                 &panel->glue_section, &panel->clip_section, &panel->grout_section,
+                                 &panel->price_section};
     for (size_t i = 0; i < G_N_ELEMENTS(conditional); i++) {
         gtk_widget_show_all(conditional[i]->frame);
         hide_until_needed(conditional[i]);

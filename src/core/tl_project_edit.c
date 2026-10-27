@@ -6,11 +6,14 @@
  * и (при переносе дома) какие перегородки лежат внутри него.
  * apply: переносим перегородки дома, узлы — за ведущей перегородкой, концы на
  * гранях — на новое положение граней (сохраняя направление перегородки),
- * проёмы — на свои стены; затем пересчитываем комнаты.
+ * проёмы — на свои стены, концы линеек и швов — на то, к чему примагничены
+ * (tl_measure_anchor.h); затем пересчитываем комнаты.
  * end: то же и в конце — tl_project_merge_straight_nodes (узел на прямой —
  * снова одна перегородка).
  */
 #include "tl_project.h"
+
+#include "tl_measure_anchor.h"
 
 #include <math.h>
 
@@ -41,6 +44,11 @@ typedef struct CarriedJoint { /* деформационный шов внутр�
     TlVec2 start, end;
 } CarriedJoint;
 
+typedef struct CarriedPipe {
+    TlPipe *pipe;
+    TlVec2 center;
+} CarriedPipe;
+
 typedef struct PartitionDirection {
     TlPartition *partition;
     TlVec2 direction;
@@ -50,6 +58,7 @@ TL_ARRAY_DEFINE(AttachmentList, Attachment, attachment_list)
 TL_ARRAY_DEFINE(OpeningAnchorList, OpeningAnchor, opening_anchor_list)
 TL_ARRAY_DEFINE(CarriedPartitionList, CarriedPartition, carried_partition_list)
 TL_ARRAY_DEFINE(CarriedJointList, CarriedJoint, carried_joint_list)
+TL_ARRAY_DEFINE(CarriedPipeList, CarriedPipe, carried_pipe_list)
 TL_ARRAY_DEFINE(PartitionDirectionList, PartitionDirection, partition_direction_list)
 
 struct TlEditToken {
@@ -58,6 +67,8 @@ struct TlEditToken {
     OpeningAnchorList anchors;
     CarriedPartitionList carried;
     CarriedJointList carried_joints;
+    CarriedPipeList carried_pipes;
+    TlMeasureAnchors *measures;          /* концы линеек и швов на стенах — едут с ними */
     PartitionDirectionList directions;
 };
 
@@ -122,6 +133,11 @@ static void remember_carried(TlProject *project, TlOutline *moving_outline, TlEd
             carried_joint_list_push(&token->carried_joints, carried);
         }
     }
+    for (size_t i = 0; i < project->pipes.count; i++) { /* трубы — тоже */
+        TlPipe *pipe = project->pipes.items[i];
+        if (tl_outline_contains_or_touches(moving_outline, pipe->center))
+            carried_pipe_list_push(&token->carried_pipes, (CarriedPipe){pipe, pipe->center});
+    }
 }
 
 TlEditToken *tl_project_begin_edit(TlProject *project, TlOutline *moving_outline)
@@ -131,6 +147,7 @@ TlEditToken *tl_project_begin_edit(TlProject *project, TlOutline *moving_outline
     token->nodes = tl_project_nodes(project);
     remember_openings(project, token);
     remember_carried(project, moving_outline, token);
+    token->measures = tl_measure_anchors_remember(project);
     for (size_t i = 0; i < project->partitions.count; i++) {
         TlPartition *partition = project->partitions.items[i];
         PartitionDirection entry = {partition, tl_partition_direction(partition)};
@@ -148,6 +165,8 @@ void tl_edit_token_free(TlEditToken *token)
     opening_anchor_list_free(&token->anchors);
     carried_partition_list_free(&token->carried);
     carried_joint_list_free(&token->carried_joints);
+    carried_pipe_list_free(&token->carried_pipes);
+    tl_measure_anchors_free(token->measures);
     partition_direction_list_free(&token->directions);
     free(token);
 }
@@ -189,6 +208,8 @@ static void carry_partitions(TlEditToken *token, TlVec2 offset)
         carried->joint->start = tl_vec2_add(carried->start, offset);
         carried->joint->end = tl_vec2_add(carried->end, offset);
     }
+    for (size_t i = 0; i < token->carried_pipes.count; i++)
+        token->carried_pipes.items[i].pipe->center = tl_vec2_add(token->carried_pipes.items[i].center, offset);
 }
 
 static TlVec2 away(const TlNodeEnd *end, const TlEditToken *token)
@@ -312,6 +333,7 @@ void tl_project_apply_edit(TlProject *project, TlEditToken *token, const TlEditO
             follow_faces(project, token, options, options->has_translate);
     }
     restore_openings(project, token);
+    tl_measure_anchors_apply(project, token->measures);
     if (!options->skip_space_update)
         tl_project_update_spaces(project);
 }

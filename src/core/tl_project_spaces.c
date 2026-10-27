@@ -266,6 +266,21 @@ static void assign_joint_strips(TlProject *project)
     }
 }
 
+/* Каждой комнате — трубы, задевающие её пол. */
+static void assign_pipes(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_circle_list_clear(&space->pipes);
+        TlRect bounds = tl_polygon_bounds(&space->outline);
+        for (size_t p = 0; p < project->pipes.count; p++) {
+            TlCircle circle = tl_pipe_circle(project->pipes.items[p]);
+            if (tl_circle_touches_rect(circle, bounds) && tl_space_contains(space, circle.center))
+                tl_circle_list_push(&space->pipes, circle);
+        }
+    }
+}
+
 /* Каждой комнате — стыки в проёмах у её пола: на этом краю плитка без отступа от стен. */
 static void assign_threshold_strips(TlProject *project)
 {
@@ -373,4 +388,5 @@ void tl_project_update_spaces(TlProject *project)
     resolve_layout_sources(project);
     assign_joint_strips(project);
     assign_threshold_strips(project);
+    assign_pipes(project);
 }

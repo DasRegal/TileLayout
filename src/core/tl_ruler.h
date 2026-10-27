@@ -1,4 +1,5 @@
-/* Линейка: измерительный отрезок на плане. На стены и комнаты не влияет. */
+/* Линейка: измерительный отрезок на плане. На стены и комнаты не влияет. У линейки
+   короткое имя («Л1») — по нему её выбирают для раскладки по оси. */
 #ifndef TL_RULER_H
 #define TL_RULER_H
 
@@ -6,8 +7,11 @@
 
 typedef enum TlRulerEnd { TL_RULER_START = 1, TL_RULER_END = 2 } TlRulerEnd;
 
+#define TL_NAME_LENGTH 24 /* короткое имя линейки или проёма и завершающий ноль */
+
 typedef struct TlRuler {
     TlVec2 start, end;
+    char name[TL_NAME_LENGTH];
 } TlRuler;
 
 TlRuler *tl_ruler_new(TlVec2 start, TlVec2 end);

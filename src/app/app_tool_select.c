@@ -75,6 +75,10 @@ static bool drag_target(const AppCanvas *canvas, AppSelection hit, TlDragTarget 
         target->kind = TL_DRAG_JOINT;
         target->joint = hit.expansion_joint;
         return true;
+    case APP_SELECT_PIPE:
+        target->kind = TL_DRAG_PIPE;
+        target->pipe = hit.pipe;
+        return true;
     default: return false;
     }
 }

@@ -87,7 +87,8 @@ void spec_web(void)
             EXPECT_INT((int)tl_json_length(spaces), 3);
             const TlJson *layout = tl_json_get(tl_json_at(spaces, 0), "layout");
             size_t numbers = tl_json_length(tl_json_get(layout, "tiles"));
-            EXPECT(numbers > 0 && numbers % 5 == 0); /* left, top, right, bottom, вид */
+            EXPECT(numbers > 0 && numbers % 6 == 0); /* left, top, right, bottom, вид, плитка рисунка */
+            EXPECT(tl_json_length(tl_json_get(layout, "specs")) >= 1);
             EXPECT_INT((int)tl_json_length(tl_json_get(layout, "matrix")), 6);
             tl_json_free(scene);
         }
@@ -446,6 +447,47 @@ void spec_web(void)
             EXPECT(to_buy >= count && count > 0);
             EXPECT(tl_json_number_or(tl_json_get(summary, "floor_area"), 0) > 10);
             tl_json_free(summary);
+        }
+        IT("рисунок укладки, трубы, раскладка от двери, затирка и смета")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            EXPECT(tl_web_set_rooms_tile_fields("[1, 2]", "{\"pattern\": \"checker\", \"price_tile\": 1000}", 1));
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            const TlJson *layout = tl_json_get(tl_json_at(tl_json_get(scene, "spaces"), 0), "layout");
+            EXPECT_INT((int)tl_json_length(tl_json_get(layout, "specs")), 2);
+            tl_json_free(scene);
+
+            int pipe = tl_web_add_pipe(1000, 1000, 110, 2);
+            EXPECT(pipe >= 0);
+            EXPECT(answer_is(tl_web_pick(1010, 1000, 5), "kind", "pipe"));
+            EXPECT(tl_web_set_pipe(pipe, 1200, 900, 50, 3));
+            EXPECT_NEAR(answer_number(tl_web_object("pipe", pipe, 0, 0), "diameter"), 50, 0);
+            EXPECT(strstr(tl_web_cut_cards(), "\"drilled\"") != NULL || strstr(tl_web_cut_cards(), "Ø50") != NULL);
+            EXPECT(tl_web_drag_begin("pipe", pipe, 0, 0, 1200, 900));
+            tl_web_drag_move(1300, 900, 5, 0, true, 4);
+            tl_web_drag_end();
+            EXPECT_NEAR(answer_number(tl_web_object("pipe", pipe, 0, 0), "x"), 1300, 0);
+
+            TlJson *room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            const TlJson *doors = tl_json_get(room, "doors");
+            EXPECT_INT((int)tl_json_length(doors), 1);
+            EXPECT_STR(tl_json_string_or(tl_json_get(tl_json_at(doors, 0), "name"), ""), "Д1");
+            tl_json_free(room);
+            EXPECT(strstr(tl_web_align_tiles(living, "door:0", 5), "От двери «Д1»") != NULL);
+            EXPECT(strstr(tl_web_align_tiles(living, "ruler_joint:0", 6), "линейку") != NULL);
+            int ruler = tl_web_add_ruler(1000, 300, 1000, 2000, 6);
+            EXPECT(tl_web_set_name("ruler", ruler, "Ось", 6));
+            EXPECT(strstr(tl_web_align_tiles(living, "ruler_joint:0", 6), "По линейке «Ось»") != NULL);
+            EXPECT(answer_is(tl_web_object("ruler", ruler, 0, 0), "name", "Ось"));
+
+            TlJson *summary = tl_json_parse(tl_web_summary(), NULL, 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "grout"), "total_kg"), 0) > 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "primer"), "total_l"), 0) > 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "estimate"), "total"), 0) > 0);
+            tl_json_free(summary);
+            EXPECT(tl_web_delete("pipe", pipe, 0, 0, 7));
+            EXPECT(answer_is(tl_web_pick(1300, 900, 5), "kind", "space"));
         }
     }
 }

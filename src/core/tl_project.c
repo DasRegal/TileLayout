@@ -1,8 +1,11 @@
 /* Проект: состав, создание и удаление элементов, тела стен. */
 #include "tl_project.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 TlProject *tl_project_new(void)
 {
@@ -25,6 +28,9 @@ void tl_project_clear(TlProject *project)
     for (size_t i = 0; i < project->expansion_joints.count; i++)
         tl_expansion_joint_free(project->expansion_joints.items[i]);
     tl_expansion_joint_list_clear(&project->expansion_joints);
+    for (size_t i = 0; i < project->pipes.count; i++)
+        tl_pipe_free(project->pipes.items[i]);
+    tl_pipe_list_clear(&project->pipes);
     tl_outline_list_clear(&project->outlines);
     tl_partition_list_clear(&project->partitions);
     tl_opening_list_clear(&project->openings);
@@ -43,6 +49,7 @@ void tl_project_free(TlProject *project)
     tl_space_list_free(&project->spaces);
     tl_ruler_list_free(&project->rulers);
     tl_expansion_joint_list_free(&project->expansion_joints);
+    tl_pipe_list_free(&project->pipes);
     free(project);
 }
 
@@ -58,12 +65,38 @@ void tl_project_add_partition(TlProject *project, TlPartition *partition)
     tl_partition_list_push(&project->partitions, partition);
 }
 
+/* Номер в имени вида «Д12» (prefix + число); 0 — имя не такое. */
+static int name_number(const char *name, const char *prefix)
+{
+    size_t length = strlen(prefix);
+    if (strncmp(name, prefix, length) != 0 || !isdigit((unsigned char)name[length]))
+        return 0;
+    return atoi(name + length);
+}
+
+static int larger(int a, int b) { return a > b ? a : b; }
+
 void tl_project_add_opening(TlProject *project, TlOpening *opening)
 {
+    if (!opening->name[0]) {
+        int largest = 0;
+        for (size_t i = 0; i < project->openings.count; i++)
+            largest = larger(largest, name_number(project->openings.items[i]->name, "Д"));
+        snprintf(opening->name, sizeof opening->name, "Д%d", largest + 1);
+    }
     tl_opening_list_push(&project->openings, opening);
 }
 
-void tl_project_add_ruler(TlProject *project, TlRuler *ruler) { tl_ruler_list_push(&project->rulers, ruler); }
+void tl_project_add_ruler(TlProject *project, TlRuler *ruler)
+{
+    if (!ruler->name[0]) {
+        int largest = 0;
+        for (size_t i = 0; i < project->rulers.count; i++)
+            largest = larger(largest, name_number(project->rulers.items[i]->name, "Л"));
+        snprintf(ruler->name, sizeof ruler->name, "Л%d", largest + 1);
+    }
+    tl_ruler_list_push(&project->rulers, ruler);
+}
 
 void tl_project_add_expansion_joint(TlProject *project, TlExpansionJoint *joint)
 {
@@ -78,6 +111,18 @@ void tl_project_delete_expansion_joint(TlProject *project, TlExpansionJoint *joi
         return;
     tl_expansion_joint_list_remove_at(&project->expansion_joints, (size_t)index);
     tl_expansion_joint_free(joint);
+}
+
+void tl_project_add_pipe(TlProject *project, TlPipe *pipe) { tl_pipe_list_push(&project->pipes, pipe); }
+
+void tl_project_delete_pipe(TlProject *project, TlPipe *pipe)
+{
+    long index;
+    TL_ARRAY_INDEX_OF(&project->pipes, pipe, index);
+    if (index < 0)
+        return;
+    tl_pipe_list_remove_at(&project->pipes, (size_t)index);
+    tl_pipe_free(pipe);
 }
 
 void tl_project_delete_partition(TlProject *project, TlPartition *partition)

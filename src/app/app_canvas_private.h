@@ -47,6 +47,7 @@ extern const AppTool APP_OPENING_TOOL;
 extern const AppTool APP_TILES_TOOL;
 extern const AppTool APP_RULER_TOOL;
 extern const AppTool APP_EXPANSION_JOINT_TOOL;
+extern const AppTool APP_PIPE_TOOL;
 
 typedef enum AppDragKind {
     APP_DRAG_NONE,

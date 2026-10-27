@@ -44,10 +44,8 @@ static TlTileSettings tile_from_json(const TlJson *object)
         case TL_FIELD_DOUBLE: *(double *)member = tl_json_number_or(value, *(double *)member); break;
         case TL_FIELD_INT: *(int *)member = (int)tl_json_number_or(value, *(int *)member); break;
         case TL_FIELD_COLOR:
-            snprintf((char *)member, TL_COLOR_LENGTH, "%s", tl_json_string_or(value, (char *)member));
-            break;
         case TL_FIELD_TEXT:
-            snprintf((char *)member, TL_TEXTURE_LENGTH, "%s", tl_json_string_or(value, (char *)member));
+            snprintf((char *)member, field->size, "%s", tl_json_string_or(value, (char *)member));
             break;
         }
     }
@@ -158,12 +156,21 @@ static TlJson *ruler_to_json(const TlRuler *ruler)
     TlJson *object = tl_json_object();
     tl_json_object_set(object, "p1", point_to_json(ruler->start));
     tl_json_object_set(object, "p2", point_to_json(ruler->end));
+    tl_json_object_set(object, "name", tl_json_string(ruler->name));
     return object;
+}
+
+/* Имя без него в файле — пустое: проект даст следующее свободное. */
+static void name_from_json(const TlJson *object, char *name)
+{
+    snprintf(name, TL_NAME_LENGTH, "%s", tl_json_string_or(tl_json_get(object, "name"), ""));
 }
 
 static TlRuler *ruler_from_json(const TlJson *object)
 {
-    return tl_ruler_new(point_from_json(tl_json_get(object, "p1")), point_from_json(tl_json_get(object, "p2")));
+    TlRuler *ruler = tl_ruler_new(point_from_json(tl_json_get(object, "p1")), point_from_json(tl_json_get(object, "p2")));
+    name_from_json(object, ruler->name);
+    return ruler;
 }
 
 static TlJson *expansion_joint_to_json(const TlExpansionJoint *joint)
@@ -181,6 +188,21 @@ static TlExpansionJoint *expansion_joint_from_json(const TlJson *object)
                                   tl_json_number_or(tl_json_get(object, "gap"), TL_EXPANSION_JOINT_DEFAULT_GAP));
 }
 
+static TlJson *pipe_to_json(const TlPipe *pipe)
+{
+    TlJson *object = tl_json_object();
+    tl_json_object_set(object, "p", point_to_json(pipe->center));
+    tl_json_object_set(object, "d", tl_json_number(pipe->diameter));
+    return object;
+}
+
+static TlPipe *pipe_from_json(const TlJson *object)
+{
+    double diameter = tl_json_number_or(tl_json_get(object, "d"), TL_PIPE_DEFAULT_DIAMETER);
+    return tl_pipe_new(point_from_json(tl_json_get(object, "p")),
+                       fmin(TL_PIPE_MAX_DIAMETER, fmax(TL_PIPE_MIN_DIAMETER, diameter)));
+}
+
 static TlJson *opening_to_json(const TlOpening *opening)
 {
     TlJson *object = tl_json_object();
@@ -191,6 +213,7 @@ static TlJson *opening_to_json(const TlOpening *opening)
     tl_json_object_set(object, "threshold_end", tl_json_number(opening->threshold_end));
     tl_json_object_set(object, "threshold_gap", tl_json_number(opening->threshold_gap));
     tl_json_object_set(object, "locked", tl_json_bool(opening->locked));
+    tl_json_object_set(object, "name", tl_json_string(opening->name));
     return object;
 }
 
@@ -204,6 +227,7 @@ static TlOpening *opening_from_json(const TlJson *object)
     opening->threshold_gap =
         fmax(0, tl_json_number_or(tl_json_get(object, "threshold_gap"), TL_OPENING_DEFAULT_THRESHOLD_GAP));
     opening->locked = tl_json_bool_or(tl_json_get(object, "locked"), false);
+    name_from_json(object, opening->name);
     return opening;
 }
 
@@ -235,7 +259,9 @@ TlJson *tl_project_to_json(const TlProject *project)
     TlJson *root = tl_json_object();
     TlJson *outlines = tl_json_array(), *partitions = tl_json_array();
     TlJson *openings = tl_json_array(), *spaces = tl_json_array(), *rulers = tl_json_array();
-    TlJson *expansion_joints = tl_json_array();
+    TlJson *expansion_joints = tl_json_array(), *pipes = tl_json_array();
+    for (size_t i = 0; i < project->pipes.count; i++)
+        tl_json_array_push(pipes, pipe_to_json(project->pipes.items[i]));
     for (size_t i = 0; i < project->outlines.count; i++)
         tl_json_array_push(outlines, outline_to_json(project->outlines.items[i]));
     for (size_t i = 0; i < project->partitions.count; i++)
@@ -255,6 +281,7 @@ TlJson *tl_project_to_json(const TlProject *project)
     tl_json_object_set(root, "spaces", spaces);
     tl_json_object_set(root, "rulers", rulers);
     tl_json_object_set(root, "expansion_joints", expansion_joints);
+    tl_json_object_set(root, "pipes", pipes);
     tl_json_object_set(root, "next_id", tl_json_number(project->next_space_id));
     return root;
 }
@@ -308,6 +335,9 @@ bool tl_project_from_json(TlProject *project, const TlJson *root, char *error, s
     list = tl_json_get(root, "expansion_joints");
     for (size_t i = 0; i < tl_json_length(list); i++)
         tl_project_add_expansion_joint(project, expansion_joint_from_json(tl_json_at(list, i)));
+    list = tl_json_get(root, "pipes");
+    for (size_t i = 0; i < tl_json_length(list); i++)
+        tl_project_add_pipe(project, pipe_from_json(tl_json_at(list, i)));
     list = tl_json_get(root, "rulers");
     for (size_t i = 0; i < tl_json_length(list); i++)
         tl_project_add_ruler(project, ruler_from_json(tl_json_at(list, i)));

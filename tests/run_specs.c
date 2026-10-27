@@ -20,5 +20,8 @@ int main(void)
     spec_web();
     spec_commands();
     spec_drag();
+    spec_pattern();
+    spec_estimate();
+    spec_pipes();
     return spec_report() == 0 ? 0 : 1;
 }

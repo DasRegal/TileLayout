@@ -26,6 +26,12 @@ TlTileSettings tl_tile_settings_factory(void)
         .reuse_offcuts = true,
         .cut_allowance = 3,
         .wall_gap = 0,
+        .color2 = "#5b5b5b",
+        .tile_thickness = 9,
+        .grout_density = 1.6,
+        .grout_pack_kg = 2,
+        .primer_l_per_m2 = 0.2,
+        .primer_can_l = 10,
     };
     return settings;
 }
@@ -46,28 +52,13 @@ void tl_tile_settings_remember_as_default(const TlTileSettings *settings)
 
 void tl_tile_settings_reset_defaults(void) { has_remembered_defaults = false; }
 
-bool tl_tile_settings_equal(const TlTileSettings *a, const TlTileSettings *b)
-{
-    return a->enabled == b->enabled && a->tile_width == b->tile_width &&
-           a->tile_height == b->tile_height && a->joint_width == b->joint_width &&
-           a->offset_x == b->offset_x && a->offset_y == b->offset_y &&
-           a->rotation_degrees == b->rotation_degrees && a->row_shift == b->row_shift &&
-           a->min_cut_width == b->min_cut_width && a->reserve_percent == b->reserve_percent &&
-           strcmp(a->color, b->color) == 0 && a->glue_kg_per_m2_mm == b->glue_kg_per_m2_mm &&
-           a->glue_layer_mm == b->glue_layer_mm && a->glue_bag_kg == b->glue_bag_kg &&
-           a->clips_per_long_side == b->clips_per_long_side &&
-           a->clips_per_short_side == b->clips_per_short_side &&
-           a->clips_per_pack == b->clips_per_pack && a->reuse_offcuts == b->reuse_offcuts &&
-           a->cut_allowance == b->cut_allowance && a->wall_gap == b->wall_gap &&
-           strcmp(a->texture, b->texture) == 0;
-}
-
 bool tl_tile_settings_is_square(const TlTileSettings *settings)
 {
     return fabs(settings->tile_width - settings->tile_height) < 0.5;
 }
 
-#define FIELD(key, type, member, remembered) {key, type, offsetof(TlTileSettings, member), remembered}
+#define FIELD(key, type, member, remembered) \
+    {key, type, offsetof(TlTileSettings, member), sizeof(((TlTileSettings *)0)->member), remembered}
 
 static const TlTileField FIELDS[] = {
     FIELD("enabled", TL_FIELD_BOOL, enabled, false),
@@ -91,10 +82,42 @@ static const TlTileField FIELDS[] = {
     FIELD("cut_allow", TL_FIELD_DOUBLE, cut_allowance, true),
     FIELD("wall_gap", TL_FIELD_DOUBLE, wall_gap, true),
     FIELD("texture", TL_FIELD_TEXT, texture, true),
+    FIELD("pattern", TL_FIELD_TEXT, pattern, true),
+    FIELD("color2", TL_FIELD_COLOR, color2, true),
+    FIELD("thickness", TL_FIELD_DOUBLE, tile_thickness, true),
+    FIELD("grout_density", TL_FIELD_DOUBLE, grout_density, true),
+    FIELD("grout_pack", TL_FIELD_DOUBLE, grout_pack_kg, true),
+    FIELD("primer_rate", TL_FIELD_DOUBLE, primer_l_per_m2, true),
+    FIELD("primer_can", TL_FIELD_DOUBLE, primer_can_l, true),
+    FIELD("price_tile", TL_FIELD_DOUBLE, price_tile_m2, true),
+    FIELD("price_glue", TL_FIELD_DOUBLE, price_glue_bag, true),
+    FIELD("price_svp", TL_FIELD_DOUBLE, price_clip_pack, true),
+    FIELD("price_grout", TL_FIELD_DOUBLE, price_grout_pack, true),
+    FIELD("price_primer", TL_FIELD_DOUBLE, price_primer_can, true),
+    FIELD("price_work", TL_FIELD_DOUBLE, price_work_m2, true),
 };
 
 const TlTileField *tl_tile_settings_fields(size_t *count)
 {
     *count = sizeof FIELDS / sizeof FIELDS[0];
     return FIELDS;
+}
+
+/* Поле за полем по таблице: новое поле сравнивается само. */
+bool tl_tile_settings_equal(const TlTileSettings *a, const TlTileSettings *b)
+{
+    for (size_t i = 0; i < sizeof FIELDS / sizeof FIELDS[0]; i++) {
+        const TlTileField *field = &FIELDS[i];
+        const char *x = (const char *)a + field->offset, *y = (const char *)b + field->offset;
+        bool same;
+        switch (field->type) {
+        case TL_FIELD_BOOL: same = *(const bool *)x == *(const bool *)y; break;
+        case TL_FIELD_DOUBLE: same = *(const double *)x == *(const double *)y; break;
+        case TL_FIELD_INT: same = *(const int *)x == *(const int *)y; break;
+        default: same = strncmp(x, y, field->size) == 0; break;
+        }
+        if (!same)
+            return false;
+    }
+    return true;
 }

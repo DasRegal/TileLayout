@@ -23,6 +23,7 @@ struct TlLayoutCache {
     TlLayout *layout;
     TlPolygon outline, frame;
     TlPolygonList holes, joint_strips;
+    TlCircleList pipes;
     TlTileSettings tile;
 };
 
@@ -103,7 +104,11 @@ static bool floor_contains(const TlLayout *layout, TlVec2 point)
 
 /* ---- классификация плитки ------------------------------------------------- */
 
-static void free_tile(TlTile *tile) { tl_polygon_list_free_all(&tile->shapes); }
+static void free_tile(TlTile *tile)
+{
+    tl_polygon_list_free_all(&tile->shapes);
+    tl_circle_list_free(&tile->drills);
+}
 
 static TlPolygon shape_from_tile_corner(TlPolygon clipped, TlRect rect)
 {
@@ -135,12 +140,14 @@ static bool keep_piece_of_floor(const bool *inside, size_t polygon_count, void *
     return true;
 }
 
-static void set_piece_size(TlTile *tile, const TlTileSettings *settings, TlRect piece_bounds)
+static void set_piece_size(TlTile *tile, TlRect piece_bounds)
 {
-    tile->piece_width = fmin(tl_rect_width(piece_bounds), settings->tile_width);
-    tile->piece_height = fmin(tl_rect_height(piece_bounds), settings->tile_height);
+    tile->piece_width = fmin(tl_rect_width(piece_bounds), tl_rect_width(tile->rect));
+    tile->piece_height = fmin(tl_rect_height(piece_bounds), tl_rect_height(tile->rect));
     tile->center = tl_rect_center(piece_bounds);
 }
+
+static double rect_area(TlRect rect) { return tl_rect_width(rect) * tl_rect_height(rect); }
 
 /* Плитка, через которую проходит шов: куски по обе стороны — разбиением
    плоскости (плитка ∩ пол − перегородки − швы). Номер — на самом большом
@@ -178,12 +185,12 @@ static bool classify_tile_across_joint(const LocalFloor *floor, TlRect rect, con
         return false;
     }
     *tile = (TlTile){.rect = rect, .center = tl_rect_center(rect)};
-    if (area >= settings->tile_width * settings->tile_height * FULL_TILE_RATIO) {
+    if (area >= rect_area(rect) * FULL_TILE_RATIO) {
         tile->kind = TL_TILE_WHOLE;
         tl_region_list_free_all(&pieces);
         return true;
     }
-    set_piece_size(tile, settings, largest_bounds);
+    set_piece_size(tile, largest_bounds);
     tile->figured = figured;
     tile->kind = narrowest < settings->min_cut_width ? TL_TILE_NARROW : TL_TILE_CUT;
     for (size_t i = 0; i < pieces.count && !fast; i++) {
@@ -221,16 +228,15 @@ static bool classify_tile(const LocalFloor *floor, TlRect rect, const TlTileSett
         return false;
     }
 
-    double tile_area = settings->tile_width * settings->tile_height;
     *tile = (TlTile){.rect = rect, .center = tl_rect_center(rect)};
-    if (area >= tile_area * FULL_TILE_RATIO) {
+    if (area >= rect_area(rect) * FULL_TILE_RATIO) {
         tile->kind = TL_TILE_WHOLE;
         tl_polygon_free(&clipped);
         tl_polygon_list_free_all(&hole_pieces);
         return true;
     }
     TlRect piece_bounds = tl_polygon_bounds(&clipped);
-    set_piece_size(tile, settings, piece_bounds);
+    set_piece_size(tile, piece_bounds);
     tile->figured = area < tile->piece_width * tile->piece_height * FIGURED_RATIO;
     tile->kind = fmin(tile->piece_width, tile->piece_height) < settings->min_cut_width ? TL_TILE_NARROW
                                                                                        : TL_TILE_CUT;
@@ -252,14 +258,12 @@ static bool classify_tile(const LocalFloor *floor, TlRect rect, const TlTileSett
  * стороны шва есть пол: у стен и перегородок СВП нет. */
 static void place_clips(TlLayout *layout, const TlTileSettings *settings)
 {
-    bool width_is_long = settings->tile_width >= settings->tile_height;
-    bool height_is_long = settings->tile_height >= settings->tile_width;
-    int along_width = width_is_long ? settings->clips_per_long_side : settings->clips_per_short_side;
-    int along_height = height_is_long ? settings->clips_per_long_side : settings->clips_per_short_side;
-    double w = settings->tile_width, h = settings->tile_height, gap = settings->joint_width;
-
+    double gap = settings->joint_width;
     for (size_t i = 0; i < layout->tiles.count; i++) {
         TlRect r = layout->tiles.items[i].rect;
+        double w = tl_rect_width(r), h = tl_rect_height(r);
+        int along_width = w >= h ? settings->clips_per_long_side : settings->clips_per_short_side;
+        int along_height = h >= w ? settings->clips_per_long_side : settings->clips_per_short_side;
         for (int k = 0; k < along_width; k++) {
             double x = r.left + w * (k + 0.5) / along_width;
             if (floor_contains(layout, tl_vec2(x, r.bottom - CLIP_PROBE)) &&
@@ -287,6 +291,42 @@ static void count_tile(TlLayout *layout, TlTileKind kind)
         layout->narrow_count++;
 }
 
+/* Отверстия труб в плитке: центр — от угла плитки. */
+static void drill_tile(TlTile *tile, const TlCircleList *pipes)
+{
+    for (size_t i = 0; i < pipes->count; i++) {
+        TlCircle pipe = pipes->items[i];
+        if (!tl_circle_touches_rect(pipe, tile->rect))
+            continue;
+        pipe.center = tl_vec2_sub(pipe.center, tl_vec2(tile->rect.left, tile->rect.top));
+        tl_circle_list_push(&tile->drills, pipe);
+    }
+}
+
+typedef struct Placing {
+    TlLayout *layout;
+    const LocalFloor *floor;
+    const TlTileSettings *settings;
+    const TlCircleList *pipes;   /* в осях раскладки */
+    bool fast;
+} Placing;
+
+static void place_tile(const TlPlacedTile *placed, void *context)
+{
+    Placing *placing = context;
+    TlTile tile;
+    if (!classify_tile(placing->floor, placed->rect, placing->settings, placing->fast, &tile))
+        return;
+    tile.cell = placed->cell;
+    tile.spec = placed->spec;
+    tile.turned = placed->turned;
+    tile.number = (int)placing->layout->tiles.count + 1; /* по рядам рисунка */
+    if (!placing->fast)
+        drill_tile(&tile, placing->pipes);
+    tl_tile_list_push(&placing->layout->tiles, tile);
+    count_tile(placing->layout, tile.kind);
+}
+
 TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
 {
     const TlLayoutOptions defaults = {0};
@@ -306,41 +346,24 @@ TlLayout *tl_layout_compute(TlSpace *space, const TlLayoutOptions *options)
     layout->joint_strips = room_floor.joint_strips;
     TlRect bounds = tl_polygon_bounds(&room_floor.outline);
     layout->local_bounds = bounds;
-
-    double w = settings->tile_width, h = settings->tile_height;
-    double pitch_x = w + settings->joint_width, pitch_y = h + settings->joint_width;
-    if (w <= 0 || h <= 0 || pitch_x <= 0 || pitch_y <= 0 || room_floor.outline.count < 3)
+    if (!tl_pattern_unit(settings, &layout->pattern) || room_floor.outline.count < 3)
         return layout;
-    if ((tl_rect_width(bounds) / pitch_x + 2) * (tl_rect_height(bounds) / pitch_y + 2) > TL_LAYOUT_MAX_TILES) {
+    if (tl_pattern_estimate(&layout->pattern, bounds) > TL_LAYOUT_MAX_TILES) {
         layout->too_many = true;
         return layout;
     }
 
-    double offset_x = options->use_offset ? options->offset_x : settings->offset_x;
-    double offset_y = options->use_offset ? options->offset_y : settings->offset_y;
-    int first_row = (int)floor((bounds.top - offset_y - h) / pitch_y);
-    int last_row = (int)ceil((bounds.bottom - offset_y) / pitch_y);
-    for (int row = first_row; row <= last_row; row++) {
-        double y = offset_y + row * pitch_y;
-        if (y > bounds.bottom || y + h < bounds.top)
-            continue;
-        double row_shift = fmod(row * settings->row_shift, 1.0);
-        if (row_shift < 0)
-            row_shift += 1.0;
-        double row_start = offset_x + row_shift * pitch_x;
-        int first_column = (int)floor((bounds.left - row_start - w) / pitch_x);
-        int last_column = (int)ceil((bounds.right - row_start) / pitch_x);
-        for (int column = first_column; column <= last_column; column++) {
-            TlRect rect = {row_start + column * pitch_x, y, row_start + column * pitch_x + w, y + h};
-            TlTile tile;
-            if (!tl_rect_intersects(rect, bounds) || !classify_tile(&room_floor, rect, settings, options->fast, &tile))
-                continue;
-            tile.cell = (TlCell){column, row};
-            tile.number = (int)layout->tiles.count + 1; /* по рядам, слева направо */
-            tl_tile_list_push(&layout->tiles, tile);
-            count_tile(layout, tile.kind);
-        }
+    TlCircleList pipes = {0};
+    for (size_t i = 0; i < space->pipes.count; i++) {
+        TlCircle pipe = space->pipes.items[i];
+        pipe.center = tl_affine_apply(&to_local, pipe.center);
+        tl_circle_list_push(&pipes, pipe);
     }
+    TlVec2 offset = options->use_offset ? tl_vec2(options->offset_x, options->offset_y)
+                                        : tl_vec2(settings->offset_x, settings->offset_y);
+    Placing placing = {layout, &room_floor, settings, &pipes, options->fast};
+    tl_pattern_cover(&layout->pattern, offset, bounds, place_tile, &placing);
+    tl_circle_list_free(&pipes);
     if (!options->fast)
         place_clips(layout, settings);
     return layout;
@@ -368,9 +391,27 @@ int tl_layout_total(const TlLayout *layout)
 TlTile *tl_layout_tile_at(TlLayout *layout, TlCell cell)
 {
     for (size_t i = 0; i < layout->tiles.count; i++)
-        if (layout->tiles.items[i].cell.column == cell.column && layout->tiles.items[i].cell.row == cell.row)
+        if (tl_compare_cells(layout->tiles.items[i].cell, cell) == 0)
             return &layout->tiles.items[i];
     return NULL;
+}
+
+const TlTileSpec *tl_layout_spec(const TlLayout *layout, const TlTile *tile)
+{
+    return &layout->pattern.specs[tile->spec];
+}
+
+void tl_tile_piece_size(const TlTile *tile, double *width, double *height)
+{
+    *width = tile->turned ? tile->piece_height : tile->piece_width;
+    *height = tile->turned ? tile->piece_width : tile->piece_height;
+}
+
+void tl_tile_laid_size(const TlLayout *layout, const TlTile *tile, double *width, double *height)
+{
+    const TlTileSpec *spec = tl_layout_spec(layout, tile);
+    *width = spec->laid_width;
+    *height = spec->laid_height;
 }
 
 /* ---- кэш -------------------------------------------------------------------- */
@@ -390,6 +431,11 @@ static bool polygon_lists_equal(const TlPolygonList *a, const TlPolygonList *b)
     return true;
 }
 
+static bool circle_lists_equal(const TlCircleList *a, const TlCircleList *b)
+{
+    return a->count == b->count && (a->count == 0 || memcmp(a->items, b->items, a->count * sizeof(TlCircle)) == 0);
+}
+
 void tl_layout_cache_free(struct TlLayoutCache *cache)
 {
     if (!cache)
@@ -399,6 +445,7 @@ void tl_layout_cache_free(struct TlLayoutCache *cache)
     tl_polygon_free(&cache->frame);
     tl_polygon_list_free_all(&cache->holes);
     tl_polygon_list_free_all(&cache->joint_strips);
+    tl_circle_list_free(&cache->pipes);
     free(cache);
 }
 
@@ -407,6 +454,7 @@ static bool cache_is_current(const struct TlLayoutCache *cache, TlSpace *space)
     return cache && polygons_equal(&cache->outline, &space->outline) &&
            polygon_lists_equal(&cache->holes, &space->holes) &&
            polygon_lists_equal(&cache->joint_strips, &space->joint_strips) &&
+           circle_lists_equal(&cache->pipes, &space->pipes) &&
            polygons_equal(&cache->frame, tl_space_frame(space)) &&
            tl_tile_settings_equal(&cache->tile, tl_space_effective_tile(space));
 }
@@ -422,12 +470,13 @@ TlLayout *tl_space_layout(TlSpace *space)
     cache->frame = tl_polygon_copy(tl_space_frame(space));
     cache->holes = tl_polygon_list_deep_copy(&space->holes);
     cache->joint_strips = tl_polygon_list_deep_copy(&space->joint_strips);
+    cache->pipes = tl_circle_list_copy(&space->pipes);
     cache->tile = *tl_space_effective_tile(space);
     space->layout_cache = cache;
     return cache->layout;
 }
 
-/* ---- клей и СВП ----------------------------------------------------------- */
+/* ---- материалы -------------------------------------------------------------- */
 
 static int bags_for(double amount, double per_bag)
 {
@@ -450,21 +499,48 @@ int tl_layout_clip_packs(TlSpace *space, const TlLayout *layout)
     return bags_for((double)layout->clip_points.count, tl_space_effective_tile(space)->clips_per_pack);
 }
 
+double tl_layout_joint_length(const TlLayout *layout)
+{
+    double length = 0;
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        const TlTile *tile = &layout->tiles.items[i];
+        length += tile->kind == TL_TILE_WHOLE ? tl_rect_width(tile->rect) + tl_rect_height(tile->rect)
+                                              : tile->piece_width + tile->piece_height;
+    }
+    return length;
+}
+
+double tl_layout_grout_kg(TlSpace *space, const TlLayout *layout)
+{
+    const TlTileSettings *s = tl_space_effective_tile(space);
+    /* мм³ × г/см³ = 1e-6 кг */
+    return tl_layout_joint_length(layout) * s->joint_width * s->tile_thickness * s->grout_density * 1e-6;
+}
+
+double tl_layout_primer_l(TlSpace *space, const TlLayout *layout)
+{
+    return layout->floor_area / 1e6 * tl_space_effective_tile(space)->primer_l_per_m2;
+}
+
 /* ---- смещение сетки --------------------------------------------------------- */
+
+TlAffine tl_layout_world_to_local(TlSpace *space) { return world_to_local(space); }
 
 void tl_layout_normalize_offsets(const TlTileSettings *tile, double *offset_x, double *offset_y)
 {
-    double pitch_x = tile->tile_width + tile->joint_width;
-    double pitch_y = tile->tile_height + tile->joint_width;
-    if (pitch_x <= 0 || pitch_y <= 0)
+    TlPatternUnit unit;
+    if (!tl_pattern_unit(tile, &unit))
         return;
-    double rows = floor(*offset_y / pitch_y);
-    *offset_y -= rows * pitch_y;
-    double shift = fmod(rows * tile->row_shift, 1.0);
-    if (shift < 0)
-        shift += 1.0;
-    double x = fmod(*offset_x - shift * pitch_x, pitch_x);
-    *offset_x = x < 0 ? x + pitch_x : x;
+    TlVec2 reduced = tl_pattern_reduce(&unit, tl_vec2(*offset_x, *offset_y));
+    *offset_x = reduced.x;
+    *offset_y = reduced.y;
+}
+
+/* Первая плитка модуля — от неё считаются «целая в углу» и «по центру». */
+static TlRect first_tile(const TlTileSettings *tile)
+{
+    TlPatternUnit unit;
+    return tl_pattern_unit(tile, &unit) ? unit.tiles[0].rect : (TlRect){0, 0, tile->tile_width, tile->tile_height};
 }
 
 static void corner_signs(TlLayoutCorner corner, double *sign_x, double *sign_y)
@@ -491,39 +567,43 @@ TlVec2 tl_layout_local_corner(TlSpace *space, TlLayoutCorner corner)
 void tl_layout_corner_offsets(TlSpace *space, TlLayoutCorner corner, double *offset_x, double *offset_y)
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
+    TlRect first = first_tile(tile);
     double sign_x, sign_y;
     corner_signs(corner, &sign_x, &sign_y);
     TlVec2 vertex = tl_layout_local_corner(space, corner);
-    *offset_x = vertex.x + sign_x * tile->wall_gap - (sign_x > 0 ? 0 : tile->tile_width);
-    *offset_y = vertex.y + sign_y * tile->wall_gap - (sign_y > 0 ? 0 : tile->tile_height);
+    *offset_x = vertex.x + sign_x * tile->wall_gap - (sign_x > 0 ? first.left : first.right);
+    *offset_y = vertex.y + sign_y * tile->wall_gap - (sign_y > 0 ? first.top : first.bottom);
 }
 
 void tl_layout_center_offsets(TlSpace *space, bool on_joint, double *offset_x, double *offset_y)
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
+    TlRect first = first_tile(tile);
     TlAffine to_local = world_to_local(space);
     TlPolygon local = tl_affine_apply_polygon(&to_local, tl_space_room_outline(space));
     TlVec2 center = tl_rect_center(tl_polygon_bounds(&local));
     tl_polygon_free(&local);
     if (on_joint) {
-        *offset_x = center.x + tile->joint_width / 2;
-        *offset_y = center.y + tile->joint_width / 2;
+        *offset_x = center.x + tile->joint_width / 2 - first.left;
+        *offset_y = center.y + tile->joint_width / 2 - first.top;
     } else {
-        *offset_x = center.x - tile->tile_width / 2;
-        *offset_y = center.y - tile->tile_height / 2;
+        TlVec2 middle = tl_rect_center(first);
+        *offset_x = center.x - middle.x;
+        *offset_y = center.y - middle.y;
     }
 }
 
 bool tl_layout_optimize_narrow(TlSpace *space, double *offset_x, double *offset_y)
 {
-    const TlTileSettings *tile = tl_space_effective_tile(space);
-    double pitch_x = tile->tile_width + tile->joint_width;
-    double pitch_y = tile->tile_height + tile->joint_width;
+    TlPatternUnit unit;
+    if (!tl_pattern_unit(tl_space_effective_tile(space), &unit))
+        return false;
     bool found = false;
     int best_narrow = 0, best_total = 0, best_whole = 0;
     for (int a = 0; a < OPTIMIZE_STEPS; a++)
         for (int b = 0; b < OPTIMIZE_STEPS; b++) {
-            TlLayoutOptions options = {true, true, a * pitch_x / OPTIMIZE_STEPS, b * pitch_y / OPTIMIZE_STEPS};
+            TlVec2 offset = tl_pattern_lattice_point(&unit, (double)a / OPTIMIZE_STEPS, (double)b / OPTIMIZE_STEPS);
+            TlLayoutOptions options = {true, true, offset.x, offset.y};
             TlLayout *layout = tl_layout_compute(space, &options);
             if (layout->too_many) {
                 tl_layout_free(layout);

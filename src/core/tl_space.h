@@ -7,6 +7,7 @@
 #define TL_SPACE_H
 
 #include "tl_outline.h"
+#include "tl_pipe.h"
 #include "tl_tile_settings.h"
 
 struct TlLayoutCache;
@@ -22,6 +23,7 @@ typedef struct TlSpace {
     TlPolygonList holes;           /* отдельно стоящие перегородки */
     TlPolygonList joint_strips;    /* полосы деформационных швов, задевающих пол (мир) */
     TlPolygonList threshold_strips; /* стыки в проёмах у пола комнаты (мир) */
+    TlCircleList pipes;            /* отверстия под трубы, задевающие пол (мир) */
     TlOutline *house;              /* дом, в котором комната */
     struct TlSpace *layout_source; /* чья раскладка используется (сама или источник) */
 

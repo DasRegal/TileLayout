@@ -31,7 +31,8 @@ typedef enum AppSelectionKind {
     APP_SELECT_EXPANSION_JOINT, /* деформационный шов: index 0 — весь, 1 — начало, 2 — конец */
     APP_SELECT_NODE,       /* узел перегородок: partition + end — любой его конец;
                               index 0 — середина узла, k + 1 — угол k (см. TlNodeCorner) */
-    APP_SELECT_TEE         /* точка примыкания: partition + end — конец, упёршийся в бок другой */
+    APP_SELECT_TEE,        /* точка примыкания: partition + end — конец, упёршийся в бок другой */
+    APP_SELECT_PIPE        /* отверстие под трубу */
 } AppSelectionKind;
 
 #define APP_MAX_ROOMS 64 /* выделенных разом (Shift+щелчок) */
@@ -44,6 +45,7 @@ typedef struct AppSelection {
     TlOpening *opening;
     TlRuler *ruler;
     TlExpansionJoint *expansion_joint;
+    TlPipe *pipe;
     TlPartitionEnd end; /* у узла */
     int index;
     TlSpace *more_spaces[APP_MAX_ROOMS - 1]; /* у комнаты: ещё комнаты, добавленные Shift+щелчком */
@@ -68,6 +70,7 @@ typedef struct AppEditPreferences {
     bool measure_magnet;          /* концы линеек и деформационных швов притягиваются к стенам */
     bool auto_align;              /* выравнивание по горизонтали/вертикали и по углам стен */
     double expansion_joint_gap;   /* зазор новых деформационных швов */
+    double pipe_diameter;         /* диаметр новых отверстий под трубы */
     double house_width, house_height, house_thickness;
     double outline_thickness;     /* поле «Толщина» в свойствах контура */
 } AppEditPreferences;

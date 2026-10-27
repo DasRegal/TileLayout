@@ -16,7 +16,7 @@
 static const AppTool *const TOOLS[APP_TOOL_COUNT] = {
     &APP_SELECT_TOOL, &APP_RECT_TOOL, &APP_CONTOUR_TOOL,
     &APP_PARTITION_TOOL, &APP_OPENING_TOOL, &APP_TILES_TOOL, &APP_RULER_TOOL,
-    &APP_EXPANSION_JOINT_TOOL,
+    &APP_EXPANSION_JOINT_TOOL, &APP_PIPE_TOOL,
 };
 
 #define RULER_SNAP_RADIUS_PX 10.0
@@ -287,6 +287,8 @@ static void draw_hover(AppCanvas *canvas, cairo_t *cr)
             app_render_threshold(cr, &canvas->view, from, to, app_color_rgba(80, 160, 255, 1), 3);
     } else if (hover->kind == APP_SELECT_EXPANSION_JOINT) {
         app_render_expansion_joint(cr, &canvas->view, hover->expansion_joint, app_color_rgba(80, 160, 255, 1));
+    } else if (hover->kind == APP_SELECT_PIPE) {
+        app_render_pipe(cr, &canvas->view, hover->pipe, app_color_rgba(80, 160, 255, 1), false);
     } else if (hover->kind == APP_SELECT_TEE) {
         TlTee tee;
         if (app_selection_tee(hover, canvas->document->project, &tee)) {
@@ -357,6 +359,10 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         draw_handle(cr, app_view_to_screen(view, joint->start), s->index == 1 ? 5 : 3.5, s->index == 1, APP_BLUE);
         draw_handle(cr, app_view_to_screen(view, joint->end), s->index == 2 ? 5 : 3.5, s->index == 2, APP_BLUE);
         app_canvas_draw_dimension(canvas, cr, joint->start, joint->end, false, APP_BLUE);
+        return;
+    }
+    if (s->kind == APP_SELECT_PIPE) {
+        app_render_pipe(cr, view, s->pipe, app_color_hex(APP_BLUE), true);
         return;
     }
     if (s->kind == APP_SELECT_RULER) {
@@ -620,7 +626,7 @@ static bool switch_tool_by_letter(AppCanvas *canvas, gunichar character)
                    {'p', 0x0437, APP_TOOL_CONTOUR}, {'w', 0x0446, APP_TOOL_PARTITION},
                    {'o', 0x0449, APP_TOOL_OPENING}, {'t', 0x0435, APP_TOOL_TILES},
                    {'m', 0x044c, APP_TOOL_RULER},   {'j', 0x043e, APP_TOOL_EXPANSION_JOINT},
-                   {'f', 0x0430, -1}};
+                   {'h', 0x0440, APP_TOOL_PIPE},    {'f', 0x0430, -1}};
     gunichar lower = g_unichar_tolower(character);
     for (size_t i = 0; i < sizeof LETTERS / sizeof LETTERS[0]; i++)
         if (lower == LETTERS[i].latin || lower == LETTERS[i].cyrillic) {

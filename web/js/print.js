@@ -245,7 +245,8 @@ function drawCard(ctx, card, x, y, w, h, mono) {
   const ox = areaX + (areaW - tile.w * scale) / 2;
   const oy = areaY + (areaH - tile.h * scale) / 2;
 
-  if (card.kind !== 'single') hatchRest(ctx, card, scale, ox, oy, mono);
+  const hasRest = card.kind === 'shared' || card.kind === 'offcut';
+  if (hasRest) hatchRest(ctx, card, scale, ox, oy, mono);
   ctx.setLineDash([3, 3]);
   ctx.strokeStyle = mono ? '#000000' : '#7a8087';
   ctx.lineWidth = 0.8;
@@ -260,9 +261,65 @@ function drawCard(ctx, card, x, y, w, h, mono) {
   }
   const labels = new Labels([x + 2, y + 26, x + w - 2, y + h - 2]);
   for (const part of card.parts) for (const shape of part.shapes) pieceLines(ctx, labels, shape, tile, scale, ox, oy, mono);
-  for (const part of card.parts) for (const shape of part.shapes) pieceDimensions(ctx, labels, shape, scale, ox, oy);
+  for (const part of card.parts) for (const drill of part.drills) drawDrill(ctx, labels, drill, part, scale, ox, oy, mono);
+  if (card.kind !== 'drilled') { // у целой плитки размеры — в подписи
+    for (const part of card.parts) for (const shape of part.shapes) pieceDimensions(ctx, labels, shape, scale, ox, oy);
+  }
   if (card.parts.length > 1) for (const part of card.parts) partLabel(ctx, labels, part, scale, ox, oy, [oy, oy + tile.h * scale]);
-  if (card.kind !== 'single') restLabel(ctx, labels, card, scale, ox, oy, card.kind === 'shared' ? 'стена' : 'отход');
+  if (hasRest) restLabel(ctx, labels, card, scale, ox, oy, card.kind === 'shared' ? 'стена' : 'отход');
+}
+
+/** Отверстие под трубу: круг коронки (только на куске), крест центра, расстояния от центра до ближних
+ *  краёв куска — того, что останется после реза, а не отпиленной части. */
+function drawDrill(ctx, labels, [cx, cy, diameter], part, scale, ox, oy, mono) {
+  const [x, y] = [ox + cx * scale, oy + cy * scale];
+  const radius = (diameter / 2) * scale;
+  const outline = part.shapes[0];
+  const xs = outline.filter((_, i) => i % 2 === 0);
+  const ys = outline.filter((_, i) => i % 2 === 1);
+  const piece = { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
+  ctx.save();
+  ctx.beginPath();
+  for (const shape of part.shapes) shapePath(ctx, shape, scale, ox, oy);
+  ctx.clip('evenodd');
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.strokeStyle = mono ? '#000000' : '#d93025';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.restore();
+  const cross = Math.max(radius * 0.6, 3);
+  ctx.beginPath();
+  ctx.moveTo(x - cross, y);
+  ctx.lineTo(x + cross, y);
+  ctx.moveTo(x, y - cross);
+  ctx.lineTo(x, y + cross);
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  const edgeLeft = cx <= (piece.left + piece.right) / 2 ? piece.left : piece.right;
+  const edgeTop = cy <= (piece.top + piece.bottom) / 2 ? piece.top : piece.bottom;
+  const dx = Math.abs(cx - edgeLeft);
+  const dy = Math.abs(cy - edgeTop);
+  const edgeX = ox + edgeLeft * scale;
+  const edgeY = oy + edgeTop * scale;
+  ctx.setLineDash([2, 2]);
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(edgeX, y);
+  ctx.lineTo(x, y);
+  ctx.moveTo(x, edgeY);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (dx > 0.5) labels.place(ctx, String(Math.round(dx)), [[(edgeX + x) / 2, y - 7], [(edgeX + x) / 2, y + 7]]);
+  if (dy > 0.5) labels.place(ctx, String(Math.round(dy)), [[x - 9, (edgeY + y) / 2], [x + 9, (edgeY + y) / 2]], -Math.PI / 2);
+  labels.place(ctx, `Ø${diameter}`, [
+    [x + radius + 14, y - radius - 6], [x - radius - 14, y - radius - 6],
+    [x + radius + 14, y + radius + 6], [x - radius - 14, y + radius + 6],
+  ], 0, { bold: true });
 }
 
 function fitText(ctx, text, x, y, width) {
@@ -389,6 +446,21 @@ function restLabel(ctx, labels, card, scale, ox, oy, text) {
 const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const decimal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
 
+const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 });
+
+/** Смета на листе расчёта; без цен — ничего. */
+function estimateTable(estimate, swatch, escape) {
+  if (!estimate.lines.length) return '';
+  const rows = estimate.lines.map((line) => `<tr><td>${line.color ? swatch(line.color) : ''}${escape(line.name)}</td>
+    <td class="n">${decimal.format(line.quantity)} ${line.unit}</td><td class="n">${decimal.format(line.price)}</td>
+    <td class="n">${rubles.format(line.cost)}</td></tr>`);
+  const work = estimate.work > 0 ? `; работа: <b>${rubles.format(estimate.work)}</b>` : '';
+  return `<h2>Смета</h2>
+    <table><thead><tr><th>Позиция</th><th class="n">Количество</th><th class="n">Цена, ₽</th><th class="n">Сумма</th></tr></thead>
+    <tbody>${rows.join('')}</tbody></table>
+    <p>Материалы: <b>${rubles.format(estimate.materials)}</b>${work}<br><big>Итого: <b>${rubles.format(estimate.total)}</b></big></p>`;
+}
+
 function calculationSheet(summary, title, mono) {
   const sheet = document.createElement('section');
   sheet.className = 'sheet calculation';
@@ -400,16 +472,15 @@ function calculationSheet(summary, title, mono) {
     const savings = [];
     if (type.shared_saving > 0) savings.push(`одна плитка на две комнаты: −${type.shared_saving}`);
     if (type.offcut_saving > 0) savings.push(`из остатков подрезок: −${type.offcut_saving}`);
-    const buyArea = (type.to_buy * type.tile.w * type.tile.h) / 1e6;
-    return `<tr><td>${i + 1}</td><td>${swatch(type.tile.color)}${escape(type.name)}<br><small>${type.tile.color}, шов ${type.tile.gap} мм</small></td>
+    return `<tr><td>${i + 1}</td><td>${swatch(type.color)}${escape(type.name)}<br><small>${type.color}, шов ${type.tile.gap} мм</small></td>
       <td>${escape(type.rooms.join(', '))}${savings.length ? `<br><small>${savings.join('; ')}</small>` : ''}</td>
       <td class="n">${number.format(type.area)}</td><td class="n">${type.count}</td><td class="n">${type.tile.reserve}%</td>
-      <td class="n"><b>${type.to_buy}</b></td><td class="n"><b>${number.format(buyArea)}</b></td></tr>`;
+      <td class="n"><b>${type.to_buy}</b></td><td class="n"><b>${number.format(type.buy_area)}</b></td></tr>`;
   });
   const packs = (list, unit, what) => list.map((p, i) => `${i ? ' +' : ''} <b>${p.count}</b> ${what} по ${decimal.format(p.size)} ${unit}`).join('');
   const rooms = summary.rooms.map((room) => {
     if (!room.tiled) return `<tr><td>${escape(room.name)}</td><td class="n">${number.format(room.floor_area)}</td><td class="n">—</td><td>без плитки</td><td></td><td></td><td></td></tr>`;
-    const how = `${swatch(room.color)}${escape(room.tile_name)}, ${room.source ? `как в «${escape(room.source)}»` : 'своя'}${room.rotated ? ', повёрнута' : ''}`;
+    const how = `${swatch(room.color)}${escape(room.tile_name)}, ${escape(room.pattern.toLowerCase())}, ${room.source ? `как в «${escape(room.source)}»` : 'своя'}${room.rotated ? ', повёрнута' : ''}`;
     const row = `<tr><td>${escape(room.name)}</td><td class="n">${number.format(room.floor_area)}</td><td class="n">${number.format(room.tiled_area)}</td>
       <td>${how}</td><td class="n">${room.count}</td><td class="n">${decimal.format(room.glue_kg)}</td><td class="n">${room.clips}</td></tr>`;
     return room.shared_tiles
@@ -422,9 +493,12 @@ function calculationSheet(summary, title, mono) {
     <h2>Плитка к покупке</h2>
     <table><thead><tr><th>№</th><th>Плитка</th><th>Комнаты</th><th class="n">Площадь, м²</th><th class="n">Нужно, шт.</th><th class="n">Запас</th><th class="n">Купить, шт.</th><th class="n">Купить, м²</th></tr></thead>
     <tbody>${types.join('')}</tbody></table>
-    <h2>Клей и СВП</h2>
+    <h2>Клей, СВП, затирка, грунт</h2>
     <p>${summary.glue.total_kg > 0 ? `Клей: <b>${decimal.format(summary.glue.total_kg)} кг</b> =${packs(summary.glue.packs, 'кг', 'мешк.')}<br>` : ''}
-       ${summary.clips.total > 0 ? `СВП: <b>${summary.clips.total} шт.</b> =${packs(summary.clips.packs, 'шт.', 'уп.')}` : ''}</p>
+       ${summary.clips.total > 0 ? `СВП: <b>${summary.clips.total} шт.</b> =${packs(summary.clips.packs, 'шт.', 'уп.')}<br>` : ''}
+       ${summary.grout.total_kg > 0 ? `Затирка: <b>${number.format(summary.grout.total_kg)} кг</b> =${packs(summary.grout.packs, 'кг', 'уп.')}<br>` : ''}
+       ${summary.primer.total_l > 0 ? `Грунт: <b>${decimal.format(summary.primer.total_l)} л</b> =${packs(summary.primer.packs, 'л', 'кан.')}` : ''}</p>
+    ${estimateTable(summary.estimate, swatch, escape)}
     <h2>По комнатам</h2>
     <table><thead><tr><th>Комната</th><th class="n">Площадь, м²</th><th class="n">Под плитку, м²</th><th>Плитка / раскладка</th><th class="n">Плиток</th><th class="n">Клей, кг</th><th class="n">СВП</th></tr></thead>
     <tbody>${rooms.join('')}</tbody></table>

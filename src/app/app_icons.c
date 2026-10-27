@@ -152,6 +152,28 @@ static void draw_expansion_joint(cairo_t *cr)
     cairo_set_dash(cr, NULL, 0, 0);
 }
 
+/* Плитка с отверстием под трубу: круг коронки с крестом центра. */
+static void draw_pipe(cairo_t *cr)
+{
+    fill_hex(cr, "#d9c9a8");
+    cairo_rectangle(cr, 4, 4, 24, 24);
+    cairo_fill(cr);
+    ink(cr, "#8a7a5c", 1.2);
+    cairo_rectangle(cr, 4, 4, 24, 24);
+    cairo_stroke(cr);
+    cairo_arc(cr, 16, 16, 7, 0, 2 * G_PI);
+    fill_hex(cr, "#e8eef6");
+    cairo_fill_preserve(cr);
+    ink(cr, "#3d5a80", 1.8);
+    cairo_stroke(cr);
+    cairo_move_to(cr, 12, 16);
+    cairo_line_to(cr, 20, 16);
+    cairo_move_to(cr, 16, 12);
+    cairo_line_to(cr, 16, 20);
+    ink(cr, "#3d5a80", 1.2);
+    cairo_stroke(cr);
+}
+
 /* Плоская линейка по диагонали с делениями. */
 static void draw_ruler(cairo_t *cr)
 {
@@ -389,7 +411,7 @@ static const IconEntry ICONS[] = {
     {"covering", draw_covering}, {"svp", draw_svp}, {"numbers", draw_numbers},
     {"lock", draw_lock_closed}, {"unlock", draw_lock_open}, {"house", draw_house},
     {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print}, {"heart", draw_heart},
-    {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint},
+    {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint}, {"pipe", draw_pipe},
 };
 
 void app_icon_draw(cairo_t *cr, const char *name, double x, double y, double size)

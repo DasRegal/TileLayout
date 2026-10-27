@@ -29,6 +29,9 @@
 #define COLOR_EXPANSION_JOINT "#37414d"
 #define COLOR_EXPANSION_JOINT_GAP "#fbfaf6"
 #define EXPANSION_JOINT_MIN_WIDTH_PX 3.0
+#define COLOR_PIPE "#3d5a80"
+#define COLOR_PIPE_FILL "#e8eef6"
+#define PIPE_MIN_RADIUS_PX 4.0
 
 #define RULER_TICK_PX 4.0
 #define RULER_LABEL_OFFSET_PX 9.0
@@ -119,9 +122,9 @@ static void local_polygon_path(cairo_t *cr, const TlPolygon *polygon)
         cairo_close_path(cr);
 }
 
-static AppColor tile_color(const TlTileSettings *tile, TlTileKind kind)
+static AppColor tile_color(const char *color, TlTileKind kind)
 {
-    AppColor base = app_color_hex(tile->color);
+    AppColor base = app_color_hex(color);
     if (kind == TL_TILE_NARROW)
         return app_color_hex(COLOR_NARROW);
     return kind == TL_TILE_CUT ? app_color_darker(base, 1.12) : base;
@@ -170,8 +173,9 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
     }
     for (size_t i = 0; i < layout->tiles.count; i++) {
         const TlTile *t = &layout->tiles.items[i];
+        const TlTileSpec *spec = tl_layout_spec(layout, t); /* у шахматки вторая плитка — своим цветом */
         cairo_rectangle(cr, t->rect.left, t->rect.top, tl_rect_width(t->rect), tl_rect_height(t->rect));
-        if (texture) { /* рисунок, подрезки чуть темнее, узкие — красным поверх */
+        if (texture && spec->textured) { /* рисунок, подрезки чуть темнее, узкие — красным поверх */
             set_texture_source(cr, texture, image, t->rect);
             cairo_fill_preserve(cr);
             if (t->kind == TL_TILE_NARROW)
@@ -179,12 +183,12 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
             else
                 app_set_fill_color(cr, app_color_rgba(0, 0, 0, t->kind == TL_TILE_CUT ? 0.12 : 0));
         } else {
-            app_set_fill_color(cr, app_draw_is_mono() ? (AppColor){1, 1, 1, 1} : tile_color(tile, t->kind));
+            app_set_fill_color(cr, app_draw_is_mono() ? (AppColor){1, 1, 1, 1} : tile_color(spec->color, t->kind));
         }
         if (app_draw_is_mono() || thin_joints) {
             cairo_fill_preserve(cr);
             cairo_set_line_width(cr, (app_draw_is_mono() ? 0.5 : 0.6) * pixel);
-            app_set_color(cr, app_color_darker(app_color_hex(tile->color), 1.5));
+            app_set_color(cr, app_color_darker(app_color_hex(spec->color), 1.5));
             cairo_stroke(cr);
         } else {
             cairo_fill(cr);
@@ -347,8 +351,8 @@ static void render_opening_width(cairo_t *cr, const AppView *view, const TlOpeni
     TlVec2 a = app_view_to_screen(view, from), b = app_view_to_screen(view, to);
     if (tl_distance(a, b) <= 22)
         return;
-    char text[32];
-    snprintf(text, sizeof text, "%.0f", opening->width);
+    char text[64]; /* «Д1 · 800» — имя, по которому проём выбирают для раскладки от двери */
+    snprintf(text, sizeof text, opening->name[0] ? "%s · %.0f" : "%s%.0f", opening->name, opening->width);
     app_render_dimension_text(cr, a, b, 0, text, COLOR_OPENING_DIM, true);
 }
 
@@ -443,8 +447,8 @@ static void render_tile_numbers(cairo_t *cr, const AppView *view, const AppRende
             const TlTile *t = &layout->tiles.items[i];
             char text[16];
             snprintf(text, sizeof text, "%d", t->number);
-            double box_w = (t->kind == TL_TILE_WHOLE ? tile->tile_width : t->piece_width) * view->scale;
-            double box_h = (t->kind == TL_TILE_WHOLE ? tile->tile_height : t->piece_height) * view->scale;
+            double box_w = (t->kind == TL_TILE_WHOLE ? tl_rect_width(t->rect) : t->piece_width) * view->scale;
+            double box_h = (t->kind == TL_TILE_WHOLE ? tl_rect_height(t->rect) : t->piece_height) * view->scale;
             double text_w;
             app_text_size(text, &style, &text_w, NULL);
             double angle = tile->rotation_degrees;
@@ -670,8 +674,8 @@ void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, Ap
         cairo_line_to(cr, ends[i].x + tick.x, ends[i].y + tick.y);
     }
     app_stroke(cr, color, width_px);
-    char text[32];
-    snprintf(text, sizeof text, "%.0f", tl_ruler_length(ruler));
+    char text[64]; /* «Л1 · 1250» */
+    snprintf(text, sizeof text, ruler->name[0] ? "%s · %.0f" : "%s%.0f", ruler->name, tl_ruler_length(ruler));
     AppTextStyle style = {10.5, false, color, app_color_rgba(255, 255, 255, 0.8)};
     app_text_along(cr, text, &style, a, b, normal, RULER_LABEL_OFFSET_PX);
 }
@@ -700,6 +704,35 @@ static void render_expansion_joints(cairo_t *cr, const AppView *view, TlProject 
 {
     for (size_t i = 0; i < project->expansion_joints.count; i++)
         app_render_expansion_joint(cr, view, project->expansion_joints.items[i], app_color_hex(COLOR_EXPANSION_JOINT));
+}
+
+void app_render_pipe(cairo_t *cr, const AppView *view, const TlPipe *pipe, AppColor color, bool label)
+{
+    TlVec2 c = app_view_to_screen(view, pipe->center);
+    double radius = fmax(pipe->diameter * view->scale / 2, PIPE_MIN_RADIUS_PX);
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, c.x, c.y, radius, 0, 2 * TL_PI);
+    app_set_fill_color(cr, app_color_hex(COLOR_PIPE_FILL));
+    cairo_fill_preserve(cr);
+    app_stroke(cr, color, 1.2);
+    double cross = radius * 0.6; /* центр — где сверлить */
+    cairo_move_to(cr, c.x - cross, c.y);
+    cairo_line_to(cr, c.x + cross, c.y);
+    cairo_move_to(cr, c.x, c.y - cross);
+    cairo_line_to(cr, c.x, c.y + cross);
+    app_stroke(cr, color, 1);
+    if (!label)
+        return;
+    char text[24];
+    snprintf(text, sizeof text, "Ø%g", pipe->diameter);
+    AppTextStyle style = {9.5, false, color, app_color_rgba(255, 255, 255, 0.8)};
+    app_text_centered(cr, text, &style, tl_vec2(c.x, c.y - radius - 8), 0);
+}
+
+static void render_pipes(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    for (size_t i = 0; i < project->pipes.count; i++)
+        app_render_pipe(cr, view, project->pipes.items[i], app_color_hex(COLOR_PIPE), true);
 }
 
 static void render_rulers(cairo_t *cr, const AppView *view, TlProject *project)
@@ -755,6 +788,7 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         render_expansion_joints(cr, view, project);
     render_walls(cr, view, options, project);
     render_openings(cr, view, options, project);
+    render_pipes(cr, view, project); /* поверх стен: труба у стены видна целиком */
     if (options->show_numbers && options->show_tiles)
         render_tile_numbers(cr, view, options, project);
     if (options->show_dims)

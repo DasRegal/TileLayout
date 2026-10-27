@@ -3,20 +3,42 @@
 // настольной программы.
 
 const ROW_SHIFTS = [
-  ['Прямая (без смещения)', 0],
+  ['Без сдвига', 0],
   ['Вразбежку 1/2', 0.5],
   ['Вразбежку 1/3', 1 / 3],
   ['Вразбежку 1/4', 0.25],
 ];
 
+/* Рисунки укладки (src/core/tl_pattern.c): название и id в файле проекта. */
+const PATTERNS = [
+  ['Прямая', 'straight'],
+  ['Шахматка', 'checker'],
+  ['Ёлочка', 'herringbone'],
+  ['Модульная: 2 формата', 'hopscotch'],
+  ['Модульная: 3 формата', 'modular3'],
+  ['Версаль: 4 формата', 'versailles'],
+];
+const MODULAR = ['hopscotch', 'modular3', 'versailles'];
+const patternOf = (tile) => (PATTERNS.some(([, id]) => id === tile.pattern) ? tile.pattern : 'straight');
+
+/** Что значат поля плитки у рисунка (под выбором рисунка). */
+function patternNote(room) {
+  const pattern = patternOf(room.tile);
+  if (MODULAR.includes(pattern)) return `Длина и ширина — клетка модуля. Форматы: ${room.formats.join(', ')}.`;
+  if (pattern === 'herringbone') return 'Длинная сторона — вдоль ряда. Ёлочка по диагонали комнаты — поворот 45°.';
+  if (pattern === 'checker') return 'Плитки двух цветов через одну: вторая — отдельная позиция к покупке.';
+  return '';
+}
+
 const SECTIONS = [
   {
     title: 'Плитка',
     fields: [
+      { key: 'pattern', label: 'Укладка', options: PATTERNS, note: patternNote },
       { key: 'w', label: 'Длина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
       { key: 'h', label: 'Ширина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
       { key: 'gap', label: 'Шов (зазор)', min: 0, max: 50, step: 0.5, unit: 'мм' },
-      { key: 'shift', label: 'Раскладка', options: ROW_SHIFTS },
+      { key: 'shift', label: 'Сдвиг рядов', options: ROW_SHIFTS, when: (tile) => patternOf(tile) === 'straight' },
       { key: 'angle', label: 'Поворот', min: -180, max: 180, step: 5, unit: '°' },
       { key: 'off_x', label: 'Смещение X', min: -100000, max: 100000, step: 5, unit: 'мм' },
       { key: 'off_y', label: 'Смещение Y', min: -100000, max: 100000, step: 5, unit: 'мм' },
@@ -26,6 +48,7 @@ const SECTIONS = [
       { key: 'cut_allow', label: 'Запас на рез', min: 0, max: 20, step: 0.5, unit: 'мм' },
       { key: 'reserve', label: 'Запас', min: 0, max: 100, step: 1, unit: '%' },
       { key: 'color', label: 'Цвет', color: true },
+      { key: 'color2', label: 'Цвет второй плитки', color: true, when: (tile) => patternOf(tile) === 'checker' },
     ],
   },
   {
@@ -44,6 +67,28 @@ const SECTIONS = [
       { key: 'svp_pack', label: 'В упаковке', min: 1, max: 10000, step: 50, unit: 'шт.' },
     ],
   },
+  {
+    title: 'Затирка и грунт',
+    fields: [
+      { key: 'thickness', label: 'Толщина плитки (глубина шва)', min: 1, max: 50, step: 0.5, unit: 'мм' },
+      { key: 'grout_density', label: 'Плотность затирки', min: 0.5, max: 3, step: 0.05, unit: 'кг/дм³' },
+      { key: 'grout_pack', label: 'Затирка в упаковке', min: 0.1, max: 100, step: 0.5, unit: 'кг' },
+      { key: 'primer_rate', label: 'Расход грунта', min: 0, max: 2, step: 0.05, unit: 'л/м²' },
+      { key: 'primer_can', label: 'Грунт в канистре', min: 0.5, max: 100, step: 0.5, unit: 'л' },
+    ],
+  },
+  {
+    title: 'Цены для сметы',
+    hint: '0 — позиция без цены, в смету не идёт.',
+    fields: [
+      { key: 'price_tile', label: 'Плитка', min: 0, max: 1e6, step: 50, unit: '₽/м²' },
+      { key: 'price_glue', label: 'Клей', min: 0, max: 1e6, step: 10, unit: '₽/мешок' },
+      { key: 'price_svp', label: 'СВП', min: 0, max: 1e6, step: 10, unit: '₽/уп.' },
+      { key: 'price_grout', label: 'Затирка', min: 0, max: 1e6, step: 10, unit: '₽/уп.' },
+      { key: 'price_primer', label: 'Грунт', min: 0, max: 1e6, step: 10, unit: '₽/кан.' },
+      { key: 'price_work', label: 'Укладка', min: 0, max: 1e6, step: 50, unit: '₽/м²' },
+    ],
+  },
 ];
 
 const TOOL_TITLES = {
@@ -53,6 +98,7 @@ const TOOL_TITLES = {
   opening: 'Проём',
   ruler: 'Линейка',
   joint: 'Деформационный шов',
+  pipe: 'Труба',
 };
 
 /* Предметы плана: заголовок, поля (ключ — как в tl_web_object), подсказка, кнопка удаления. */
@@ -78,6 +124,7 @@ const OBJECTS = {
   opening: {
     title: 'Проём',
     fields: [
+      { key: 'name', label: 'Имя', text: true },
       { key: 'width', label: 'Ширина', min: 100, max: 10000, step: 10, unit: 'мм' },
       { key: 'from_start', label: 'От начала стены', min: 0, max: 1e6, step: 10, unit: 'мм' },
       { key: 'to_end', label: 'До конца стены', min: 0, max: 1e6, step: 10, unit: 'мм' },
@@ -114,6 +161,7 @@ const OBJECTS = {
   },
   ruler: {
     title: 'Линейка',
+    fields: [{ key: 'name', label: 'Имя', text: true, always: true }],
     info: (o) => `Длина ${o.length} мм. Тяните за линию — целиком, за конец — с притягиванием к стенам и швам плитки.`,
     remove: 'Удалить',
   },
@@ -121,6 +169,16 @@ const OBJECTS = {
     title: 'Деформационный шов',
     fields: [{ key: 'gap', label: 'Ширина щели', min: 1, max: 100, step: 1, unit: 'мм' }],
     info: (o) => `Длина ${o.length} мм. Режет плитку: куски по обе стороны — отдельные подрезки.`,
+    remove: 'Удалить',
+  },
+  pipe: {
+    title: 'Труба (отверстие в плитке)',
+    fields: [
+      { key: 'diameter', label: 'Диаметр коронки', min: 5, max: 500, step: 1, unit: 'мм' },
+      { key: 'x', label: 'Центр X', min: -1e7, max: 1e7, step: 10, unit: 'мм' },
+      { key: 'y', label: 'Центр Y', min: -1e7, max: 1e7, step: 10, unit: 'мм' },
+    ],
+    info: () => 'Плитку с отверстием видно в чертежах подрезок: где сверлить и какой коронкой. Тяните, чтобы сдвинуть.',
     remove: 'Удалить',
   },
   threshold: {
@@ -165,8 +223,13 @@ export class Panel {
       const name = this.roomName.value.trim();
       if (name) this.actions.rename(name);
     });
+    this.doorChoice = this.root.querySelector('#align-door');
+    this.rulerChoice = this.root.querySelector('#align-ruler');
     for (const button of this.root.querySelectorAll('[data-align]')) {
-      button.addEventListener('click', () => this.actions.align(button.dataset.align));
+      const mode = button.dataset.align;
+      /* от двери и по линейке — с номером выбранного предмета в проекте: "door:3" */
+      const choice = mode === 'door' ? this.doorChoice : mode.startsWith('ruler') ? this.rulerChoice : null;
+      button.addEventListener('click', () => this.actions.align(choice ? `${mode}:${choice.value}` : mode));
     }
     this.toolSettings = this.root.querySelector('#tool-settings');
     this.settingInputs = {
@@ -175,6 +238,7 @@ export class Panel {
       openingWidth: this.root.querySelector('#setting-opening'),
       grid: this.root.querySelector('#setting-grid'),
       jointGap: this.root.querySelector('#setting-joint'),
+      pipeDiameter: this.root.querySelector('#setting-pipe'),
     };
     for (const [key, input] of Object.entries(this.settingInputs)) {
       input.addEventListener('change', () => {
@@ -211,7 +275,11 @@ export class Panel {
       const legend = document.createElement('legend');
       legend.textContent = section.title;
       block.append(legend);
-      for (const field of section.fields) block.append(this.row(field));
+      if (section.hint) block.append(hint(section.hint));
+      for (const field of section.fields) {
+        block.append(this.row(field));
+        if (field.note) block.append((this.inputs.get(field.key).note = hint('')));
+      }
       fields.append(block);
     }
   }
@@ -230,6 +298,7 @@ export class Panel {
       mixed.hidden = true;
       input.add(mixed);
       input.addEventListener('change', () => this.actions.setField(field.key, field.options[input.selectedIndex][1]));
+      if (field.key === 'pattern') input.title = 'Как лежит плитка. Ёлочка по диагонали — поворот 45°.';
     } else if (field.check) {
       input = document.createElement('input');
       input.type = 'checkbox';
@@ -251,7 +320,7 @@ export class Panel {
       });
     }
     input.id = `tile-${field.key}`;
-    this.inputs.set(field.key, { field, input });
+    this.inputs.set(field.key, { field, input, row });
     if (field.check) {
       row.append(input, caption);
     } else {
@@ -323,7 +392,9 @@ export class Panel {
       const value = object[field.key];
       input.closest('.row').hidden = value === undefined;
       if (field.check) input.checked = Boolean(value);
-      else if (document.activeElement !== input && value !== undefined) input.value = String(Math.round(value * 10) / 10);
+      else if (field.text) {
+        if (document.activeElement !== input && value !== undefined) input.value = value;
+      } else if (document.activeElement !== input && value !== undefined) input.value = String(Math.round(value * 10) / 10);
       input.disabled = object.locked && !field.always;
     }
   }
@@ -349,10 +420,20 @@ export class Panel {
     const control = document.createElement('span');
     control.className = 'control';
     const input = document.createElement('input');
-    input.type = 'number';
-    input.inputMode = 'decimal';
     input.dataset.key = field.key;
     input.id = `object-${field.key}`;
+    if (field.text) { // имя линейки или проёма
+      input.type = 'text';
+      input.maxLength = 11;
+      input.addEventListener('change', () => {
+        if (input.value.trim()) this.actions.setObjectField(field.key, input.value.trim());
+      });
+      control.append(input);
+      row.append(caption, control);
+      return row;
+    }
+    input.type = 'number';
+    input.inputMode = 'decimal';
     Object.assign(input, { min: field.min, max: field.max, step: field.step });
     input.addEventListener('change', () => {
       const value = Number(input.value);
@@ -405,6 +486,8 @@ export class Panel {
     if (this.floorSource.selectedIndex < 0) this.floorSource.value = '0';
     this.shared.hidden = !room.source;
     this.shared.textContent = room.source ? `Пол общий с комнатой «${room.source}»: настройки — её.` : '';
+    fillChoice(this.doorChoice, room.doors.map((door) => [door.name, door.index]));
+    fillChoice(this.rulerChoice, room.rulers.map((ruler) => [`${ruler.name} (${ruler.length} мм)`, ruler.index]));
     this.showTile(rooms, catalogs);
   }
 
@@ -415,10 +498,16 @@ export class Panel {
     const single = rooms.length === 1;
     this.enabled.checked = tile.enabled;
     this.enabled.indeterminate = !same('enabled');
-    for (const { field, input } of this.inputs.values()) {
+    const samePattern = rooms.every((r) => patternOf(r.tile) === patternOf(tile));
+    for (const { field, input, note } of this.inputs.values()) {
       const value = tile[field.key];
       const mixed = !same(field.key);
-      input.disabled = !single && (field.key === 'off_x' || field.key === 'off_y');
+      input.disabled = (!single && (field.key === 'off_x' || field.key === 'off_y')) ||
+        (field.when && samePattern && !field.when(tile)); // у рисунка это поле не действует
+      if (note) {
+        note.textContent = samePattern ? field.note(rooms[0]) : '';
+        note.hidden = !note.textContent;
+      }
       if (document.activeElement === input) continue; // не мешать вводу
       if (field.options) {
         input.selectedIndex = mixed ? field.options.length : nearestIndex(field.options, value);
@@ -446,7 +535,24 @@ export class Panel {
   }
 }
 
+/** Список [подпись, номер в проекте]; выбранный остаётся, пока он есть. Пусто — недоступен. */
+function fillChoice(select, items) {
+  const previous = select.value;
+  select.replaceChildren(...items.map(([title, index]) => new Option(title, String(index))));
+  if (items.some(([, index]) => String(index) === previous)) select.value = previous;
+  select.disabled = !items.length;
+  if (!items.length) select.add(new Option('нет', ''));
+}
+
+function hint(text) {
+  const p = document.createElement('p');
+  p.className = 'hint';
+  p.textContent = text;
+  return p;
+}
+
 function nearestIndex(options, value) {
+  if (typeof value === 'string') return Math.max(0, options.findIndex(([, option]) => option === value));
   let best = 0;
   options.forEach(([, option], i) => {
     if (Math.abs(option - value) < Math.abs(options[best][1] - value)) best = i;
@@ -471,8 +577,8 @@ export function showSummary(root, summary, catalogs) {
     item.className = 'summary-type';
     const swatch = document.createElement('span');
     swatch.className = 'swatch';
-    swatch.style.background = type.tile.color;
-    const found = catalogs.find(type.tile.texture);
+    swatch.style.background = type.color;
+    const found = type.textured && catalogs.find(type.tile.texture);
     if (found) swatch.style.backgroundImage = `url("${catalogs.imageUrl(found.catalog, found.tile)}")`;
     const title = document.createElement('div');
     title.className = 'summary-title';
@@ -482,7 +588,7 @@ export function showSummary(root, summary, catalogs) {
     buy.textContent = `${integer.format(type.to_buy)} шт. к покупке`;
     const details = [
       `нужно ${integer.format(type.count)} шт. (целых ${integer.format(type.whole)}) + запас ${type.tile.reserve}%`,
-      `${decimal.format(type.area)} м² · ${type.rooms.join(', ')}`,
+      `${decimal.format(type.area)} м² пола, к покупке ${decimal.format(type.buy_area)} м² · ${type.rooms.join(', ')}`,
     ];
     if (type.shared_saving + type.offcut_saving > 0) {
       details.push(`сэкономлено ${integer.format(type.shared_saving + type.offcut_saving)} шт. на подрезках`);
@@ -502,7 +608,52 @@ export function showSummary(root, summary, catalogs) {
   if (summary.clips.total > 0) {
     root.append(paragraph(`СВП: ${integer.format(summary.clips.total)} шт. — ${packs(summary.clips.packs, 'шт.', 'упак.')}`));
   }
+  if (summary.grout.total_kg > 0) {
+    root.append(paragraph(`Затирка: ${decimal.format(summary.grout.total_kg)} кг — ${packs(summary.grout.packs, 'кг', 'уп.')}`));
+  }
+  if (summary.primer.total_l > 0) {
+    root.append(paragraph(`Грунт: ${decimal.format(summary.primer.total_l)} л — ${packs(summary.primer.packs, 'л', 'кан.')}`));
+  }
+  showEstimate(root, summary.estimate);
   root.append(paragraph(`Площадь комнат: ${decimal.format(summary.room_area)} м², под плитку: ${decimal.format(summary.tiled_area)} м² (с полом под дверьми)`));
+}
+
+const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 });
+
+/** Смета: позиции с ценой и итог; без цен — подсказка, где их задать. */
+function showEstimate(root, estimate) {
+  const block = document.createElement('div');
+  block.className = 'estimate';
+  const title = document.createElement('h3');
+  title.textContent = 'Смета';
+  block.append(title);
+  if (!estimate.lines.length) {
+    block.append(paragraph('Задайте цены в разделе «Цены для сметы» у комнаты — здесь появится стоимость.'));
+    root.append(block);
+    return;
+  }
+  const table = document.createElement('table');
+  for (const line of estimate.lines) {
+    const row = table.insertRow();
+    const name = row.insertCell();
+    if (line.color) {
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch small';
+      swatch.style.background = line.color;
+      name.append(swatch);
+    }
+    name.append(line.name);
+    row.insertCell().textContent = `${decimal.format(line.quantity)} ${line.unit} × ${decimal.format(line.price)}`;
+    row.insertCell().textContent = rubles.format(line.cost);
+  }
+  block.append(table);
+  const totals = [`Материалы: ${rubles.format(estimate.materials)}`];
+  if (estimate.work > 0) totals.push(`работа: ${rubles.format(estimate.work)}`);
+  block.append(paragraph(totals.join('; ')));
+  const total = paragraph(`Итого: ${rubles.format(estimate.total)}`);
+  total.className = 'estimate-total';
+  block.append(total);
+  root.append(block);
 }
 
 function paragraph(text) {

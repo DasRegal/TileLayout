@@ -8,6 +8,7 @@ const ICONS = {
   partition: '<path d="M3 20h18M3 4h18"/><rect x="10" y="4" width="4" height="16" fill="currentColor" stroke="none" opacity=".35"/><path d="M10 4v16M14 4v16"/>',
   opening: '<path d="M2.5 20h5.5M16 20h5.5M8 20v-8M8 12a8 8 0 0 1 8 8"/>',
   joint: '<path d="M9 3v18M15 3v18"/><path d="M12 3v18" stroke-dasharray="2 2"/>',
+  pipe: '<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><circle cx="12" cy="12" r="4.5"/><path d="M9.5 12h5M12 9.5v5"/>',
   ruler: '<path d="M3.5 15.5 15.5 3.5l5 5-12 12z"/><path d="M7 12l2 2M9.5 9.5l1.5 1.5M12 7l2 2M14.5 4.5 16 6"/>',
   open: '<path d="M3 7.5V18a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 18V9.5A1.5 1.5 0 0 0 19.5 8h-8l-2-2.5h-5A1.5 1.5 0 0 0 3 7z"/>',
   save: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 18.5h15"/>',

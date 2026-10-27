@@ -18,6 +18,7 @@
 #include "tl_opening.h"
 #include "tl_outline.h"
 #include "tl_partition.h"
+#include "tl_pipe.h"
 #include "tl_ruler.h"
 #include "tl_space.h"
 
@@ -28,6 +29,7 @@ TL_ARRAY_DEFINE(TlPartitionList, TlPartition *, tl_partition_list)
 TL_ARRAY_DEFINE(TlOpeningList, TlOpening *, tl_opening_list)
 TL_ARRAY_DEFINE(TlRulerList, TlRuler *, tl_ruler_list)
 TL_ARRAY_DEFINE(TlExpansionJointList, TlExpansionJoint *, tl_expansion_joint_list)
+TL_ARRAY_DEFINE(TlPipeList, TlPipe *, tl_pipe_list)
 
 typedef struct TlProject {
     TlOutlineList outlines;
@@ -36,6 +38,7 @@ typedef struct TlProject {
     TlSpaceList spaces;
     TlRulerList rulers;
     TlExpansionJointList expansion_joints;
+    TlPipeList pipes;                    /* отверстия под трубы и сливы */
     int next_space_id;
 } TlProject;
 
@@ -105,11 +108,15 @@ int tl_project_take_space_id(TlProject *project);
 
 void tl_project_add_outline(TlProject *project, TlOutline *outline);
 void tl_project_add_partition(TlProject *project, TlPartition *partition);
+/* Проём и линейка без имени получают следующее свободное: «Д1», «Д2»… и «Л1», «Л2»… */
 void tl_project_add_opening(TlProject *project, TlOpening *opening);
 void tl_project_add_ruler(TlProject *project, TlRuler *ruler);
 /* Швы влияют на раскладку: после добавления, удаления и правки шва —
    tl_project_update_spaces. */
 void tl_project_add_expansion_joint(TlProject *project, TlExpansionJoint *joint);
+/* Трубы тоже влияют на раскладку (отверстия в плитке): после правки — tl_project_update_spaces. */
+void tl_project_add_pipe(TlProject *project, TlPipe *pipe);
+void tl_project_delete_pipe(TlProject *project, TlPipe *pipe);
 void tl_project_delete_partition(TlProject *project, TlPartition *partition);
 void tl_project_delete_opening(TlProject *project, TlOpening *opening);
 void tl_project_delete_ruler(TlProject *project, TlRuler *ruler);
@@ -149,6 +156,8 @@ bool tl_project_set_tee_point(TlProject *project, TlPartition *branch, TlPartiti
    стеной соседнего дома. */
 bool tl_project_set_wall_length(TlProject *project, TlOutline *outline, size_t wall, double inner_length,
                                 bool keep_angles, bool linked);
+/* Ширина проёма (концы линеек на его краях едут с ними). */
+void tl_project_set_opening_width(TlProject *project, TlOpening *opening, double width);
 /* Проём — на distance мм от начала стены (from_end — от конца) до своего края;
    концы стены — как у tl_project_opening_span. */
 bool tl_project_place_opening_at(TlProject *project, TlOpening *opening, double distance, bool from_end);
@@ -161,6 +170,17 @@ bool tl_project_set_threshold(TlProject *project, TlOpening *opening, double mid
 void tl_project_update_spaces(TlProject *project);
 TlSpace *tl_project_space_by_id(TlProject *project, int id);
 TlSpace *tl_project_space_at(TlProject *project, TlVec2 point);
+
+/* Линии комнаты для раскладки от линии (tl_project_space_lines.c). */
+
+/* Двери комнаты: проёмы, у которых край её пола — на стыке (с учётом шва под дверью). */
+TlOpeningList tl_project_space_doors(TlProject *project, const TlSpace *space);
+/* Край пола комнаты в проёме — стык, отодвинутый в комнату на половину шва под дверью:
+   от него раскладка от двери. false — проём не дверь этой комнаты. */
+bool tl_project_space_door_edge(TlProject *project, const TlSpace *space, const TlOpening *opening, TlVec2 *from,
+                                TlVec2 *to);
+/* Линейки, середина которых — в комнате (оси ниши, унитаза, окна…). */
+TlRulerList tl_project_space_rulers(TlProject *project, const TlSpace *space);
 
 /* ---- тела стен ----------------------------------------------------------- */
 

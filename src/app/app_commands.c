@@ -131,6 +131,17 @@ void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
+void app_command_add_pipe(AppDocument *document, TlVec2 center)
+{
+    app_document_checkpoint(document, "");
+    TlPipe *pipe = tl_pipe_new(center, document->preferences.pipe_diameter);
+    tl_project_add_pipe(document->project, pipe);
+    tl_project_update_spaces(document->project);
+    document->selection = (AppSelection){.kind = APP_SELECT_PIPE, .pipe = pipe};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
 void app_command_delete_all_rulers(AppDocument *document)
 {
     if (document->project->rulers.count == 0)
@@ -233,6 +244,11 @@ void app_command_delete_selection(AppDocument *document)
         tl_project_delete_expansion_joint(project, s.expansion_joint);
         tl_project_update_spaces(project);
         break;
+    case APP_SELECT_PIPE:
+        app_document_checkpoint(document, "");
+        tl_project_delete_pipe(project, s.pipe);
+        tl_project_update_spaces(project);
+        break;
     case APP_SELECT_OPENING:
         app_document_checkpoint(document, "");
         tl_project_delete_opening(project, s.opening);
@@ -333,6 +349,10 @@ void app_command_nudge(AppDocument *document, double dx, double dy, bool move_ti
     } else if (s.kind == APP_SELECT_EXPANSION_JOINT) {
         app_document_checkpoint(document, "nudge");
         tl_expansion_joint_translate(s.expansion_joint, offset);
+        tl_project_update_spaces(project);
+    } else if (s.kind == APP_SELECT_PIPE) {
+        app_document_checkpoint(document, "nudge");
+        s.pipe->center = tl_vec2_add(s.pipe->center, offset);
         tl_project_update_spaces(project);
     } else if (s.kind == APP_SELECT_OPENING) {
         app_document_checkpoint(document, "nudge");

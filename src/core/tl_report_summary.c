@@ -1,7 +1,6 @@
 /* Сквозная нумерация, пары обрезков и сводный расчёт по проекту. */
 #include "tl_report_groups.h"
 
-#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,12 +135,9 @@ static TlOffcutPairList pair_pieces(const TlPieceList *pieces, double tile_width
     return width_first;
 }
 
-TlOffcutPairList tl_report_offcut_pairs(const TlTileSettings *tile, const TlPieceList *pieces)
+TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, const TlPieceList *pieces)
 {
-    if (!tile->reuse_offcuts)
-        return (TlOffcutPairList){0};
-    return pair_pieces(pieces, tile->tile_width, tile->tile_height, tile->cut_allowance,
-                       tl_tile_settings_is_square(tile));
+    return pair_pieces(pieces, width, height, allowance, fabs(width - height) < 0.5);
 }
 
 /* ---- сводка ---------------------------------------------------------------- */
@@ -153,43 +149,40 @@ void tl_report_tile_name(const TlTileSettings *tile, char *text, size_t size)
     snprintf(text, size, "%g×%g мм", longer, shorter);
 }
 
-static bool same_tile_type(const TlTileSettings *a, const TlTileSettings *b)
+const TlTileSpec *tl_report_piece_spec(const TlPieceRef *ref)
 {
-    double a_long = fmax(a->tile_width, a->tile_height), a_short = fmin(a->tile_width, a->tile_height);
-    double b_long = fmax(b->tile_width, b->tile_height), b_short = fmin(b->tile_width, b->tile_height);
-    if (fabs(a_long - b_long) > 0.05 || fabs(a_short - b_short) > 0.05)
-        return false;
-    for (size_t i = 0; i < TL_COLOR_LENGTH && (a->color[i] || b->color[i]); i++)
-        if (tolower((unsigned char)a->color[i]) != tolower((unsigned char)b->color[i]))
-            return false;
-    return true;
+    TlLayout *layout = tl_space_layout(ref->space);
+    const TlTile *tile = tl_layout_tile_at(layout, ref->cell);
+    return tile ? tl_layout_spec(layout, tile) : NULL;
 }
 
-static TlTileTypeSummary *type_for(TlTileTypeSummaryList *types, const TlTileSettings *tile)
+static TlTileTypeSummary *type_for(TlTileTypeSummaryList *types, const TlTileSpec *spec, const TlTileSettings *tile)
 {
     for (size_t i = 0; i < types->count; i++)
-        if (same_tile_type(types->items[i].tile, tile))
+        if (tl_tile_specs_same(&types->items[i].spec, spec))
             return &types->items[i];
-    TlTileTypeSummary type = {.tile = tile};
+    TlTileTypeSummary type = {.spec = *spec, .tile = tile};
     tl_tile_type_summary_list_push(types, type);
     return tl_tile_type_summary_list_last(types);
 }
 
-static void add_to_pack_line(TlPackLineList *lines, double unit_size, double amount)
+static void add_to_pack_line(TlPackLineList *lines, double unit_size, double price, double amount)
 {
     for (size_t i = 0; i < lines->count; i++)
-        if (lines->items[i].unit_size == unit_size) {
+        if (lines->items[i].unit_size == unit_size && lines->items[i].price == price) {
             lines->items[i].amount += amount;
             return;
         }
-    TlPackLine line = {unit_size, amount, 0};
+    TlPackLine line = {unit_size, price, amount, 0};
     tl_pack_line_list_push(lines, line);
 }
 
 static int compare_pack_lines(const void *left, const void *right)
 {
     const TlPackLine *a = left, *b = right;
-    return a->unit_size < b->unit_size ? -1 : a->unit_size > b->unit_size;
+    if (a->unit_size != b->unit_size)
+        return a->unit_size < b->unit_size ? -1 : 1;
+    return a->price < b->price ? -1 : a->price > b->price;
 }
 
 static void finish_pack_lines(TlPackLineList *lines)
@@ -210,59 +203,102 @@ static int compare_types_by_area(const void *left, const void *right)
 /* Что копится по виду плитки, пока обходятся группы: куски для пар обрезков
  * из всех комнат с этим видом и плитки с весом запаса каждой комнаты. */
 typedef struct TypeTally {
-    TlPieceList pieces;          /* в осях плитки вида (type->tile) */
+    TlPieceList pieces;          /* в осях вида (type->spec) */
     double allowance;            /* запас на рез — наибольший из комнат */
     double reserved;             /* Σ плиток × (1 + запас) */
 } TypeTally;
 
 TL_ARRAY_DEFINE(TypeTallyList, TypeTally, type_tally_list)
 
-static bool lies_lengthwise(const TlTileSettings *tile) { return tile->tile_width >= tile->tile_height; }
+static bool lies_lengthwise(const TlTileSpec *spec) { return spec->laid_width >= spec->laid_height; }
 
-static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group)
+static void add_space_once(TlSpaceList *spaces, TlSpace *space)
+{
+    for (size_t i = 0; i < spaces->count; i++)
+        if (spaces->items[i] == space)
+            return;
+    tl_space_list_push(spaces, space);
+}
+
+/* Плитки вида spec в группе: сколько ячеек (плитка на стыке комнат — одна), из них целых, и
+   сколько было бы, считая каждую комнату отдельно. */
+typedef struct SpecCount {
+    int unique, whole, naive;
+} SpecCount;
+
+static SpecCount count_spec(const TlLayoutGroup *group, int spec)
+{
+    SpecCount count = {0};
+    for (size_t i = 0; i < group->owners.count; i++) {
+        const TlCellOwner *owner = &group->owners.items[i];
+        if (owner->tile->spec != spec)
+            continue;
+        count.naive++;
+        size_t first, owners = tl_group_cell_owners(group, owner->cell, &first);
+        if (first != i)
+            continue;
+        count.unique++;
+        if (owners == 1 && owner->tile->kind == TL_TILE_WHOLE)
+            count.whole++;
+    }
+    return count;
+}
+
+static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group, int spec_index,
+                           SpecCount count, double area)
 {
     const TlTileSettings *tile = &group->source->tile;
-    int unique = (int)tl_group_unique_cells(group);
-    int naive = 0, whole = 0;
-    double area = 0.0;
-    for (size_t i = 0; i < group->layouts.count; i++) {
-        naive += tl_layout_total(group->layouts.items[i]);
-        area += group->layouts.items[i]->floor_area;
-    }
-    for (size_t i = 0; i < group->owners.count; i++) {
-        size_t first, owners = tl_group_cell_owners(group, group->owners.items[i].cell, &first);
-        if (first == i && owners == 1 && group->owners.items[i].tile->kind == TL_TILE_WHOLE)
-            whole++;
-    }
-
-    TlTileTypeSummary *type = type_for(&summary->types, tile);
+    const TlTileSpec *spec = &group->layouts.items[0]->pattern.specs[spec_index];
+    TlTileTypeSummary *type = type_for(&summary->types, spec, tile);
     size_t index = (size_t)(type - summary->types.items);
     while (tallies->count <= index)
         type_tally_list_push(tallies, (TypeTally){0});
     TypeTally *tally = &tallies->items[index];
     for (size_t i = 0; i < group->members.count; i++)
-        tl_space_list_push(&type->spaces, group->members.items[i]);
-    type->count += unique;
-    type->whole += whole;
+        add_space_once(&type->spaces, group->members.items[i]);
+    type->count += count.unique;
+    type->whole += count.whole;
     type->area += area;
-    type->shared_saving += naive - unique;
-    tally->reserved += unique * (1 + tile->reserve_percent / 100.0);
+    type->shared_saving += count.naive - count.unique;
+    tally->reserved += count.unique * (1 + tile->reserve_percent / 100.0);
 
     /* Остатки подрезок идут в подрезки любой комнаты с той же плиткой. Плитка
      * 600×300 в одной комнате и 300×600 в другой — одна: куски поворачиваются. */
     if (tile->reuse_offcuts) {
-        bool turned = lies_lengthwise(tile) != lies_lengthwise(type->tile);
+        bool turned = lies_lengthwise(spec) != lies_lengthwise(&type->spec);
         TlPieceList pieces = tl_group_unshared_pieces(group);
         for (size_t i = 0; i < pieces.count; i++) {
             TlPiece piece = pieces.items[i];
+            if (piece.spec != spec_index)
+                continue;
             if (turned)
-                piece = (TlPiece){piece.ref, piece.height, piece.width};
+                piece = (TlPiece){piece.ref, piece.height, piece.width, piece.spec};
             tl_piece_list_push(&tally->pieces, piece);
         }
         tl_piece_list_free(&pieces);
         if (tile->cut_allowance > tally->allowance)
             tally->allowance = tile->cut_allowance;
     }
+}
+
+static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group)
+{
+    const TlPatternUnit *pattern = &group->layouts.items[0]->pattern;
+    double floor_area = 0.0, weight_total = 0.0;
+    for (size_t i = 0; i < group->layouts.count; i++)
+        floor_area += group->layouts.items[i]->floor_area;
+    SpecCount counts[TL_PATTERN_MAX_SPECS];
+    double weights[TL_PATTERN_MAX_SPECS];
+    for (size_t s = 0; s < pattern->spec_count; s++) {
+        counts[s] = count_spec(group, (int)s);
+        weights[s] = counts[s].unique * pattern->specs[s].laid_width * pattern->specs[s].laid_height;
+        weight_total += weights[s];
+    }
+    /* площадь пола делится между видами по площади их плиток */
+    for (size_t s = 0; s < pattern->spec_count; s++)
+        if (counts[s].naive > 0)
+            summarize_spec(summary, tallies, group, (int)s, counts[s],
+                           weight_total > 0 ? floor_area * weights[s] / weight_total : 0);
 
     for (size_t m = 0; m < group->members.count; m++) {
         TlRoomSummary *room = (TlRoomSummary *)tl_summary_room(summary, group->members.items[m]);
@@ -277,9 +313,8 @@ static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const Tl
  * а не в каждой комнате. */
 static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *tally)
 {
-    const TlTileSettings *tile = type->tile;
-    TlOffcutPairList pairs = pair_pieces(&tally->pieces, tile->tile_width, tile->tile_height, tally->allowance,
-                                         tl_tile_settings_is_square(tile));
+    TlOffcutPairList pairs =
+        tl_report_offcut_pairs(type->spec.laid_width, type->spec.laid_height, tally->allowance, &tally->pieces);
     double reserve = type->count > 0 ? tally->reserved / type->count : 1.0;
     type->offcut_saving = (int)pairs.count;
     type->count -= (int)pairs.count;
@@ -290,6 +325,25 @@ static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *
     tl_piece_list_free(&tally->pieces);
 }
 
+static void summarize_room_materials(TlSummary *summary, TlRoomSummary *room)
+{
+    const TlTileSettings *tile = tl_space_effective_tile(room->space);
+    TlLayout *layout = room->layout;
+    room->glue_kg = tl_layout_glue_kg(room->space, layout);
+    room->clip_count = (int)layout->clip_points.count;
+    room->grout_kg = tl_layout_grout_kg(room->space, layout);
+    room->primer_l = tl_layout_primer_l(room->space, layout);
+    summary->tiled_area += layout->floor_area;
+    add_to_pack_line(&summary->glue, tile->glue_bag_kg, tile->price_glue_bag, room->glue_kg);
+    add_to_pack_line(&summary->clips, tile->clips_per_pack, tile->price_clip_pack, room->clip_count);
+    add_to_pack_line(&summary->grout, tile->grout_pack_kg, tile->price_grout_pack, room->grout_kg);
+    add_to_pack_line(&summary->primer, tile->primer_can_l, tile->price_primer_can, room->primer_l);
+    summary->glue_total_kg += room->glue_kg;
+    summary->clip_total += room->clip_count;
+    summary->grout_total_kg += room->grout_kg;
+    summary->primer_total_l += room->primer_l;
+}
+
 TlSummary tl_report_summarize(TlProject *project)
 {
     TlSummary summary = {0};
@@ -297,23 +351,18 @@ TlSummary tl_report_summarize(TlProject *project)
     for (size_t i = 0; i < project->spaces.count; i++) {
         TlSpace *space = project->spaces.items[i];
         TlLayout *layout = tl_space_layout(space);
-        TlRoomSummary room = {space, layout, tl_space_effective_tile(space)->enabled && !layout->too_many, 0, 0, 0};
+        TlRoomSummary room = {.space = space, .layout = layout,
+                              .tiled = tl_space_effective_tile(space)->enabled && !layout->too_many};
         summary.floor_area += tl_space_area(space);
         summary.room_area += tl_space_room_area(space);
-        if (room.tiled) {
-            const TlTileSettings *tile = tl_space_effective_tile(space);
-            room.glue_kg = tl_layout_glue_kg(space, layout);
-            room.clip_count = (int)layout->clip_points.count;
-            summary.tiled_area += layout->floor_area;
-            add_to_pack_line(&summary.glue, tile->glue_bag_kg, room.glue_kg);
-            add_to_pack_line(&summary.clips, tile->clips_per_pack, room.clip_count);
-            summary.glue_total_kg += room.glue_kg;
-            summary.clip_total += room.clip_count;
-        }
+        if (room.tiled)
+            summarize_room_materials(&summary, &room);
         tl_room_summary_list_push(&summary.rooms, room);
     }
     finish_pack_lines(&summary.glue);
     finish_pack_lines(&summary.clips);
+    finish_pack_lines(&summary.grout);
+    finish_pack_lines(&summary.primer);
 
     TlLayoutGroupList groups = tl_report_build_groups(project, NULL, NULL);
     TypeTallyList tallies = {0};
@@ -343,5 +392,7 @@ void tl_summary_free(TlSummary *summary)
     tl_tile_type_summary_list_free(&summary->types);
     tl_pack_line_list_free(&summary->glue);
     tl_pack_line_list_free(&summary->clips);
+    tl_pack_line_list_free(&summary->grout);
+    tl_pack_line_list_free(&summary->primer);
     tl_offcut_pair_list_free(&summary->offcut_pairs);
 }

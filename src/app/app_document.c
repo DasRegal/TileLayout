@@ -32,8 +32,8 @@ AppDocument *app_document_new(void)
     document->preferences = (AppEditPreferences){
         .snap_step = 10, .partition_thickness = 100, .opening_width = 800, .link_walls = true,
         .keep_angles = true, .measure_magnet = true, .auto_align = true,
-        .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .house_width = 6000, .house_height = 4000, .house_thickness = 200,
-        .outline_thickness = 200};
+        .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .pipe_diameter = TL_PIPE_DEFAULT_DIAMETER,
+        .house_width = 6000, .house_height = 4000, .house_thickness = 200, .outline_thickness = 200};
     document->view = (AppViewFlags){.tiles = true, .clips = true, .dims = true, .grid = true,
                                     .expansion_joints = true};
     return document;
@@ -197,6 +197,7 @@ static bool selection_is_valid(AppDocument *document)
     case APP_SELECT_RULER: return contains_pointer((void *const *)p->rulers.items, p->rulers.count, s->ruler);
     case APP_SELECT_EXPANSION_JOINT:
         return contains_pointer((void *const *)p->expansion_joints.items, p->expansion_joints.count, s->expansion_joint);
+    case APP_SELECT_PIPE: return contains_pointer((void *const *)p->pipes.items, p->pipes.count, s->pipe);
     case APP_SELECT_NODE: {
         TlNode node;
         return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition) &&
@@ -300,6 +301,7 @@ static SelectionKey selection_key(AppDocument *document)
         key.position = position_in((void *const *)p->expansion_joints.items, p->expansion_joints.count,
                                    s->expansion_joint);
         break;
+    case APP_SELECT_PIPE: key.position = position_in((void *const *)p->pipes.items, p->pipes.count, s->pipe); break;
     default: break;
     }
     return key;
@@ -347,6 +349,11 @@ static void restore_selection(AppDocument *document, SelectionKey key)
         found = found && position < p->expansion_joints.count;
         if (found)
             s.expansion_joint = p->expansion_joints.items[position];
+        break;
+    case APP_SELECT_PIPE:
+        found = found && position < p->pipes.count;
+        if (found)
+            s.pipe = p->pipes.items[position];
         break;
     default: found = false; break;
     }

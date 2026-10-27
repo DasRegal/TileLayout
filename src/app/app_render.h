@@ -1,6 +1,6 @@
 /*
  * Отрисовка плана — одна для экрана, предпросмотра, PDF и печати.
- * Слои: пол и плитка, деформационные швы, стены, перегородки, проёмы, номера плиток, размеры,
+ * Слои: пол и плитка, деформационные швы, трубы, стены, перегородки, проёмы, номера плиток, размеры,
  * подписи комнат, замки, линейки, масштабная линейка.
  */
 #ifndef APP_RENDER_H
@@ -43,6 +43,10 @@ void app_render_threshold(cairo_t *cr, const AppView *view, TlVec2 from, TlVec2 
 /* Деформационный шов: полоса шириной в зазор (не уже нескольких пикселей) с
    пунктиром посередине; color — контур и пунктир. */
 void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpansionJoint *joint, AppColor color);
+
+/* Отверстие под трубу: круг диаметром коронки (не меньше нескольких пикселей) с
+   крестом в центре; label — подпись «Ø50». */
+void app_render_pipe(cairo_t *cr, const AppView *view, const TlPipe *pipe, AppColor color, bool label);
 
 /* Габарит всего плана в мировых координатах (для «Вписать»). */
 bool app_render_plan_bounds(TlProject *project, TlRect *bounds);

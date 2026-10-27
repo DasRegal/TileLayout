@@ -21,7 +21,7 @@ typedef struct TlLayoutGroup {
     TlSpace *source;
     TlSpaceList members;
     TlLayoutPtrList layouts;     /* параллельно members */
-    TlCellOwnerList owners;      /* упорядочены по ячейке (ряд, затем столбец) */
+    TlCellOwnerList owners;      /* упорядочены по ячейке (ряд, столбец, номер в модуле) */
     bool owns_layouts;
 } TlLayoutGroup;
 
@@ -33,7 +33,6 @@ TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptio
                                          TlSpace *only_source);
 void tl_report_free_groups(TlLayoutGroupList *groups);
 
-int tl_compare_cells(TlCell a, TlCell b);
 /* Владельцы ячейки: индекс первого в group->owners и их количество. */
 size_t tl_group_cell_owners(const TlLayoutGroup *group, TlCell cell, size_t *first);
 size_t tl_group_unique_cells(const TlLayoutGroup *group);

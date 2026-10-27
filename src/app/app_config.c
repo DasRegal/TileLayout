@@ -132,6 +132,7 @@ static const DoubleSetting DOUBLE_SETTINGS[] = {
     {"edit", "partition_thick", DOCUMENT_FIELD(preferences.partition_thickness)},
     {"edit", "opening_width", DOCUMENT_FIELD(preferences.opening_width)},
     {"edit", "expansion_joint_gap", DOCUMENT_FIELD(preferences.expansion_joint_gap)},
+    {"edit", "pipe_diameter", DOCUMENT_FIELD(preferences.pipe_diameter)},
     {"edit", "outline_thick", DOCUMENT_FIELD(preferences.outline_thickness)},
     {"house", "w", DOCUMENT_FIELD(preferences.house_width)},
     {"house", "h", DOCUMENT_FIELD(preferences.house_height)},
@@ -167,7 +168,7 @@ static void read_tile_defaults(GKeyFile *file)
         case TL_FIELD_TEXT: {
             char *text = g_key_file_get_string(file, "tile", field->key, NULL);
             if (text)
-                g_strlcpy((char *)member, text, TL_TEXTURE_LENGTH);
+                g_strlcpy((char *)member, text, field->size);
             g_free(text);
             break;
         }

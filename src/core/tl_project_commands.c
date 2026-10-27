@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include "tl_measure_anchor.h"
 #include "tl_memory.h"
 
 #define MIN_LENGTH 1.0 /* мм: короче — не перегородка */
@@ -226,4 +227,12 @@ bool tl_project_set_threshold(TlProject *project, TlOpening *opening, double mid
     tl_project_merge_straight_nodes(project);
     tl_project_update_spaces(project);
     return true;
+}
+
+void tl_project_set_opening_width(TlProject *project, TlOpening *opening, double width)
+{
+    TlMeasureAnchors *measures = tl_measure_anchors_remember(project);
+    opening->width = width;
+    tl_measure_anchors_apply(project, measures);
+    tl_measure_anchors_free(measures);
 }

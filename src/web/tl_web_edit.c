@@ -4,6 +4,7 @@
  * Геометрия — в ядре (tl_project_commands.c, tl_snap.c), как у программы.
  */
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "tl_drag.h"
@@ -175,6 +176,30 @@ int tl_web_add_joint(double x0, double y0, double x1, double y1, double gap, dou
     tl_project_add_expansion_joint(project, tl_expansion_joint_new(tl_vec2(x0, y0), tl_vec2(x1, y1), gap));
     tl_project_update_spaces(project);
     return (int)project->expansion_joints.count - 1;
+}
+
+int tl_web_add_pipe(double x, double y, double diameter, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (!(diameter >= TL_PIPE_MIN_DIAMETER && diameter <= TL_PIPE_MAX_DIAMETER))
+        return -1;
+    tl_web_checkpoint("", now_seconds);
+    tl_project_add_pipe(project, tl_pipe_new(tl_vec2(x, y), diameter));
+    tl_project_update_spaces(project);
+    return (int)project->pipes.count - 1;
+}
+
+bool tl_web_set_pipe(int index, double x, double y, double diameter, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (index < 0 || (size_t)index >= project->pipes.count ||
+        !(diameter >= TL_PIPE_MIN_DIAMETER && diameter <= TL_PIPE_MAX_DIAMETER) || !isfinite(x) || !isfinite(y))
+        return false;
+    tl_web_checkpoint("pipe", now_seconds);
+    project->pipes.items[index]->center = tl_vec2(x, y);
+    project->pipes.items[index]->diameter = diameter;
+    tl_project_update_spaces(project);
+    return true;
 }
 
 const char *tl_web_measure_point(double x, double y, bool has_anchor, double anchor_x, double anchor_y,
@@ -362,6 +387,11 @@ const char *tl_web_pick(double x, double y, double tolerance)
         if (part >= 0)
             return item_json((Item){"joint", (int)i, part, 0, 0});
     }
+    for (size_t i = project->pipes.count; i-- > 0;) {
+        const TlPipe *pipe = project->pipes.items[i];
+        if (tl_distance(point, pipe->center) < fmax(pipe->diameter / 2, tolerance))
+            return item_json((Item){"pipe", (int)i, 0, 0, 0});
+    }
     if (pick_handle(project, point, tolerance, &item))
         return item_json(item);
     for (size_t i = 0; i < project->openings.count; i++) {
@@ -539,6 +569,7 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
             add_outline(outlines, &cut);
         tl_polygon_free(&cut);
         tl_json_object_set(json, "width", tl_json_number(opening->width));
+        tl_json_object_set(json, "name", tl_json_string(opening->name));
         double span_start, span_end;
         if (hosted && tl_project_opening_span(project, opening, &span_start, &span_end)) {
             double along;
@@ -568,6 +599,7 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         }
     } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
         const TlRuler *ruler = project->rulers.items[index];
+        tl_json_object_set(json, "name", tl_json_string(ruler->name));
         TlPolygon line = {0};
         tl_polygon_push(&line, ruler->start);
         tl_polygon_push(&line, ruler->end);
@@ -588,6 +620,19 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         add_middle(handles, joint->start, joint->end, (Item){"joint", index, 0, 0, 0});
         tl_json_object_set(json, "gap", tl_json_number(joint->gap));
         tl_json_object_set(json, "length", tl_json_number(round(tl_expansion_joint_length(joint))));
+        tl_json_object_set(json, "locked", tl_json_bool(false));
+    } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
+        const TlPipe *pipe = project->pipes.items[index];
+        TlPolygon circle = {0}; /* для подсветки — круг коронки, но не меньше нескольких мм */
+        double radius = fmax(pipe->diameter / 2, 10);
+        for (int k = 0; k < 24; k++)
+            tl_polygon_push(&circle, tl_vec2(pipe->center.x + radius * cos(k * TL_PI / 12),
+                                             pipe->center.y + radius * sin(k * TL_PI / 12)));
+        add_outline(outlines, &circle);
+        tl_polygon_free(&circle);
+        tl_json_object_set(json, "x", tl_json_number(round(pipe->center.x * 10) / 10));
+        tl_json_object_set(json, "y", tl_json_number(round(pipe->center.y * 10) / 10));
+        tl_json_object_set(json, "diameter", tl_json_number(pipe->diameter));
         tl_json_object_set(json, "locked", tl_json_bool(false));
     } else if (is(kind, "threshold") && opening) {
         TlVec2 from, to;
@@ -692,8 +737,8 @@ bool tl_web_set_opening_width(int index, double width, double now_seconds)
     if (!opening || opening->locked || !(width >= 100 && width <= 10000))
         return false;
     tl_web_checkpoint("owidth", now_seconds);
-    opening->width = width;
     TlProject *project = tl_web_project();
+    tl_project_set_opening_width(project, opening, width);
     tl_project_merge_straight_nodes(project);
     tl_project_update_spaces(project);
     return true;
@@ -832,6 +877,21 @@ int tl_web_add_house(double width, double height, double thickness, double now_s
     return space ? space->id : 0;
 }
 
+bool tl_web_set_name(const char *kind, int index, const char *name, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    char *target = is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count
+                       ? project->rulers.items[index]->name
+                   : is(kind, "opening") && index >= 0 && (size_t)index < project->openings.count
+                       ? project->openings.items[index]->name
+                       : NULL;
+    if (!target || !name[0] || strlen(name) >= TL_NAME_LENGTH)
+        return false;
+    tl_web_checkpoint("name", now_seconds);
+    snprintf(target, TL_NAME_LENGTH, "%s", name);
+    return true;
+}
+
 bool tl_web_set_joint_gap(int index, double gap, double now_seconds)
 {
     TlProject *project = tl_web_project();
@@ -872,6 +932,9 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
     } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
         tl_web_checkpoint("", now_seconds);
         tl_project_delete_expansion_joint(project, project->expansion_joints.items[index]);
+    } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
+        tl_web_checkpoint("", now_seconds);
+        tl_project_delete_pipe(project, project->pipes.items[index]);
     } else if (is(kind, "node") && partition) {
         TlNode node;
         if (!tl_project_node_of(project, partition, (TlPartitionEnd)end, &node) || tl_node_locked(&node))
@@ -931,6 +994,9 @@ bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x,
     } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
         target.kind = TL_DRAG_JOINT;
         target.joint = project->expansion_joints.items[index];
+    } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
+        target.kind = TL_DRAG_PIPE;
+        target.pipe = project->pipes.items[index];
     } else {
         return false;
     }
@@ -971,6 +1037,13 @@ static Item dragged_item(TlProject *project)
                     index = (int)i;
         }
         return (Item){t->kind == TL_DRAG_RULER ? "ruler" : "joint", index, t->index, 0, 0};
+    }
+    case TL_DRAG_PIPE: {
+        int index = -1;
+        for (size_t i = 0; i < project->pipes.count; i++)
+            if (project->pipes.items[i] == t->pipe)
+                index = (int)i;
+        return (Item){"pipe", index, 0, 0, 0};
     }
     default: return (Item){"none", 0, 0, 0, 0};
     }

@@ -91,6 +91,19 @@ static bool hit_expansion_joint(TlProject *project, TlVec2 world, double end_tol
     return false;
 }
 
+/* Трубы — поверх пола: круг или рядом с ним. */
+static bool hit_pipe(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
+{
+    for (size_t i = project->pipes.count; i-- > 0;) {
+        TlPipe *pipe = project->pipes.items[i];
+        if (tl_distance(world, pipe->center) < fmax(pipe->diameter / 2, tolerance)) {
+            *hit = (AppSelection){.kind = APP_SELECT_PIPE, .pipe = pipe};
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Узел относится к выделению: выделен он сам или одна из его перегородок. */
 static bool node_is_selected(const TlNode *node, const AppSelection *current)
 {
@@ -280,6 +293,7 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
     AppSelection hit = none();
     bool found = hit_ruler(project, world, vertex_tolerance, wall_tolerance, &hit) ||
                  hit_expansion_joint(project, world, vertex_tolerance, wall_tolerance, &hit) ||
+                 hit_pipe(project, world, vertex_tolerance, &hit) ||
                  hit_node(project, current, world, vertex_tolerance, &hit) ||
                  hit_tee(project, world, vertex_tolerance, &hit) ||
                  hit_selected_partition_handle(project, current, world, vertex_tolerance, &hit) ||

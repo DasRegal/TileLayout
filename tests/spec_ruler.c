@@ -1,6 +1,10 @@
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "spec.h"
 #include "specs.h"
 
+#include "tl_drag.h"
 #include "tl_measure_snap.h"
 #include "tl_project.h"
 #include "tl_project_io.h"
@@ -166,6 +170,60 @@ void spec_ruler(void)
             EXPECT_INT(snap(project, 640, 900).kind, TL_SNAP_NONE);
             TlSnapPoint none;
             EXPECT(!tl_measure_snap(project, tl_vec2(1500, 1500), SNAP_RADIUS, TL_SNAP_TO_ALL, &none));
+            tl_project_free(project);
+        }
+        IT("линейка и проём получают имена «Л1», «Д1»…; имена сохраняются в файле")
+        {
+            TlProject *project = tl_project_demo();
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(0, 0), tl_vec2(1000, 0)));
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(0, 100), tl_vec2(1000, 100)));
+            EXPECT_STR(project->rulers.items[1]->name, "Л2");
+            EXPECT_STR(project->openings.items[0]->name, "Д1");
+            snprintf(project->rulers.items[0]->name, TL_NAME_LENGTH, "%s", "Ось унитаза");
+            char *text = tl_project_to_string(project);
+            TlProject *loaded = tl_project_new();
+            char error[64];
+            EXPECT(tl_project_from_string(loaded, text, error, sizeof error));
+            EXPECT_STR(loaded->rulers.items[0]->name, "Ось унитаза");
+            EXPECT_STR(loaded->rulers.items[1]->name, "Л2");
+            tl_project_add_ruler(loaded, tl_ruler_new(tl_vec2(0, 200), tl_vec2(1000, 200)));
+            EXPECT_STR(loaded->rulers.items[2]->name, "Л3");
+            free(text);
+            tl_project_free(loaded);
+            tl_project_free(project);
+        }
+        IT("конец линейки на стене едет со стеной, длина — настоящая; свободный конец стоит")
+        {
+            TlProject *project = tl_project_new();
+            const TlVec2 corners[] = {{0, 0}, {4000, 0}, {4000, 3000}, {0, 3000}};
+            tl_project_add_outline(project, tl_outline_new(corners, 4, 200));
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(2000, 0), tl_vec2(2000, 3000), 100));
+            tl_project_update_spaces(project);
+            TlRuler *ruler = tl_ruler_new(tl_vec2(0, 1500), tl_vec2(1950, 1500)); /* до левого бока перегородки */
+            tl_project_add_ruler(project, ruler);
+            TlRuler *loose = tl_ruler_new(tl_vec2(500, 500), tl_vec2(900, 500));
+            tl_project_add_ruler(project, loose);
+            TlDrag drag = {0};
+            TlDragTarget target = {.kind = TL_DRAG_PARTITION, .partition = project->partitions.items[0]};
+            EXPECT(tl_drag_begin(&drag, project, target, tl_vec2(2000, 1500)));
+            TlSnapContext snap = {.project = project, .tolerance = 1, .skip_vertex = -1};
+            tl_drag_move(&drag, project, tl_vec2(2300, 1500), &snap, true, NULL);
+            tl_drag_end(&drag, project);
+            EXPECT_NEAR(ruler->end.x, 2250, 0.01);
+            EXPECT_NEAR(tl_ruler_length(ruler), 2250, 0.01);
+            EXPECT_NEAR(ruler->start.x, 0, 1e-9);
+            EXPECT_NEAR(loose->start.x, 500, 1e-9);
+
+            /* стену дома — тоже: правый конец на внутренней грани правой стены */
+            TlRuler *across = tl_ruler_new(tl_vec2(2350, 1000), tl_vec2(4000, 1000));
+            tl_project_add_ruler(project, across);
+            TlDrag wall = {0};
+            TlDragTarget wall_target = {.kind = TL_DRAG_WALL, .outline = project->outlines.items[0], .index = 1};
+            EXPECT(tl_drag_begin(&wall, project, wall_target, tl_vec2(4100, 1500)));
+            tl_drag_move(&wall, project, tl_vec2(4600, 1500), &snap, true, NULL);
+            tl_drag_end(&wall, project);
+            EXPECT_NEAR(across->end.x, 4500, 0.01);
+            EXPECT_NEAR(across->start.x, 2350, 0.01);
             tl_project_free(project);
         }
     }

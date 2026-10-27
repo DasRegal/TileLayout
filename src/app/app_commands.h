@@ -22,6 +22,8 @@ void app_command_add_opening(AppDocument *document, const TlBand *band, double a
 void app_command_add_ruler(AppDocument *document, TlVec2 start, TlVec2 end);
 void app_command_delete_all_rulers(AppDocument *document);
 void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2 end);
+/* Отверстие под трубу диаметром из настроек правки. */
+void app_command_add_pipe(AppDocument *document, TlVec2 center);
 void app_command_insert_vertex(AppDocument *document, TlOutline *outline, size_t wall, TlVec2 point);
 /* Угол дома — в точку (концы перегородок на его стенах следуют). */
 void app_command_set_vertex(AppDocument *document, TlOutline *outline, size_t index, TlVec2 point);

@@ -6,6 +6,7 @@
 #include <pango/pangocairo.h>
 #include <time.h>
 
+#include "tl_estimate.h"
 #include "tl_report.h"
 
 #define CELL_PADDING 4.0
@@ -90,6 +91,8 @@ static const double TYPE_COLUMNS[] = {0.04, 0.2, 0.24, 0.1, 0.1, 0.08, 0.12, 0.1
 static const int TYPE_ALIGN[] = {-1, -1, -1, 1, 1, 1, 1, 1};
 static const double ROOM_COLUMNS[] = {0.18, 0.1, 0.13, 0.29, 0.1, 0.1, 0.1};
 static const int ROOM_ALIGN[] = {-1, 1, 1, -1, 1, 1, 1};
+static const double ESTIMATE_COLUMNS[] = {0.46, 0.18, 0.16, 0.2};
+static const int ESTIMATE_ALIGN[] = {-1, 1, 1, 1};
 
 static char *swatch(const char *color, bool mono)
 {
@@ -129,16 +132,17 @@ static void add_tile_types(AppSheet *sheet, const TlSummary *summary, bool mono)
         const TlTileTypeSummary *type = &summary->types.items[i];
         const TlTileSettings *tile = type->tile;
         char name[64];
-        tl_report_tile_name(tile, name, sizeof name);
-        char *mark = swatch(tile->color, mono);
+        tl_tile_spec_name(&type->spec, name, sizeof name);
+        char *mark = swatch(type->spec.color, mono);
         char *rooms = rooms_of(type);
         char *number = g_strdup_printf("%zu", i + 1);
-        char *tile_text = g_strdup_printf("%s%s\n<small>%s, шов %g мм</small>", mark, name, tile->color, tile->joint_width);
+        char *tile_text = g_strdup_printf("%s%s\n<small>%s, шов %g мм</small>", mark, name, type->spec.color,
+                                          tile->joint_width);
         char *area = g_strdup_printf("%.2f", type->area / 1e6);
         char *count = g_strdup_printf("%d", type->count);
         char *reserve = g_strdup_printf("%g%%", tile->reserve_percent);
         char *buy = g_strdup_printf("<b>%d</b>", type->to_buy);
-        char *buy_area = g_strdup_printf("<b>%.2f</b>", type->to_buy * tile->tile_width * tile->tile_height / 1e6);
+        char *buy_area = g_strdup_printf("<b>%.2f</b>", type->to_buy * tl_tile_spec_area_m2(&type->spec));
         add_row(sheet, 1, TYPE_COLUMNS, TYPE_ALIGN, 8, false,
                 cells_from(number, tile_text, rooms, area, count, reserve, buy, buy_area, NULL));
         g_free(mark);
@@ -153,25 +157,70 @@ static void add_tile_types(AppSheet *sheet, const TlSummary *summary, bool mono)
     }
 }
 
-static void add_glue_and_clips(AppSheet *sheet, const TlSummary *summary)
+/* «Клей: 12,3 кг = 1 мешк. по 25 кг» — строка материала по упаковкам. */
+static void append_packs(GString *text, const char *title, double total, int decimals, const char *total_unit,
+                         const TlPackLineList *packs, const char *pack_format)
 {
-    add_text(sheet, "<b>Клей и СВП</b>", 16);
+    if (!packs->count)
+        return;
+    g_string_append_printf(text, "%s%s: <b>%.*f %s</b> =", text->len ? "\n" : "", title, decimals, total, total_unit);
+    for (size_t i = 0; i < packs->count; i++) {
+        g_string_append_printf(text, "%s <b>%d</b> ", i ? " +" : "", packs->items[i].units);
+        g_string_append_printf(text, pack_format, packs->items[i].unit_size);
+    }
+}
+
+static void add_materials(AppSheet *sheet, const TlSummary *summary)
+{
+    add_text(sheet, "<b>Клей, СВП, затирка, грунт</b>", 16);
     GString *text = g_string_new(NULL);
-    if (summary->glue.count) {
-        g_string_append_printf(text, "Клей: <b>%.1f кг</b> =", summary->glue_total_kg);
-        for (size_t i = 0; i < summary->glue.count; i++)
-            g_string_append_printf(text, "%s <b>%d</b> мешк. по %g кг", i ? " +" : "",
-                                   summary->glue.items[i].units, summary->glue.items[i].unit_size);
-        g_string_append(text, "\n");
-    }
-    if (summary->clips.count) {
-        g_string_append_printf(text, "СВП: <b>%d шт.</b> =", summary->clip_total);
-        for (size_t i = 0; i < summary->clips.count; i++)
-            g_string_append_printf(text, "%s <b>%d</b> уп. по %g шт.", i ? " +" : "",
-                                   summary->clips.items[i].units, summary->clips.items[i].unit_size);
-    }
+    append_packs(text, "Клей", summary->glue_total_kg, 1, "кг", &summary->glue, "мешк. по %g кг");
+    append_packs(text, "СВП", summary->clip_total, 0, "шт.", &summary->clips, "уп. по %g шт.");
+    append_packs(text, "Затирка", summary->grout_total_kg, 2, "кг", &summary->grout, "уп. по %g кг");
+    append_packs(text, "Грунт", summary->primer_total_l, 1, "л", &summary->primer, "кан. по %g л");
     add_text(sheet, text->str, 13);
     g_string_free(text, TRUE);
+}
+
+static void add_estimate(AppSheet *sheet, const TlSummary *summary, bool mono)
+{
+    TlEstimate estimate = tl_estimate_from_summary(summary);
+    if (estimate.lines.count == 0) {
+        tl_estimate_free(&estimate);
+        return;
+    }
+    add_text(sheet, "<b>Смета</b>", 16);
+    add_row(sheet, 3, ESTIMATE_COLUMNS, ESTIMATE_ALIGN, 4, true,
+            cells_from("<b>Позиция</b>", "<b>Количество</b>", "<b>Цена, ₽</b>", "<b>Сумма</b>", NULL));
+    char money[64];
+    for (size_t i = 0; i < estimate.lines.count; i++) {
+        const TlEstimateLine *line = &estimate.lines.items[i];
+        char *mark = line->color[0] ? swatch(line->color, mono) : g_strdup("");
+        char *name = escaped(line->name);
+        char *title = g_strdup_printf("%s%s", mark, name);
+        bool whole = fabs(line->quantity - round(line->quantity)) < 1e-9;
+        char *quantity = g_strdup_printf("%.*f %s", whole ? 0 : 2, line->quantity, line->unit);
+        char *price = g_strdup_printf("%g", line->price);
+        tl_format_rubles(line->cost, money, sizeof money);
+        add_row(sheet, 3, ESTIMATE_COLUMNS, ESTIMATE_ALIGN, 4, false, cells_from(title, quantity, price, money, NULL));
+        g_free(mark);
+        g_free(name);
+        g_free(title);
+        g_free(quantity);
+        g_free(price);
+    }
+    GString *totals = g_string_new(NULL);
+    tl_format_rubles(estimate.materials, money, sizeof money);
+    g_string_append_printf(totals, "Материалы: <b>%s</b>", money);
+    if (estimate.work > 0) {
+        tl_format_rubles(estimate.work, money, sizeof money);
+        g_string_append_printf(totals, "; работа: <b>%s</b>", money);
+    }
+    tl_format_rubles(estimate.total, money, sizeof money);
+    g_string_append_printf(totals, "\n<big>Итого: <b>%s</b></big>", money);
+    add_text(sheet, totals->str, 13);
+    g_string_free(totals, TRUE);
+    tl_estimate_free(&estimate);
 }
 
 static void add_rooms(AppSheet *sheet, const TlSummary *summary, bool mono)
@@ -198,7 +247,10 @@ static void add_rooms(AppSheet *sheet, const TlSummary *summary, bool mono)
         char *mark = swatch(tile->color, mono);
         char *source = tl_space_has_shared_floor(space) ? g_strdup_printf("как в «%s»", space->layout_source->name)
                                                         : g_strdup("своя");
-        char *how = g_strdup_printf("%s%s, %s%s", mark, tile_name, source, tile->rotation_degrees != 0 ? ", повёрнута" : "");
+        char *pattern = g_utf8_strdown(tl_pattern_of(tile)->name, -1);
+        char *how = g_strdup_printf("%s%s, %s, %s%s", mark, tile_name, pattern, source,
+                                    tile->rotation_degrees != 0 ? ", повёрнута" : "");
+        g_free(pattern);
         char *tiled = g_strdup_printf("%.2f", room->layout->floor_area / 1e6);
         char *count = g_strdup_printf("%d", tl_layout_total(room->layout));
         char *glue = g_strdup_printf("%.1f", room->glue_kg);
@@ -246,7 +298,8 @@ AppSheet *app_sheet_new_calculation(TlProject *project, const char *title, bool 
     g_string_free(intro, TRUE);
 
     add_tile_types(sheet, &summary, mono);
-    add_glue_and_clips(sheet, &summary);
+    add_materials(sheet, &summary);
+    add_estimate(sheet, &summary, mono);
     add_rooms(sheet, &summary, mono);
     add_text(sheet, "<small>«Нужно» — плиток на укладку с учётом общих плиток на стыке комнат с общей раскладкой "
                     "и использования остатков подрезок. В таблице по комнатам — плитки каждой комнаты отдельно.</small>",

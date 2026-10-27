@@ -1,7 +1,11 @@
 /*
- * Настройки раскладки плитки комнаты: плитка, шов, рисунок, смещение сетки,
- * запас, клей, СВП, использование обрезков, отступ от стен; рисунок плитки из
- * каталога (texture — ссылка «каталог/плитка», пусто — только цвет).
+ * Настройки раскладки плитки комнаты: плитка, шов, рисунок укладки (tl_pattern.h),
+ * смещение сетки, запас, клей, СВП, затирка, грунт, цены для сметы, использование
+ * обрезков, отступ от стен; рисунок плитки из каталога (texture — ссылка
+ * «каталог/плитка», пусто — только цвет).
+ *
+ * Настройки описывают одну поверхность под плитку — сейчас это пол комнаты; стена
+ * (когда появится) получит такие же настройки.
  */
 #ifndef TL_TILE_SETTINGS_H
 #define TL_TILE_SETTINGS_H
@@ -11,6 +15,7 @@
 
 #define TL_COLOR_LENGTH 8      /* "#rrggbb" и завершающий ноль */
 #define TL_TEXTURE_LENGTH 260 /* «каталог/группа/плитка» и завершающий ноль */
+#define TL_PATTERN_LENGTH 24  /* id рисунка укладки и завершающий ноль */
 
 typedef struct TlTileSettings {
     bool enabled;
@@ -19,6 +24,8 @@ typedef struct TlTileSettings {
     double offset_x, offset_y;       /* смещение сетки в осях раскладки, мм */
     double rotation_degrees;         /* поворот раскладки */
     double row_shift;                /* сдвиг каждого ряда в долях плитки (0, 1/2, 1/3…) */
+    char pattern[TL_PATTERN_LENGTH]; /* рисунок укладки (tl_pattern.h); пусто — прямая */
+    char color2[TL_COLOR_LENGTH];    /* вторая плитка рисунка (шахматка) */
     double min_cut_width;            /* подрезки уже этого — «узкие», мм */
     double reserve_percent;          /* запас на бой и подрезку */
     char color[TL_COLOR_LENGTH];     /* у плитки с рисунком — его средний цвет */
@@ -32,6 +39,22 @@ typedef struct TlTileSettings {
     bool reuse_offcuts;              /* остаток подрезки идёт в другую подрезку */
     double cut_allowance;            /* теряется на рез, мм */
     double wall_gap;                 /* отступ плитки от стен, мм */
+
+    /* затирка: расход = (длина + ширина) / (длина · ширина) · шов · глубина · плотность */
+    double tile_thickness;           /* толщина плитки — глубина шва, мм */
+    double grout_density;            /* плотность затирки, кг/дм³ (г/см³) */
+    double grout_pack_kg;
+    /* грунт под плитку */
+    double primer_l_per_m2;
+    double primer_can_l;
+
+    /* цены для сметы, ₽; 0 — не считать */
+    double price_tile_m2;
+    double price_glue_bag;
+    double price_clip_pack;
+    double price_grout_pack;
+    double price_primer_can;
+    double price_work_m2;            /* укладка, за м² */
 } TlTileSettings;
 
 /* Заводские значения. */
@@ -52,13 +75,14 @@ typedef enum TlTileFieldType {
     TL_FIELD_DOUBLE,
     TL_FIELD_INT,
     TL_FIELD_COLOR,
-    TL_FIELD_TEXT /* строка до TL_TEXTURE_LENGTH */
+    TL_FIELD_TEXT /* строка до size байт */
 } TlTileFieldType;
 
 typedef struct TlTileField {
     const char *key;
     TlTileFieldType type;
     size_t offset;
+    size_t size;                     /* байт в поле (у строки — с завершающим нулём) */
     bool remembered_for_new_rooms;
 } TlTileField;
 

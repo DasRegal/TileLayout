@@ -292,6 +292,13 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
 .summary-title { font-weight: 600; }
 .summary-buy { font-size: 18px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
 .summary-details { white-space: pre-line; color: var(--muted); font-size: 13px; }
+.swatch.small { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.estimate h3 { margin: 4px 0 6px; font-size: 14px; }
+.estimate table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.estimate td { padding: 3px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.estimate td:nth-child(2) { color: var(--muted); padding: 3px 8px; white-space: nowrap; }
+.estimate td:last-child { text-align: right; white-space: nowrap; }
+.summary .estimate-total { font-size: 15px; font-weight: 600; color: inherit; }
 
 .note { margin-top: auto; color: var(--muted); font-size: 12px; }
 .note a { color: var(--accent); }

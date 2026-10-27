@@ -19,5 +19,8 @@ void spec_doorway(void);
 void spec_web(void);
 void spec_commands(void);
 void spec_drag(void);
+void spec_pattern(void);
+void spec_estimate(void);
+void spec_pipes(void);
 
 #endif

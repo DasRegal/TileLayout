@@ -210,14 +210,14 @@ static TlVec2 on_card(TlVec2 p, double scale, double ox, double oy)
 }
 
 /* Контур куска: заводская кромка — тонко, линия реза — толсто. Линии — препятствия для подписей. */
-static void piece_lines(cairo_t *cr, AppLabels *labels, const TlPolygon *shape, const TlTileSettings *tile,
+static void piece_lines(cairo_t *cr, AppLabels *labels, const TlPolygon *shape, const TlCutCard *card,
                         double scale, double ox, double oy, bool mono)
 {
     for (size_t i = 0; i < shape->count; i++) {
         TlVec2 a = shape->items[i], b = shape->items[(i + 1) % shape->count];
         bool horizontal = fabs(a.y - b.y) < 0.5, vertical = fabs(a.x - b.x) < 0.5;
-        bool on_tile_edge = (horizontal && (fabs(a.y) < 0.5 || fabs(a.y - tile->tile_height) < 0.5)) ||
-                            (vertical && (fabs(a.x) < 0.5 || fabs(a.x - tile->tile_width) < 0.5));
+        bool on_tile_edge = (horizontal && (fabs(a.y) < 0.5 || fabs(a.y - card->height) < 0.5)) ||
+                            (vertical && (fabs(a.x) < 0.5 || fabs(a.x - card->width) < 0.5));
         TlVec2 sa = on_card(a, scale, ox, oy), sb = on_card(b, scale, ox, oy);
         cairo_move_to(cr, sa.x, sa.y);
         cairo_line_to(cr, sb.x, sb.y);
@@ -273,14 +273,13 @@ static bool free_strip_between_parts(const TlCutCard *card, TlRect *rest)
         return false;
     TlRect a = tl_polygon_bounds(&card->parts.items[0].shapes.items[0]);
     TlRect b = tl_polygon_bounds(&card->parts.items[1].shapes.items[0]);
-    const TlTileSettings *tile = card->tile;
     if (a.left > b.left) {
         TlRect swap = a;
         a = b;
         b = swap;
     }
     if (b.left - a.right > 0.5) {
-        *rest = (TlRect){a.right, 0, b.left, tile->tile_height};
+        *rest = (TlRect){a.right, 0, b.left, card->height};
         return true;
     }
     if (a.top > b.top) {
@@ -289,7 +288,7 @@ static bool free_strip_between_parts(const TlCutCard *card, TlRect *rest)
         b = swap;
     }
     if (b.top - a.bottom > 0.5) {
-        *rest = (TlRect){0, a.bottom, tile->tile_width, b.top};
+        *rest = (TlRect){0, a.bottom, card->width, b.top};
         return true;
     }
     return false;
@@ -377,6 +376,75 @@ static void part_label(cairo_t *cr, AppLabels *labels, const TlCutPart *part, do
     app_labels_place(labels, cr, short_text, &style, 0, center, places, 1 + outside_count, true);
 }
 
+/* Отверстие под трубу: круг коронки (только на куске), крест центра, расстояния от центра до
+   ближних краёв куска — того, что останется после реза, а не отпиленной части. */
+static void draw_drill(cairo_t *cr, AppLabels *labels, const TlCutPart *part, TlCircle drill, double scale, double ox,
+                       double oy, bool mono)
+{
+    TlVec2 c = on_card(drill.center, scale, ox, oy);
+    double radius = drill.diameter / 2 * scale;
+    TlRect piece = tl_polygon_bounds(&part->shapes.items[0]);
+    cairo_save(cr);
+    for (size_t s = 0; s < part->shapes.count; s++) {
+        const TlPolygon *shape = &part->shapes.items[s];
+        for (size_t i = 0; i < shape->count; i++)
+            (i ? cairo_line_to : cairo_move_to)(cr, ox + shape->items[i].x * scale, oy + shape->items[i].y * scale);
+        cairo_close_path(cr);
+    }
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    cairo_clip(cr);
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, c.x, c.y, radius, 0, 2 * G_PI);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill_preserve(cr);
+    if (mono)
+        cairo_set_source_rgb(cr, 0, 0, 0);
+    else
+        cairo_set_source_rgb(cr, 0.851, 0.188, 0.145);
+    cairo_set_line_width(cr, 1.6);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+    double cross = fmax(radius * 0.6, 3);
+    cairo_move_to(cr, c.x - cross, c.y);
+    cairo_line_to(cr, c.x + cross, c.y);
+    cairo_move_to(cr, c.x, c.y - cross);
+    cairo_line_to(cr, c.x, c.y + cross);
+    cairo_set_line_width(cr, 0.8);
+    cairo_stroke(cr);
+
+    /* от ближних краёв куска — до центра */
+    double middle_x = (piece.left + piece.right) / 2, middle_y = (piece.top + piece.bottom) / 2;
+    bool from_left = drill.center.x <= middle_x, from_top = drill.center.y <= middle_y;
+    double edge_left = from_left ? piece.left : piece.right, edge_top = from_top ? piece.top : piece.bottom;
+    double dx = fabs(drill.center.x - edge_left), dy = fabs(drill.center.y - edge_top);
+    TlVec2 edge_x = on_card(tl_vec2(edge_left, drill.center.y), scale, ox, oy);
+    TlVec2 edge_y = on_card(tl_vec2(drill.center.x, edge_top), scale, ox, oy);
+    double dashes[2] = {2, 2};
+    cairo_set_dash(cr, dashes, 2, 0);
+    cairo_set_line_width(cr, 0.6);
+    cairo_move_to(cr, edge_x.x, edge_x.y);
+    cairo_line_to(cr, c.x, c.y);
+    cairo_move_to(cr, edge_y.x, edge_y.y);
+    cairo_line_to(cr, c.x, c.y);
+    cairo_stroke(cr);
+    cairo_set_dash(cr, NULL, 0, 0);
+    AppTextStyle style = {8.5, false, {0, 0, 0, 1}, {1, 1, 1, 1}};
+    char text[24];
+    if (dx > 0.5) {
+        g_snprintf(text, sizeof text, "%.0f", dx);
+        app_labels_place_along(labels, cr, text, &style, edge_x, c, tl_vec2(0, -1), true);
+    }
+    if (dy > 0.5) {
+        g_snprintf(text, sizeof text, "%.0f", dy);
+        app_labels_place_along(labels, cr, text, &style, edge_y, c, tl_vec2(-1, 0), true);
+    }
+    AppTextStyle bold = {8.5, true, {0, 0, 0, 1}, {1, 1, 1, 1}};
+    g_snprintf(text, sizeof text, "Ø%g", drill.diameter);
+    const TlVec2 places[] = {{c.x + radius + 14, c.y - radius - 6}, {c.x - radius - 14, c.y - radius - 6},
+                             {c.x + radius + 14, c.y + radius + 6}, {c.x - radius - 14, c.y + radius + 6}};
+    app_labels_place(labels, cr, text, &bold, 0, c, places, sizeof places / sizeof places[0], false);
+}
+
 static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, double x, double y, double w, double h)
 {
     bool mono = job->options.mono;
@@ -402,12 +470,13 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     const double margin = 17;
     double area_x = x + margin, area_y = y + 28 + margin - 4;
     double area_w = w - 2 * margin, area_h = h - 28 - 2 * margin + 2;
-    double scale = fmin(area_w / tile->tile_width, area_h / tile->tile_height);
-    double ox = area_x + (area_w - tile->tile_width * scale) / 2;
-    double oy = area_y + (area_h - tile->tile_height * scale) / 2;
-    TlRect tile_rect = {ox, oy, ox + tile->tile_width * scale, oy + tile->tile_height * scale};
+    double scale = fmin(area_w / card->width, area_h / card->height);
+    double ox = area_x + (area_w - card->width * scale) / 2;
+    double oy = area_y + (area_h - card->height * scale) / 2;
+    TlRect tile_rect = {ox, oy, ox + card->width * scale, oy + card->height * scale};
 
-    if (card->kind != TL_CARD_SINGLE)
+    bool has_rest = card->kind == TL_CARD_SHARED_TILE || card->kind == TL_CARD_OFFCUT_PAIR;
+    if (has_rest)
         hatch_rest(cr, card, scale, ox, oy, tile_rect, mono);
     cairo_rectangle(cr, tile_rect.left, tile_rect.top, tl_rect_width(tile_rect), tl_rect_height(tile_rect));
     double dashes[2] = {3, 3};
@@ -417,7 +486,7 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     cairo_stroke(cr);
     cairo_set_dash(cr, NULL, 0, 0);
 
-    AppColor fill = mono ? (AppColor){1, 1, 1, 1} : app_color_hex(tile->color);
+    AppColor fill = mono ? (AppColor){1, 1, 1, 1} : app_color_hex(card->color);
     for (size_t p = 0; p < card->parts.count; p++) {
         const TlPolygonList *shapes = &card->parts.items[p].shapes;
         for (size_t s = 0; s < shapes->count; s++) {
@@ -437,14 +506,18 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     AppLabels *labels = app_labels_new((TlRect){x + 2, y + 26, x + w - 2, y + h - 2});
     for (size_t p = 0; p < card->parts.count; p++)
         for (size_t s = 0; s < card->parts.items[p].shapes.count; s++)
-            piece_lines(cr, labels, &card->parts.items[p].shapes.items[s], tile, scale, ox, oy, mono);
+            piece_lines(cr, labels, &card->parts.items[p].shapes.items[s], card, scale, ox, oy, mono);
+    for (size_t p = 0; p < card->parts.count; p++)
+        for (size_t d = 0; d < card->parts.items[p].drills.count && card->parts.items[p].shapes.count; d++)
+            draw_drill(cr, labels, &card->parts.items[p], card->parts.items[p].drills.items[d], scale, ox, oy, mono);
     for (size_t p = 0; p < card->parts.count; p++)
         for (size_t s = 0; s < card->parts.items[p].shapes.count; s++)
-            piece_dimensions(cr, labels, &card->parts.items[p].shapes.items[s], scale, ox, oy);
+            if (card->kind != TL_CARD_DRILLED) /* у целой плитки размеры — в подписи */
+                piece_dimensions(cr, labels, &card->parts.items[p].shapes.items[s], scale, ox, oy);
     if (card->parts.count > 1) /* подписи частей: комната и номер */
         for (size_t p = 0; p < card->parts.count; p++)
             part_label(cr, labels, &card->parts.items[p], scale, ox, oy, tile_rect);
-    if (card->kind != TL_CARD_SINGLE)
+    if (has_rest)
         rest_label(cr, labels, card, scale, ox, oy, card->kind == TL_CARD_SHARED_TILE ? "стена" : "отход");
     app_labels_free(labels);
 }

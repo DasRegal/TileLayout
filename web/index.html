@@ -48,6 +48,7 @@
       <button type="button" data-tool="opening" data-icon="opening" title="Проём, дверь (O)" aria-pressed="false"><span>Проём</span></button>
       <span class="rail-divider" aria-hidden="true"></span>
       <button type="button" data-tool="joint" data-icon="joint" title="Деформационный шов (J)" aria-pressed="false"><span>Шов</span></button>
+      <button type="button" data-tool="pipe" data-icon="pipe" title="Труба: отверстие в плитке (H)" aria-pressed="false"><span>Труба</span></button>
       <button type="button" data-tool="ruler" data-icon="ruler" title="Линейка (L)" aria-pressed="false"><span>Линейка</span></button>
       <span class="rail-divider" aria-hidden="true"></span>
       <button type="button" data-action="house" data-icon="house" title="Новый дом или квартира по внутренним размерам"><span>Дом…</span></button>
@@ -82,7 +83,9 @@
             <span class="control"><input type="number" id="setting-opening" min="100" max="10000" step="10"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="joint"><span class="caption">Ширина щели шва</span>
             <span class="control"><input type="number" id="setting-joint" min="1" max="100" step="1"><span class="unit">мм</span></span></label>
-          <label class="row" data-tools="rect contour partition opening"><span class="caption">Шаг привязки</span>
+          <label class="row" data-tools="pipe"><span class="caption">Диаметр отверстия</span>
+            <span class="control"><input type="number" id="setting-pipe" min="5" max="500" step="1"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="rect contour partition opening pipe"><span class="caption">Шаг привязки</span>
             <span class="control"><input type="number" id="setting-grid" min="0" max="1000" step="5"><span class="unit">мм</span></span></label>
         </div>
 
@@ -130,6 +133,16 @@
             <div class="button-row">
               <button type="button" data-align="min_tiles" title="Смещение сетки, при котором плиток к покупке меньше всего">Минимум плиток</button>
               <button type="button" data-align="min_narrow" title="Смещение сетки с наименьшим числом узких подрезок">Меньше узких подрезок</button>
+            </div>
+            <span class="caption">От двери и от оси</span>
+            <div class="button-row">
+              <select id="align-door" aria-label="Дверь комнаты" title="Двери комнаты — по именам на плане (Д1, Д2…)"></select>
+              <button type="button" data-align="door" title="От стыка в проёме — целый ряд, проём посередине плитки или шва">От двери</button>
+            </div>
+            <div class="button-row">
+              <select id="align-ruler" aria-label="Линейка в комнате" title="Линейки в комнате — по именам на плане (Л1, Л2…): ось ниши, унитаза, окна"></select>
+              <button type="button" data-align="ruler_joint" title="По линейке пройдёт шов">Шов</button>
+              <button type="button" data-align="ruler_center" title="По линейке — середина плитки">Плитка</button>
             </div>
           </div>
           <div id="tile-fields"></div>
