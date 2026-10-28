@@ -50,12 +50,54 @@ bool tl_web_set_tile_fields(int space_id, const char *fields, double now_seconds
    space_ids — JSON-массив id, fields — JSON-объект {ключ: значение}; серия правок
    одного поля тех же комнат склеивается. false — нет такой комнаты или значение не то. */
 bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, double now_seconds);
-/* Зона пола (zone — "border" | "carpet", tl_zone.h) у комнат space_ids: fields — {"enabled", "fit",
+/* Зона (zone — "border" | "carpet" пола, tl_zone.h; "wall_lower" | "wall_frieze" | "wall_main" —
+   полосы стен, tl_wall.h) у комнат space_ids: fields — {"enabled", "fit",
    "width", "height", "dx", "dy" и поля плитки зоны}; одно поле — серия правок склеивается.
    В tl_web_space_tile у зоны ещё "laid_width", "laid_height" — размер, как кладут (с fit). */
 bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char *fields, double now_seconds);
 /* Поменять длину и ширину плитки у комнат space_ids (JSON-массив id) — одним шагом. */
 bool tl_web_swap_tiles(const char *space_ids, double now_seconds);
+/* Высота помещения и облицовка стен у комнат space_ids: fields — {"room_height", "enabled", "height"}
+   (height 0 — до потолка). В tl_web_space_tile — объект "walls" с полосами "bands". */
+bool tl_web_set_walls(const char *space_ids, const char *fields, double now_seconds);
+/* Часть пола region комнаты (между линиями раздела и швами; в tl_web_space_tile — "regions"):
+   covering "room" | "own" (своя плитка) | "none" (без плитки) | "" — не менять; name — название участка
+   ("" — не менять). Плитка участка — tl_web_set_zone_fields(…, "area:<region>", …). */
+bool tl_web_set_area(int space_id, int region, const char *covering, const char *name, double now_seconds);
+/* Предмет (kind — "bath" | "tray" | "installation" | "cabinet" | "kitchen") в точке; у стены — спинкой
+   к ней (free — без этого) → номер. Правка — fields {"kind" (размеры — обычные для вида), "w", "d", "h",
+   "angle", "x", "y", "under", "behind"}. В сцене — "fixtures", выбор и перетаскивание — "fixture". */
+int tl_web_add_fixture(const char *kind, double x, double y, bool free, double now_seconds);
+/* Трап (kind — "point" | "linear") в точке; линейный у стены — вдоль неё (free — без этого) → номер.
+   Правка — fields {"kind", "size", "length", "angle", "slope", "x", "y", "envelope"}. В сцене — "drains"
+   и "slopes" (разрезы конверта), выбор и перетаскивание — "drain" (tl_web_object: и "drop" — перепад, мм). */
+int tl_web_add_drain(const char *kind, double x, double y, bool free, double now_seconds);
+bool tl_web_set_drain(int index, const char *fields, double now_seconds);
+bool tl_web_set_fixture(int index, const char *fields, double now_seconds);
+/* Линия раздела покрытия (шов gap мм) → номер среди швов (tl_web_object "joint") или −1. */
+int tl_web_add_divider(double x0, double y0, double x1, double y1, double gap, double now_seconds);
+/* Развёртка стен комнаты (формат — в tl_web_walls.c); "null" — нет комнаты. */
+const char *tl_web_room_walls(int space_id);
+/* Правка на развёртке комнаты space_id; wall — номер стены в развёртке, точка на стене — x от левого
+   угла, h от пола. Сдвиг плитки стены (x — вправо, y — вверх); «Швы как у пола» — у стены wall или
+   у всех (−1), ответ — у скольких совмещено. */
+bool tl_web_set_wall_offset(int space_id, int wall, double x, double y, double now_seconds);
+int tl_web_wall_align_floor(int space_id, int wall, double now_seconds);
+/* Отверстие и линейка на стене: add — номер или −1; линейка — на своей стене. */
+int tl_web_add_wall_pipe(int space_id, int wall, double x, double h, double diameter, double now_seconds);
+bool tl_web_set_wall_pipe(int space_id, int index, int wall, double x, double h, double diameter, double now_seconds);
+int tl_web_add_wall_ruler(int space_id, int wall, double x0, double h0, double x1, double h1, double now_seconds);
+bool tl_web_set_wall_ruler(int space_id, int index, double x0, double h0, double x1, double h1, double now_seconds);
+/* Панно на стене wall развёртки (посередине) или на полу (wall −1, в центре) → номер или −1;
+   правка — fields {"columns", "rows", "w", "h", "gap", "x", "y", "price", "color", "texture", "wall"}
+   (что есть; одно поле — серия правок склеивается). В tl_web_space_tile — "pannos", в сцене и развёртке —
+   их плитки. Удаление — tl_web_delete_wall_item(…, "panno", …). */
+int tl_web_add_panno(int space_id, int wall, double now_seconds);
+bool tl_web_set_panno(int space_id, int index, const char *fields, double now_seconds);
+/* kind — "wall_pipe" | "wall_ruler" | "panno". */
+bool tl_web_delete_wall_item(int space_id, const char *kind, int index, double now_seconds);
+/* Точка развёртки, притянутая к углам, полу, проёмам и швам плитки: "[x, y]". */
+const char *tl_web_walls_snap(int space_id, double x, double y, double tolerance);
 
 /* Раскладка комнаты: смещение сетки по правилу mode — "top_left", "top_right",
    "bottom_left", "bottom_right" (целая плитка в углу), "center" (центр плитки в
@@ -135,6 +177,10 @@ bool tl_web_set_partition_thickness(int index, double thickness, double now_seco
 bool tl_web_set_partition_length(int index, double length, double now_seconds);
 bool tl_web_set_partition_angle(int index, double degrees, double now_seconds);
 bool tl_web_set_opening_width(int index, double width, double now_seconds);
+/* Вид проёма ("door" | "window" | "arch"; "" — не менять), высота и низ от пола (подоконник), мм. */
+bool tl_web_set_opening(int index, const char *kind, double height, double sill, double now_seconds);
+/* Откосы проёма плиткой: глубина, мм; 0 — без откосов. */
+bool tl_web_set_opening_reveal(int index, double depth, double now_seconds);
 /* Толщина стены дома (вместе со смежной стеной соседнего дома). */
 bool tl_web_set_wall_thickness(int house, int wall, double thickness, double now_seconds);
 /* Точка предмета — в (x, y): угол дома ("vertex"), узел ("node": part 0 — середина,
@@ -176,6 +222,24 @@ const char *tl_web_drag_end(void);
 const char *tl_web_tile_numbers(void);
 /* Карточки чертежей подрезок. */
 const char *tl_web_cut_cards(void);
+/* Карта раскроя (формат — в tl_web_print.c): что резать стопкой, какие две подрезки — из одной плитки. */
+const char *tl_web_cut_map(void);
+/* ---- подложка (tl_web_underlay.c) ---------------------------------------------- */
+
+/* Вся подложка с содержимым (формат — в tl_web_underlay.c); в сцене — без содержимого. */
+const char *tl_web_underlay(void);
+/* Фото: data:-URL (JavaScript уменьшает картинку и сжимает в JPEG) и размер в пикселях. */
+bool tl_web_set_underlay_image(const char *data_url, int width, int height, double now_seconds);
+/* DXF-план текстом; false — причина в tl_web_error. */
+bool tl_web_load_underlay_dxf(const char *text, double now_seconds);
+/* Поля {"visible", "opacity", "scale", "x", "y", "dx", "dy" — сдвиг} — любые из них. */
+bool tl_web_set_underlay(const char *fields, double now_seconds);
+/* Точки (ax, ay) и (bx, by) на плане на самом деле в distance мм друг от друга. */
+bool tl_web_calibrate_underlay(double ax, double ay, double bx, double by, double distance, double now_seconds);
+void tl_web_clear_underlay(double now_seconds);
+
+/* Чертёж DXF (tl_dxf.h): cuts — чертежи подрезок для станка, иначе план. */
+const char *tl_web_dxf(int cuts);
 
 /* ---- расчёт и отмена ---------------------------------------------------------- */
 

@@ -6,6 +6,7 @@
 #include "app_catalogs.h"
 #include "app_draw.h"
 #include "app_icons.h"
+#include "app_underlay.h"
 #include "tl_layout.h"
 #include "tl_report.h"
 
@@ -148,8 +149,8 @@ static void set_texture_source(cairo_t *cr, cairo_pattern_t *pattern, cairo_surf
     cairo_set_source(cr, pattern);
 }
 
-static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
-                         const TlTileSettings *tile, TlLayout *layout)
+void app_render_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
+                      const TlTileSettings *tile, TlLayout *layout)
 {
     cairo_matrix_t to_screen = local_to_screen(view, &layout->local_to_world);
     cairo_transform(cr, &to_screen);
@@ -205,12 +206,74 @@ static void render_tiles(cairo_t *cr, const AppView *view, const AppRenderOption
     if (options->show_clips && fmin(tile->tile_width, tile->tile_height) * view->scale > 24) {
         app_set_color(cr, app_color_hex(COLOR_CLIP));
         double size = 5 * pixel;
+        if (tile->use_crosses) { /* крестики — на пересечениях швов */
+            for (size_t i = 0; i < layout->cross_points.count; i++) {
+                TlVec2 p = layout->cross_points.items[i];
+                cairo_move_to(cr, p.x - size, p.y);
+                cairo_line_to(cr, p.x + size, p.y);
+                cairo_move_to(cr, p.x, p.y - size);
+                cairo_line_to(cr, p.x, p.y + size);
+            }
+            cairo_set_line_width(cr, 1.6 * pixel);
+            cairo_stroke(cr);
+            return;
+        }
         for (size_t i = 0; i < layout->clip_points.count; i++) {
             TlVec2 p = layout->clip_points.items[i];
             cairo_rectangle(cr, p.x - size / 2, p.y - size / 2, size, size);
         }
         cairo_fill(cr);
     }
+}
+
+void app_render_panno(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlSpace *space,
+                      size_t index, const TlAffine *to_view)
+{
+    TlLayout *layout = tl_space_panno_layout(space, index);
+    if (!layout)
+        return;
+    if (to_view)
+        layout->local_to_world = tl_affine_multiply(to_view, &layout->local_to_world);
+    TlTileSettings tile = tl_space_panno_tile(space, index);
+    const TlPanno *panno = &space->pannos.items[index];
+    double width = tl_panno_width(panno), height = tl_panno_height(panno);
+    cairo_save(cr);
+    cairo_matrix_t to_screen = local_to_screen(view, &layout->local_to_world);
+    cairo_transform(cr, &to_screen);
+    cairo_rectangle(cr, 0, 0, width, height);
+    app_set_color(cr, app_color_hex(COLOR_GROUT));
+    cairo_fill(cr);
+    cairo_surface_t *image = app_draw_is_mono() || !tile.texture[0] ? NULL : app_catalogs_image(tile.texture);
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        TlRect r = layout->tiles.items[i].rect;
+        cairo_save(cr);
+        cairo_rectangle(cr, r.left, r.top, tl_rect_width(r), tl_rect_height(r));
+        if (image) { /* одна картинка на всё панно: у каждой плитки — своя часть */
+            cairo_clip(cr);
+            cairo_scale(cr, width / cairo_image_surface_get_width(image), height / cairo_image_surface_get_height(image));
+            cairo_set_source_surface(cr, image, 0, 0);
+            cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+            cairo_paint(cr);
+        } else {
+            app_set_fill_color(cr, app_draw_is_mono() ? (AppColor){1, 1, 1, 1} : app_color_hex(tile.color));
+            cairo_fill_preserve(cr);
+            cairo_set_line_width(cr, 0.8 / view->scale);
+            app_set_color(cr, app_color_darker(app_color_hex(tile.color), 1.5));
+            cairo_stroke(cr);
+        }
+        cairo_restore(cr);
+    }
+    cairo_restore(cr);
+    if (options->printing || app_draw_is_mono()) { /* рамка панно на листе */
+        const TlVec2 corners[] = {{0, 0}, {width, 0}, {width, height}, {0, height}};
+        TlPolygon local = tl_polygon_from_points(corners, 4);
+        TlPolygon outline = tl_affine_apply_polygon(&layout->local_to_world, &local);
+        app_path_polygon(cr, view, &outline);
+        app_stroke(cr, app_color_hex("#20242a"), 1.2);
+        tl_polygon_free(&outline);
+        tl_polygon_free(&local);
+    }
+    tl_layout_free(layout);
 }
 
 static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
@@ -238,14 +301,17 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
         cairo_fill(cr);
     }
     cairo_new_path(cr);
-    for (size_t i = 0; i < tl_space_layout_count(space); i++) { /* основной пол, затем зоны */
+    for (size_t i = 0; i < tl_space_floor_layout_count(space); i++) { /* основной пол, затем зоны */
         TlLayout *part = tl_space_layout_at(space, i);
         if (part->too_many)
             continue;
         cairo_save(cr);
-        render_tiles(cr, view, options, tl_space_layout_tile(space, i), part);
+        app_render_tiles(cr, view, options, tl_space_layout_tile(space, i), part);
         cairo_restore(cr);
     }
+    for (size_t i = 0; i < space->pannos.count; i++) /* панно на полу */
+        if (space->pannos.items[i].wall == TL_PANNO_FLOOR)
+            app_render_panno(cr, view, options, space, i, NULL);
     cairo_restore(cr);
 }
 
@@ -442,7 +508,7 @@ static void render_openings(cairo_t *cr, const AppView *view, const AppRenderOpt
 
 /* ---- номера плиток ---------------------------------------------------------- */
 
-static void render_layout_numbers(cairo_t *cr, const AppView *view, const AppTextStyle *style, const TlLayout *layout)
+void app_render_layout_numbers(cairo_t *cr, const AppView *view, const AppTextStyle *style, const TlLayout *layout)
 {
     const TlAffine *m = &layout->local_to_world;
     double rotation = atan2(m->b, m->a) * 180 / TL_PI; /* оси раскладки: у бордюра — вдоль стены */
@@ -473,14 +539,14 @@ static void render_tile_numbers(cairo_t *cr, const AppView *view, const AppRende
         TlSpace *space = project->spaces.items[s];
         if (!tl_space_effective_tile(space)->enabled)
             continue;
-        for (size_t l = 0; l < tl_space_layout_count(space); l++) {
+        for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) {
             const TlTileSettings *tile = tl_space_layout_tile(space, l);
             TlLayout *layout = tl_space_layout_at(space, l);
             if (layout->too_many)
                 continue;
             if (!options->printing && fmin(tile->tile_width, tile->tile_height) * view->scale < 18)
                 continue;
-            render_layout_numbers(cr, view, &style, layout);
+            app_render_layout_numbers(cr, view, &style, layout);
         }
     }
 }
@@ -708,6 +774,12 @@ void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpans
     TlVec2 a = app_view_to_screen(view, joint->start), b = app_view_to_screen(view, joint->end);
     if (tl_distance(a, b) < 1)
         return;
+    if (joint->kind == TL_LINE_DIVIDER) { /* линия раздела — сплошная, шов обычный */
+        cairo_move_to(cr, a.x, a.y);
+        cairo_line_to(cr, b.x, b.y);
+        app_stroke(cr, color, fmax(1.6, joint->gap * view->scale));
+        return;
+    }
     double half_width = fmax(joint->gap * view->scale, EXPANSION_JOINT_MIN_WIDTH_PX) / 2;
     TlVec2 half = tl_vec2_scale(tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a))), half_width);
     cairo_move_to(cr, a.x + half.x, a.y + half.y);
@@ -750,6 +822,116 @@ void app_render_pipe(cairo_t *cr, const AppView *view, const TlPipe *pipe, AppCo
     snprintf(text, sizeof text, "Ø%g", pipe->diameter);
     AppTextStyle style = {9.5, false, color, app_color_rgba(255, 255, 255, 0.8)};
     app_text_centered(cr, text, &style, tl_vec2(c.x, c.y - radius - 8), 0);
+}
+
+#define COLOR_FIXTURE "#5d6470"
+#define COLOR_FIXTURE_FILL "#f7f8fa"
+
+/* Точка в осях предмета (x — вдоль спинки, y — от спинки) → экран. */
+static TlVec2 fixture_point(const AppView *view, const TlFixture *fixture, double x, double y)
+{
+    double radians = fixture->angle * TL_PI / 180;
+    TlVec2 world = {fixture->center.x + x * cos(radians) - y * sin(radians),
+                    fixture->center.y + x * sin(radians) + y * cos(radians)};
+    return app_view_to_screen(view, world);
+}
+
+static void fixture_line(cairo_t *cr, const AppView *view, const TlFixture *f, double x0, double y0, double x1, double y1)
+{
+    TlVec2 a = fixture_point(view, f, x0, y0), b = fixture_point(view, f, x1, y1);
+    cairo_move_to(cr, a.x, a.y);
+    cairo_line_to(cr, b.x, b.y);
+}
+
+void app_render_fixture(cairo_t *cr, const AppView *view, const TlFixture *fixture, AppColor color, bool label)
+{
+    TlPolygon outline = tl_fixture_outline(fixture);
+    app_path_polygon(cr, view, &outline);
+    tl_polygon_free(&outline);
+    app_set_fill_color(cr, app_color_rgba(247, 248, 250, 0.92));
+    cairo_fill_preserve(cr);
+    app_stroke(cr, color, 1.6);
+    double w = fixture->width / 2, d = fixture->depth / 2, inset = fmin(60, fmin(w, d) / 3);
+    switch (fixture->kind) { /* значок вида */
+    case TL_FIXTURE_BATH: /* чаша и слив у спинки… у торца */
+        fixture_line(cr, view, fixture, -w + inset, -d + inset, w - inset, -d + inset);
+        fixture_line(cr, view, fixture, w - inset, -d + inset, w - inset, d - inset);
+        fixture_line(cr, view, fixture, w - inset, d - inset, -w + inset, d - inset);
+        fixture_line(cr, view, fixture, -w + inset, d - inset, -w + inset, -d + inset);
+        break;
+    case TL_FIXTURE_SHOWER_TRAY: /* уклоны к сливу */
+        fixture_line(cr, view, fixture, -w, -d, w, d);
+        fixture_line(cr, view, fixture, w, -d, -w, d);
+        break;
+    case TL_FIXTURE_INSTALLATION: /* короб: штриховка */
+        for (double x = -w; x < w; x += 100)
+            fixture_line(cr, view, fixture, x, -d, fmin(x + 2 * d, w), d);
+        break;
+    case TL_FIXTURE_CABINET: /* дверцы */
+        fixture_line(cr, view, fixture, 0, -d, 0, d);
+        break;
+    case TL_FIXTURE_STAIRS: /* ступени и стрелка подъёма — от переда к спинке */
+        for (int i = 1; i < fixture->steps; i++)
+            fixture_line(cr, view, fixture, -w, d - 2 * d * i / fixture->steps, w, d - 2 * d * i / fixture->steps);
+        fixture_line(cr, view, fixture, 0, d - inset, 0, -d + inset);
+        fixture_line(cr, view, fixture, 0, -d + inset, -inset / 2, -d + 2 * inset);
+        fixture_line(cr, view, fixture, 0, -d + inset, inset / 2, -d + 2 * inset);
+        break;
+    default: /* кухня — модули по 600 */
+        for (double x = -w + 600; x < w - 1; x += 600)
+            fixture_line(cr, view, fixture, x, -d, x, d);
+        break;
+    }
+    app_stroke(cr, color, 0.9);
+    if (!label || fmin(fixture->width, fixture->depth) * view->scale < 30)
+        return;
+    char size[48];
+    snprintf(size, sizeof size, "%.0f×%.0f", fixture->width, fixture->depth);
+    const char *lines[] = {tl_fixture_kind_name(fixture->kind), size};
+    AppTextStyle style = {10.5, true, color, APP_TRANSPARENT};
+    TlVec2 center = app_view_to_screen(view, fixture->center);
+    app_text_centered(cr, lines[0], &style, tl_vec2(center.x, center.y - 7), 0);
+    style.bold = false;
+    app_text_centered(cr, lines[1], &style, tl_vec2(center.x, center.y + 7), 0);
+}
+
+void app_render_drain(cairo_t *cr, const AppView *view, const TlDrain *drain, AppColor color)
+{
+    TlPolygon outline = tl_drain_outline(drain);
+    app_path_polygon(cr, view, &outline);
+    app_set_fill_color(cr, app_color_hex("#d7dde3"));
+    cairo_fill_preserve(cr);
+    app_stroke(cr, color, 1.6);
+    TlVec2 a = outline.items[0], b = outline.items[1], c = outline.items[2], d = outline.items[3];
+    int slots = drain->kind == TL_DRAIN_LINEAR ? 1 : 4; /* решётка: полосы; лоток — продольная щель */
+    for (int k = 1; k <= slots; k++) {
+        double t = (double)k / (slots + 1);
+        if (drain->kind == TL_DRAIN_LINEAR)
+            app_path_line(cr, view, tl_vec2_lerp(a, d, t), tl_vec2_lerp(b, c, t));
+        else
+            app_path_line(cr, view, tl_vec2_lerp(a, b, t), tl_vec2_lerp(d, c, t));
+    }
+    app_stroke(cr, color, 0.9);
+    tl_polygon_free(&outline);
+}
+
+/* Разрезы конверта трапов — пунктиром от трапа к углам. */
+static void render_slope_lines(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        const TlSpace *space = project->spaces.items[s];
+        for (size_t i = 0; i < space->slope_lines.count; i++)
+            app_path_line(cr, view, space->slope_lines.items[i].items[0], space->slope_lines.items[i].items[1]);
+    }
+    app_stroke_dashed(cr, app_color_hex("#3d5a80"), 1.2, 6);
+    for (size_t i = 0; i < project->drains.count; i++)
+        app_render_drain(cr, view, &project->drains.items[i], app_color_hex("#3d5a80"));
+}
+
+static void render_fixtures(cairo_t *cr, const AppView *view, TlProject *project)
+{
+    for (size_t i = 0; i < project->fixtures.count; i++)
+        app_render_fixture(cr, view, &project->fixtures.items[i], app_color_hex(COLOR_FIXTURE), true);
 }
 
 static void render_pipes(cairo_t *cr, const AppView *view, TlProject *project)
@@ -804,6 +986,7 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         cairo_paint(cr);
         if (options->show_grid)
             render_grid(cr, view);
+        app_render_underlay(cr, view, &project->underlay); /* подложка — только на экране */
     }
     for (size_t s = 0; s < project->spaces.count; s++)
         render_floor(cr, view, options, project->spaces.items[s]);
@@ -811,6 +994,8 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         render_expansion_joints(cr, view, project);
     render_walls(cr, view, options, project);
     render_openings(cr, view, options, project);
+    render_slope_lines(cr, view, project);
+    render_fixtures(cr, view, project);
     render_pipes(cr, view, project); /* поверх стен: труба у стены видна целиком */
     if (options->show_numbers && options->show_tiles)
         render_tile_numbers(cr, view, options, project);

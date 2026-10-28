@@ -13,7 +13,10 @@
  *                "width": мм, "name": "Д1", "from": [x, y], "to": [x, y]}],  подпись — вдоль from→to
  *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм}],  снаружи дома
  *  "rulers": [{"line": [x0, y0, x1, y1], "length": мм, "name": "Л1"}],
- *  "joints": [{"line": [x0, y0, x1, y1], "gap": мм}],         деформационные швы
+ *  "joints": [{"line": [x0, y0, x1, y1], "gap": мм, "divider"}], деформационные швы и линии раздела
+ *  "underlay": подложка без содержимого (tl_web_underlay.c),
+ *  "fixtures": [{"kind", "name", "outline", "center", "w", "d", "h", "angle", "steps" — у лестницы}], предметы
+ *  "drains": [{"kind", "outline"}], "slopes": [x0, y0, x1, y1, …] — трапы и разрезы конверта
  *  "pipes": [{"center": [x, y], "diameter": мм}],              отверстия под трубы
  *  "spaces": [{"id", "name", "outline": [...], "holes": [[...]], "room": [...],      room — для длин стен
  *              "label": [x, y], "area": м², "source": "имя" | null,
@@ -23,7 +26,7 @@
  *                                "tiles": [left, top, right, bottom, вид, плитка, ...],  вид: 0 целая, 1 подрезка,
  *                                          2 узкая; плитка — номер в "specs"
  *                                "specs": [{"color", "textured": рисунок из каталога}],  виды плитки рисунка
- *                                "clips": [x0, y0, ...], "count": плиток,
+ *                                "clips": [x0, y0, ...], "crosses": [...] — пересечения швов, "count": плиток,
  *                                "shapes": {"номер плитки": [x0, y0, …]} — плитки-многоугольники},
  *              "zones": [раскладки зон — как "layout" и "tile": настройки плитки зоны]}]}
  */
@@ -198,7 +201,7 @@ static TlJson *dimensions(TlProject *project)
 
 /* ---- комнаты ------------------------------------------------------------------- */
 
-static TlJson *layout_json(const TlLayout *layout)
+TlJson *tl_web_layout_json(const TlLayout *layout)
 {
     TlJson *json = tl_json_object();
     const TlAffine *m = &layout->local_to_world;
@@ -243,6 +246,7 @@ static TlJson *layout_json(const TlLayout *layout)
     }
     tl_json_object_set(json, "shapes", shapes);
     tl_json_object_set(json, "clips", tl_web_polygon(&layout->clip_points));
+    tl_json_object_set(json, "crosses", tl_web_polygon(&layout->cross_points));
     tl_json_object_set(json, "count", tl_json_number(layout->too_many ? 0 : tl_layout_total(layout)));
     return json;
 }
@@ -261,14 +265,21 @@ static TlJson *space_json(TlSpace *space)
                                                                         : tl_json_null());
     const TlTileSettings *tile = tl_space_effective_tile(space);
     tl_json_object_set(json, "tile", tl_web_tile_json(tile));
-    tl_json_object_set(json, "layout", tile->enabled ? layout_json(tl_space_layout(space)) : tl_json_null());
+    tl_json_object_set(json, "layout", tile->enabled ? tl_web_layout_json(tl_space_layout(space)) : tl_json_null());
     TlJson *zones = tl_json_array(); /* бордюр (по раскладке на стену), ковёр — поверх основного пола */
-    for (size_t l = 1; tile->enabled && l < tl_space_layout_count(space); l++) {
-        TlJson *zone = layout_json(tl_space_layout_at(space, l));
+    for (size_t l = 1; tile->enabled && l < tl_space_floor_layout_count(space); l++) {
+        TlJson *zone = tl_web_layout_json(tl_space_layout_at(space, l));
         tl_json_object_set(zone, "tile", tl_web_tile_json(tl_space_layout_tile(space, l)));
         tl_json_array_push(zones, zone);
     }
     tl_json_object_set(json, "zones", zones);
+    TlJson *pannos = tl_json_array(); /* панно на полу — поверх пола */
+    for (size_t i = 0; tile->enabled && i < space->pannos.count; i++) {
+        TlJson *panno = space->pannos.items[i].wall == TL_PANNO_FLOOR ? tl_web_panno_json(space, i, NULL) : NULL;
+        if (panno)
+            tl_json_array_push(pannos, panno);
+    }
+    tl_json_object_set(json, "pannos", pannos);
     return json;
 }
 
@@ -324,9 +335,48 @@ const char *tl_web_scene(void)
         TlJson *joint = tl_json_object();
         tl_json_object_set(joint, "line", segment(item->start, item->end));
         tl_json_object_set(joint, "gap", tl_json_number(item->gap));
+        tl_json_object_set(joint, "divider", tl_json_bool(item->kind == TL_LINE_DIVIDER));
         tl_json_array_push(joints, joint);
     }
     tl_json_object_set(json, "joints", joints);
+    TlJson *fixtures = tl_json_array();
+    for (size_t i = 0; i < project->fixtures.count; i++) {
+        const TlFixture *item = &project->fixtures.items[i];
+        TlJson *fixture = tl_json_object();
+        TlPolygon outline = tl_fixture_outline(item);
+        tl_json_object_set(fixture, "kind", tl_json_string(tl_fixture_kind_key(item->kind)));
+        tl_json_object_set(fixture, "name", tl_json_string(tl_fixture_kind_name(item->kind)));
+        tl_json_object_set(fixture, "outline", tl_web_polygon(&outline));
+        tl_json_object_set(fixture, "center", point(item->center));
+        tl_json_object_set(fixture, "w", tl_json_number(item->width));
+        tl_json_object_set(fixture, "d", tl_json_number(item->depth));
+        tl_json_object_set(fixture, "angle", tl_json_number(item->angle));
+        if (item->kind == TL_FIXTURE_STAIRS)
+            tl_json_object_set(fixture, "steps", tl_json_number(item->steps));
+        tl_json_array_push(fixtures, fixture);
+        tl_polygon_free(&outline);
+    }
+    tl_json_object_set(json, "fixtures", fixtures);
+    tl_json_object_set(json, "underlay", tl_web_underlay_json(false));
+    TlJson *drains = tl_json_array(), *slopes = tl_json_array();
+    for (size_t i = 0; i < project->drains.count; i++) {
+        TlJson *drain = tl_json_object();
+        TlPolygon outline = tl_drain_outline(&project->drains.items[i]);
+        tl_json_object_set(drain, "kind", tl_json_string(tl_drain_kind_key(project->drains.items[i].kind)));
+        tl_json_object_set(drain, "outline", tl_web_polygon(&outline));
+        tl_json_array_push(drains, drain);
+        tl_polygon_free(&outline);
+    }
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        const TlSpace *space = project->spaces.items[s];
+        for (size_t i = 0; i < space->slope_lines.count; i++)
+            for (int k = 0; k < 2; k++) {
+                tl_json_array_push(slopes, tl_web_number(space->slope_lines.items[i].items[k].x));
+                tl_json_array_push(slopes, tl_web_number(space->slope_lines.items[i].items[k].y));
+            }
+    }
+    tl_json_object_set(json, "drains", drains);
+    tl_json_object_set(json, "slopes", slopes);
     TlJson *pipes = tl_json_array();
     for (size_t i = 0; i < project->pipes.count; i++) {
         TlJson *pipe = tl_json_object();

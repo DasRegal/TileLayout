@@ -163,6 +163,8 @@ bool tl_project_opening_doorway(TlProject *project, const TlOpening *opening, Tl
 {
     TlBand band;
     double from, to;
+    if (!tl_opening_has_floor(opening)) /* под окном пола нет */
+        return false;
     if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from, &to)) {
         /* чуть за бока: у наклонного бока (трапеция) край пола проёма иначе расходится
            с боком тела на доли микрона, и щель между ними отрезает пол от комнаты */
@@ -188,7 +190,7 @@ bool tl_project_opening_wall_floor(TlProject *project, const TlOpening *opening,
                                    TlPolygon *floor)
 {
     WallPassage passage;
-    if (!wall_passage(project, opening, &passage))
+    if (!tl_opening_has_floor(opening) || !wall_passage(project, opening, &passage))
         return false;
     const double split[2] = {wall_split(&passage, opening, false), wall_split(&passage, opening, true)};
     double across_from[2], across_to[2];
@@ -213,6 +215,8 @@ bool tl_project_opening_threshold(TlProject *project, const TlOpening *opening, 
 {
     TlBand band;
     double from_along, to_along;
+    if (!tl_opening_has_floor(opening))
+        return false;
     if (opening_span(project, opening, TL_HOST_PARTITION, &band, &from_along, &to_along)) {
         *from = threshold_point(band.host.partition, from_along, opening->threshold);
         *to = threshold_point(band.host.partition, to_along, opening->threshold_end);

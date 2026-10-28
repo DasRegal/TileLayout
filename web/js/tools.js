@@ -20,12 +20,19 @@ export const TOOL_HINTS = {
   opening: 'Проём: щёлкните по стене или перегородке.',
   ruler: 'Линейка: щёлкните начало и конец. Концы притягиваются к граням и осям стен и к швам плитки.',
   joint: 'Деформационный шов: щёлкните начало и конец. Шов режет плитку щелью заданной ширины.',
+  divider:
+    'Раздел: щёлкните начало и конец — линия делит пол комнаты на части. Концы притягиваются к стенам и другим линиям. Щёлкните часть, чтобы задать ей свою плитку или «без плитки».',
   pipe: 'Труба: щёлкните, где отверстие в плитке под трубу или слив. Плитка с отверстием — в чертежах подрезок.',
+  drain: 'Трап: щёлкните, где он. Точечный режет плитку конвертом к углам, линейный встаёт к стене. Вид и уклон — на панели.',
+  fixture: 'Предмет: щёлкните в комнате — у стены он встанет к ней спинкой (Shift — где щёлкнули). Плитку под ним и за ним — на панели.',
+  underlay_calibrate:
+    'Калибровка: введите настоящее расстояние, затем щёлкните его концы на подложке (например, концы стены с размером).',
+  underlay_move: 'Сдвиг подложки: щёлкните точку на подложке, затем — куда её поставить (например, угол нарисованной стены).',
 };
 
 const PIPE_COLOR = '#3d5a80';
 
-const MEASURE_TARGETS = { ruler: 'all', joint: 'walls' };
+const MEASURE_TARGETS = { ruler: 'all', joint: 'walls', divider: 'walls' };
 
 export class Tools {
   /**
@@ -92,6 +99,37 @@ export class Tools {
       return;
     }
     const point = this.snap(world, free).point;
+    if (this.tool === 'underlay_calibrate' || this.tool === 'underlay_move') {
+      if (!this.points.length) {
+        this.points = [point];
+        return;
+      }
+      const start = this.points[0];
+      const move = this.tool === 'underlay_move';
+      this.points = [];
+      const ok = move
+        ? core.setUnderlay({ dx: point[0] - start[0], dy: point[1] - start[1] })
+        : settings.calibration > 0 && core.calibrateUnderlay(start, point, settings.calibration);
+      if (!ok) {
+        this.env.say(move ? 'Не получилось сдвинуть подложку.'
+          : settings.calibration > 0 ? 'Точки совпадают — щёлкните концы размера.' : 'Сначала введите настоящее расстояние.');
+        return;
+      }
+      this.env.edited(null);
+      this.env.done();
+      this.env.say(move ? 'Подложка сдвинута.' : `Подложка откалибрована: ${settings.calibration} мм между точками.`);
+      return;
+    }
+    if (this.tool === 'drain') {
+      const index = core.addDrain(settings.drainKind, point, free);
+      if (index >= 0) this.env.edited({ kind: 'drain', index });
+      return;
+    }
+    if (this.tool === 'fixture') {
+      const index = core.addFixture(settings.fixtureKind, world, free);
+      if (index >= 0) this.env.edited({ kind: 'fixture', index });
+      return;
+    }
     if (this.tool === 'pipe') {
       const index = core.addPipe(point, settings.pipeDiameter);
       if (index >= 0) this.env.edited({ kind: 'pipe', index });
@@ -104,9 +142,11 @@ export class Tools {
       }
       const start = this.points[0];
       this.points = [];
-      const index = this.tool === 'ruler' ? core.addRuler(start, point) : core.addJoint(start, point, settings.jointGap);
+      const index = this.tool === 'ruler' ? core.addRuler(start, point)
+        : this.tool === 'divider' ? core.addDivider(start, point, settings.dividerGap)
+          : core.addJoint(start, point, settings.jointGap);
       if (index < 0) this.env.say('Слишком коротко.');
-      else this.env.edited({ kind: this.tool, index, part: 0, end: 0 });
+      else this.env.edited({ kind: this.tool === 'ruler' ? 'ruler' : 'joint', index, part: 0, end: 0 });
       return;
     }
     if (this.tool === 'partition') {
@@ -245,8 +285,9 @@ export class Tools {
     if (points.length >= 2) {
       ctx.beginPath();
       points.forEach((p, i) => (i ? ctx.lineTo(...screen(p)) : ctx.moveTo(...screen(p))));
-      if (this.tool === 'partition' || this.tool === 'joint') {
-        const width = this.tool === 'joint' ? this.env.settings.jointGap : this.env.settings.partitionThickness;
+      if (this.tool === 'partition' || this.tool === 'joint' || this.tool === 'divider') {
+        const width = this.tool === 'joint' ? this.env.settings.jointGap
+          : this.tool === 'divider' ? this.env.settings.dividerGap : this.env.settings.partitionThickness;
         ctx.lineWidth = Math.max(2, width * view.scale);
         ctx.strokeStyle = 'rgba(11, 128, 67, 0.47)';
         ctx.lineCap = 'butt';

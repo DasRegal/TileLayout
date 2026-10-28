@@ -32,7 +32,14 @@ typedef enum AppSelectionKind {
     APP_SELECT_NODE,       /* узел перегородок: partition + end — любой его конец;
                               index 0 — середина узла, k + 1 — угол k (см. TlNodeCorner) */
     APP_SELECT_TEE,        /* точка примыкания: partition + end — конец, упёршийся в бок другой */
-    APP_SELECT_PIPE        /* отверстие под трубу */
+    APP_SELECT_PIPE,       /* отверстие под трубу */
+    /* на развёртке стен комнаты space (вкладка помещения): */
+    APP_SELECT_ROOM_WALL,  /* стена: index — номер в развёртке */
+    APP_SELECT_WALL_PIPE,  /* отверстие на стене: index — в space->wall_pipes */
+    APP_SELECT_WALL_RULER, /* линейка на стене: index — в space->wall_rulers */
+    APP_SELECT_PANNO,      /* панно на стене или на полу: index — в space->pannos */
+    APP_SELECT_FIXTURE,    /* предмет: index — в project->fixtures */
+    APP_SELECT_DRAIN       /* трап: index — в project->drains */
 } AppSelectionKind;
 
 #define APP_MAX_ROOMS 64 /* выделенных разом (Shift+щелчок) */
@@ -70,6 +77,9 @@ typedef struct AppEditPreferences {
     bool measure_magnet;          /* концы линеек и деформационных швов притягиваются к стенам */
     bool auto_align;              /* выравнивание по горизонтали/вертикали и по углам стен */
     double expansion_joint_gap;   /* зазор новых деформационных швов */
+    double divider_gap;           /* шов новых линий раздела */
+    int fixture_kind;             /* вид новых предметов (TlFixtureKind) */
+    int drain_kind;               /* вид новых трапов (TlDrainKind) */
     double pipe_diameter;         /* диаметр новых отверстий под трубы */
     double house_width, house_height, house_thickness;
     double outline_thickness;     /* поле «Толщина» в свойствах контура */
@@ -89,6 +99,7 @@ struct AppDocument {
     char *path;
     bool dirty;
     AppSelection selection;
+    int walls_space;              /* открыта вкладка стен этой комнаты (id); 0 — план */
     AppEditPreferences preferences;
     AppViewFlags view;
     char status[256];
@@ -120,8 +131,11 @@ void app_document_select(AppDocument *document, AppSelection selection);
 void app_document_clear_selection(AppDocument *document);
 /* Shift+щелчок по комнате: добавить к выделенным комнатам или убрать из них. */
 void app_document_toggle_space(AppDocument *document, TlSpace *space);
-/* Выделенные комнаты (space и добавленные), не больше APP_MAX_ROOMS; 0 — комната не выделена. */
+/* Выделенные комнаты (space и добавленные), не больше APP_MAX_ROOMS; 0 — комната не выделена.
+   Выделенное на развёртке стен — комната этих стен. */
 size_t app_selection_spaces(const AppSelection *selection, TlSpace **spaces);
+/* Выделено на развёртке стен (стена, отверстие или линейка на стене). */
+bool app_selection_on_walls(const AppSelection *selection);
 /* Дом выделенной стены, угла или комнаты. */
 TlOutline *app_selection_outline(const AppSelection *selection);
 bool app_selection_equal(const AppSelection *a, const AppSelection *b);

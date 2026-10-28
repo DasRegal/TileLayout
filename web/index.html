@@ -6,6 +6,9 @@
   <title>TileLayout</title>
   <meta name="description" content="Раскладка плитки по комнатам: план, подрезки, расчёт плитки, клея и СВП. Работает в браузере, проекты остаются у вас.">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#1f5f6b">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="loading">
@@ -33,7 +36,14 @@
           <label><input type="checkbox" data-layer="rulers"> Линейки</label>
         </div>
       </details>
-      <button type="button" data-action="png" data-icon="image" class="icon-only" title="Картинка плана PNG" aria-label="Картинка плана PNG"></button>
+      <details class="view-menu export-menu">
+        <summary title="Картинка и чертежи" data-icon="image" aria-label="Экспорт"></summary>
+        <div class="view-menu-body">
+          <button type="button" data-action="png">Картинка плана PNG</button>
+          <button type="button" data-action="dxf-plan">План в DXF</button>
+          <button type="button" data-action="dxf-cuts">Подрезки в DXF (для станка)</button>
+        </div>
+      </details>
       <button type="button" data-action="print" data-icon="print" title="Печать и PDF (Ctrl+P)">Печать / PDF</button>
     </nav>
   </header>
@@ -49,19 +59,33 @@
       <span class="rail-divider" aria-hidden="true"></span>
       <button type="button" data-tool="joint" data-icon="joint" title="Деформационный шов (J)" aria-pressed="false"><span>Шов</span></button>
       <button type="button" data-tool="pipe" data-icon="pipe" title="Труба: отверстие в плитке (H)" aria-pressed="false"><span>Труба</span></button>
+      <button type="button" data-tool="drain" data-icon="drain" title="Трап: точечный с конвертом или линейный у стены (G)" aria-pressed="false"><span>Трап</span></button>
+      <button type="button" data-tool="fixture" data-icon="fixture" title="Предмет: ванна, поддон, инсталляция, тумба, кухня (B)" aria-pressed="false"><span>Предмет</span></button>
+      <button type="button" data-tool="divider" data-icon="divider" title="Раздел: линия делит пол комнаты на части со своей плиткой (D)" aria-pressed="false"><span>Раздел</span></button>
       <button type="button" data-tool="ruler" data-icon="ruler" title="Линейка (L)" aria-pressed="false"><span>Линейка</span></button>
       <span class="rail-divider" aria-hidden="true"></span>
       <button type="button" data-action="house" data-icon="house" title="Новый дом или квартира по внутренним размерам"><span>Дом…</span></button>
     </nav>
 
     <section class="plan-area" aria-label="План">
+      <div class="room-tabs" id="room-tabs" hidden>
+        <div class="tab-strip" id="tab-strip" role="tablist" aria-label="План и стены помещений"></div>
+        <select id="tab-select" aria-label="План или стены помещения"></select>
+      </div>
+      <div class="stage">
       <canvas id="plan"></canvas>
+      <canvas id="walls" hidden></canvas>
+      <div class="mode-switch" id="mode-switch" hidden>
+        <button type="button" aria-pressed="true" title="Развёртка стен">2D</button>
+        <button type="button" aria-pressed="false" disabled title="Объёмный просмотр — в следующей версии">3D</button>
+      </div>
       <button type="button" class="thanks" data-action="thanks" data-icon="heart">Сказать спасибо автору</button>
       <p id="status" class="status" role="status">Загрузка…</p>
       <div class="zoom" aria-label="Масштаб">
         <button type="button" data-action="zoom-out" data-icon="minus" class="icon-only" title="Отдалить" aria-label="Отдалить"></button>
         <button type="button" data-action="fit" data-icon="fit" class="icon-only" title="Весь план в окне" aria-label="Весь план в окне"></button>
         <button type="button" data-action="zoom-in" data-icon="plus" class="icon-only" title="Приблизить" aria-label="Приблизить"></button>
+      </div>
       </div>
     </section>
 
@@ -71,6 +95,27 @@
       </button>
       <section>
         <p id="room-empty" class="hint">Щёлкните комнату на плане, чтобы настроить её плитку; Shift+щелчок — ещё комнаты, им всем сразу. Колесо мыши или два пальца — масштаб, перетаскивание — сдвиг.</p>
+
+        <div id="underlay-settings" hidden>
+          <h2>Подложка</h2>
+          <p id="underlay-hint" class="hint">Фото или DXF плана квартиры — под план, чтобы обвести стены.</p>
+          <div id="underlay-load" class="button-row">
+            <button type="button" data-underlay="image">Фото плана…</button>
+            <button type="button" data-underlay="dxf">DXF-план…</button>
+          </div>
+          <div id="underlay-controls" hidden>
+            <label class="row check"><input type="checkbox" id="underlay-visible"><span class="caption">Показывать подложку</span></label>
+            <label class="row"><span class="caption">Непрозрачность</span>
+              <span class="control"><input type="number" id="underlay-opacity" min="5" max="100" step="5"><span class="unit">%</span></span></label>
+            <label class="row"><span class="caption" id="underlay-scale-caption">Масштаб</span>
+              <span class="control"><input type="number" id="underlay-scale" min="0.001" max="100000" step="0.1"><span class="unit" id="underlay-scale-unit"></span></span></label>
+            <div class="button-row">
+              <button type="button" data-underlay="calibrate" title="Отметьте концы известного размера на подложке">Калибровать</button>
+              <button type="button" data-underlay="move" title="Точку подложки — в точку плана">Сдвинуть</button>
+              <button type="button" data-underlay="remove" class="danger">Убрать</button>
+            </div>
+          </div>
+        </div>
 
         <div id="tool-settings" hidden>
           <h2 id="tool-title"></h2>
@@ -83,6 +128,14 @@
             <span class="control"><input type="number" id="setting-opening" min="100" max="10000" step="10"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="joint"><span class="caption">Ширина щели шва</span>
             <span class="control"><input type="number" id="setting-joint" min="1" max="100" step="1"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="divider"><span class="caption">Шов линии раздела</span>
+            <span class="control"><input type="number" id="setting-divider" min="0" max="50" step="0.5"><span class="unit">мм</span></span></label>
+          <label class="row" data-tools="drain"><span class="caption">Вид трапа</span>
+            <span class="control"><select id="setting-drain"><option value="point">Трап (конверт)</option><option value="linear">Линейный трап</option></select></span></label>
+          <label class="row" data-tools="fixture"><span class="caption">Что поставить</span>
+            <span class="control"><select id="setting-fixture"><option value="bath">Ванна</option><option value="tray">Душевой поддон</option><option value="installation">Инсталляция</option><option value="cabinet">Тумба</option><option value="kitchen">Кухня</option><option value="stairs">Лестница</option></select></span></label>
+          <label class="row" data-tools="underlay_calibrate"><span class="caption">Настоящее расстояние</span>
+            <span class="control"><input type="number" id="setting-calibration" min="1" max="1000000" step="10"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="pipe"><span class="caption">Диаметр отверстия</span>
             <span class="control"><input type="number" id="setting-pipe" min="5" max="500" step="1"><span class="unit">мм</span></span></label>
           <label class="row" data-tools="rect contour partition opening pipe"><span class="caption">Шаг привязки</span>
@@ -202,6 +255,7 @@
       <label class="row check"><input type="checkbox" id="print-clips" checked> <span class="caption">СВП на плане</span></label>
       <label class="row check"><input type="checkbox" id="print-cuts" checked> <span class="caption">План с номерами и чертежи подрезок</span></label>
       <label class="row check"><input type="checkbox" id="print-calc" checked> <span class="caption">Лист расчёта</span></label>
+      <label class="row check"><input type="checkbox" id="print-estimate"> <span class="caption">Смета для заказчика</span></label>
       <label class="row check"><input type="checkbox" id="print-mono"> <span class="caption">Чёрно-белая печать</span></label>
       <label class="row"><span class="caption">Лист</span>
         <span class="control"><select id="print-orientation"><option value="landscape">A4 альбомный</option><option value="portrait">A4 книжный</option></select></span></label>

@@ -187,7 +187,8 @@ static int compare_pack_lines(const void *left, const void *right)
 
 static void finish_pack_lines(TlPackLineList *lines)
 {
-    qsort(lines->items, lines->count, sizeof(TlPackLine), compare_pack_lines);
+    if (lines->count > 1)
+        qsort(lines->items, lines->count, sizeof(TlPackLine), compare_pack_lines);
     for (size_t i = 0; i < lines->count; i++) {
         TlPackLine *line = &lines->items[i];
         line->units = line->unit_size > 0 ? (int)ceil(line->amount / line->unit_size - 1e-9) : 0;
@@ -264,21 +265,24 @@ static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlL
 
     /* Остатки подрезок идут в подрезки любой комнаты с той же плиткой. Плитка
      * 600×300 в одной комнате и 300×600 в другой — одна: куски поворачиваются. */
-    if (tile->reuse_offcuts && spec->rectangular) { /* куски шеврона и вставки — не полосы */
-        bool turned = lies_lengthwise(spec) != lies_lengthwise(&type->spec);
-        TlPieceList pieces = tl_group_unshared_pieces(group);
-        for (size_t i = 0; i < pieces.count; i++) {
-            TlPiece piece = pieces.items[i];
-            if (piece.spec != spec_index)
-                continue;
-            if (turned)
-                piece = (TlPiece){piece.ref, piece.height, piece.width, piece.spec};
+    bool turned = lies_lengthwise(spec) != lies_lengthwise(&type->spec);
+    bool reuse = tile->reuse_offcuts && spec->rectangular; /* куски шеврона и вставки — не полосы */
+    TlPieceList pieces = tl_group_unshared_pieces(group);
+    if (!type->pieces)
+        type->pieces = TL_NEW(TlPieceList);
+    for (size_t i = 0; i < pieces.count; i++) {
+        TlPiece piece = pieces.items[i];
+        if (piece.spec != spec_index)
+            continue;
+        if (turned)
+            piece = (TlPiece){piece.ref, piece.height, piece.width, piece.spec};
+        tl_piece_list_push(type->pieces, piece); /* для карты раскроя — все подрезки */
+        if (reuse)
             tl_piece_list_push(&tally->pieces, piece);
-        }
-        tl_piece_list_free(&pieces);
-        if (tile->cut_allowance > tally->allowance)
-            tally->allowance = tile->cut_allowance;
     }
+    tl_piece_list_free(&pieces);
+    if (reuse && tile->cut_allowance > tally->allowance)
+        tally->allowance = tile->cut_allowance;
 }
 
 static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const TlLayoutGroup *group)
@@ -319,38 +323,153 @@ static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *
     type->offcut_saving = (int)pairs.count;
     type->count -= (int)pairs.count;
     type->to_buy = (int)ceil(type->count * reserve - 1e-9);
+    if (type->tile->tile_pack > 0) /* упаковками: к покупке — целые упаковки */
+        type->packs = (type->to_buy + type->tile->tile_pack - 1) / type->tile->tile_pack;
     for (size_t i = 0; i < pairs.count; i++)
         tl_offcut_pair_list_push(&summary->offcut_pairs, pairs.items[i]);
     tl_offcut_pair_list_free(&pairs);
     tl_piece_list_free(&tally->pieces);
 }
 
-/* Клей, СВП, затирка, грунт комнаты — по всем её раскладкам (основной пол и зоны). */
+/* Длина стен комнаты без дверей, мм — по ней заход гидроизоляции и лента. */
+static double walls_without_doors(TlProject *project, TlSpace *space)
+{
+    double length = tl_space_room_perimeter(space);
+    TlOpeningList doors = tl_project_space_doors(project, space);
+    for (size_t i = 0; i < doors.count; i++) {
+        TlVec2 from, to;
+        if (tl_project_space_door_edge(project, space, doors.items[i], &from, &to))
+            length -= tl_distance(from, to);
+    }
+    tl_opening_list_free(&doors);
+    return fmax(0, length);
+}
+
+/* Поворот контура в вершине: знак векторного произведения соседних сторон. */
+static double turn_at(const TlPolygon *polygon, size_t v)
+{
+    TlVec2 a = polygon->items[(v + polygon->count - 1) % polygon->count], b = polygon->items[v];
+    TlVec2 c = polygon->items[(v + 1) % polygon->count];
+    TlVec2 d1 = tl_vec2_normalized(tl_vec2_sub(b, a)), d2 = tl_vec2_normalized(tl_vec2_sub(c, b));
+    return tl_vec2_cross(d1, d2);
+}
+
+/* Наружные углы стен в комнате: углы, выступающие внутрь неё (колонна, короб, выступ), и все
+   выпуклые углы отдельно стоящих перегородок. */
+static int external_corners(const TlSpace *space)
+{
+    const TlPolygon *room = tl_space_room_outline(space);
+    double orientation = tl_polygon_signed_area(room) > 0 ? 1 : -1;
+    int count = 0;
+    for (size_t v = 0; v < room->count; v++)
+        count += turn_at(room, v) * orientation < -0.05; /* поворот против обхода — угол внутрь комнаты */
+    for (size_t h = 0; h < space->holes.count; h++) {
+        const TlPolygon *hole = &space->holes.items[h];
+        double hole_orientation = tl_polygon_signed_area(hole) > 0 ? 1 : -1;
+        for (size_t v = 0; v < hole->count; v++)
+            count += turn_at(hole, v) * hole_orientation > 0.05;
+    }
+    return count;
+}
+
+/* Гидроизоляция и уголки — по настройкам комнаты (основного пола). */
+static void summarize_room_extras(TlSummary *summary, TlProject *project, TlRoomSummary *room)
+{
+    const TlTileSettings *tile = tl_space_effective_tile(room->space);
+    if (tile->waterproof) {
+        double walls = walls_without_doors(project, room->space);
+        room->waterproof_area = tl_space_room_area(room->space) + walls * tile->waterproof_height;
+        room->waterproof_kg = room->waterproof_area / 1e6 * tile->waterproof_kg_per_m2 * tile->waterproof_layers;
+        room->tape_length = walls;
+        add_to_pack_line(&summary->waterproof, tile->waterproof_pack_kg, tile->price_waterproof_pack, room->waterproof_kg);
+        add_to_pack_line(&summary->tape, 1, tile->price_tape_m, walls / 1000);
+        summary->waterproof_total_kg += room->waterproof_kg;
+        summary->tape_total_m += walls / 1000;
+    }
+    if (tile->corner_profile_height > 0) {
+        room->corner_count = external_corners(room->space);
+        double length = room->corner_count * tile->corner_profile_height;
+        if (length > 0)
+            add_to_pack_line(&summary->corners, tile->profile_length, tile->price_corner, length);
+        summary->corner_total_mm += length;
+    }
+}
+
+/* Пороги — по проёму один раз: если у одной из его комнат включён порог-профиль. */
+static void summarize_thresholds(TlSummary *summary, TlProject *project)
+{
+    for (size_t i = 0; i < project->openings.count; i++) {
+        const TlOpening *opening = project->openings.items[i];
+        for (size_t s = 0; s < project->spaces.count; s++) {
+            TlSpace *space = project->spaces.items[s];
+            const TlTileSettings *tile = tl_space_effective_tile(space);
+            TlVec2 from, to;
+            if (!tile->enabled || !tile->threshold_profile ||
+                !tl_project_space_door_edge(project, space, opening, &from, &to))
+                continue;
+            add_to_pack_line(&summary->thresholds, tile->profile_length, tile->price_threshold, tl_distance(from, to));
+            summary->threshold_total_mm += tl_distance(from, to);
+            break;
+        }
+    }
+}
+
+/* Клей, СВП, затирка, грунт одной раскладки (on_wall — облицовка стен). */
+static void add_layout_materials(TlSummary *summary, TlRoomSummary *room, const TlTileSettings *tile,
+                                 const TlLayout *layout, bool on_wall)
+{
+    double glue = tl_layout_glue_kg(tile, layout), grout = tl_layout_grout_kg(tile, layout);
+    double primer = tl_layout_primer_l(tile, layout);
+    int clips = tile->use_crosses ? 0 : (int)layout->clip_points.count;
+    int crosses = tile->use_crosses ? tl_layout_cross_count(layout) : 0;
+    room->cut_length += tl_layout_cut_length(layout);
+    room->cross_count += crosses;
+    if (tile->use_crosses)
+        add_to_pack_line(&summary->crosses, tile->crosses_per_pack, tile->price_cross_pack, crosses);
+    room->glue_kg += glue;
+    room->clip_count += clips;
+    room->grout_kg += grout;
+    room->primer_l += primer;
+    if (on_wall) {
+        room->wall_area += layout->floor_area;
+        summary->wall_area += layout->floor_area;
+    } else {
+        room->tiled_area += layout->floor_area;
+        summary->tiled_area += layout->floor_area;
+    }
+    add_to_pack_line(&summary->glue, tile->glue_bag_kg, tile->price_glue_bag, glue);
+    if (!tile->use_crosses)
+        add_to_pack_line(&summary->clips, tile->clips_per_pack, tile->price_clip_pack, clips);
+    add_to_pack_line(&summary->grout, tile->grout_pack_kg, tile->price_grout_pack, grout);
+    add_to_pack_line(&summary->primer, tile->primer_can_l, tile->price_primer_can, primer);
+}
+
+/* Клей, СВП, затирка, грунт комнаты — по всем её раскладкам (основной пол, зоны, стены) и панно. */
 static void summarize_room_materials(TlSummary *summary, TlRoomSummary *room)
 {
     for (size_t i = 0; i < tl_space_layout_count(room->space); i++) {
-        const TlTileSettings *tile = tl_space_layout_tile(room->space, i);
         TlLayout *layout = tl_space_layout_at(room->space, i);
-        if (layout->too_many)
+        if (!layout->too_many)
+            add_layout_materials(summary, room, tl_space_layout_tile(room->space, i), layout,
+                                 tl_space_layout_on_wall(room->space, i));
+    }
+    for (size_t i = 0; i < room->space->pannos.count; i++) {
+        bool on_wall = room->space->pannos.items[i].wall != TL_PANNO_FLOOR;
+        if (on_wall && !room->space->walls.enabled)
             continue;
-        double glue = tl_layout_glue_kg(tile, layout), grout = tl_layout_grout_kg(tile, layout);
-        double primer = tl_layout_primer_l(tile, layout);
-        int clips = (int)layout->clip_points.count;
-        room->glue_kg += glue;
-        room->clip_count += clips;
-        room->grout_kg += grout;
-        room->primer_l += primer;
-        room->tiled_area += layout->floor_area;
-        summary->tiled_area += layout->floor_area;
-        add_to_pack_line(&summary->glue, tile->glue_bag_kg, tile->price_glue_bag, glue);
-        add_to_pack_line(&summary->clips, tile->clips_per_pack, tile->price_clip_pack, clips);
-        add_to_pack_line(&summary->grout, tile->grout_pack_kg, tile->price_grout_pack, grout);
-        add_to_pack_line(&summary->primer, tile->primer_can_l, tile->price_primer_can, primer);
+        TlLayout *layout = tl_space_panno_layout(room->space, i);
+        TlTileSettings tile = tl_space_panno_tile(room->space, i);
+        if (layout && !layout->too_many)
+            add_layout_materials(summary, room, &tile, layout, on_wall);
+        if (layout)
+            tl_layout_free(layout);
     }
     summary->glue_total_kg += room->glue_kg;
     summary->clip_total += room->clip_count;
     summary->grout_total_kg += room->grout_kg;
     summary->primer_total_l += room->primer_l;
+    summary->cross_total += room->cross_count;
+    summary->cut_total_mm += room->cut_length;
 }
 
 TlSummary tl_report_summarize(TlProject *project)
@@ -364,14 +483,20 @@ TlSummary tl_report_summarize(TlProject *project)
                               .tiled = tl_space_effective_tile(space)->enabled && !layout->too_many};
         summary.floor_area += tl_space_area(space);
         summary.room_area += tl_space_room_area(space);
-        if (room.tiled)
+        if (room.tiled) {
             summarize_room_materials(&summary, &room);
+            summarize_room_extras(&summary, project, &room);
+        }
         tl_room_summary_list_push(&summary.rooms, room);
     }
     finish_pack_lines(&summary.glue);
     finish_pack_lines(&summary.clips);
     finish_pack_lines(&summary.grout);
     finish_pack_lines(&summary.primer);
+    summarize_thresholds(&summary, project);
+    TlPackLineList *more[] = {&summary.crosses, &summary.waterproof, &summary.tape, &summary.thresholds, &summary.corners};
+    for (size_t i = 0; i < sizeof more / sizeof more[0]; i++)
+        finish_pack_lines(more[i]);
 
     TlLayoutGroupList groups = tl_report_build_groups(project, NULL, NULL);
     TypeTallyList tallies = {0};
@@ -381,7 +506,8 @@ TlSummary tl_report_summarize(TlProject *project)
         finish_type(&summary, &summary.types.items[i], &tallies.items[i]);
     type_tally_list_free(&tallies);
     tl_report_free_groups(&groups);
-    qsort(summary.types.items, summary.types.count, sizeof(TlTileTypeSummary), compare_types_by_area);
+    if (summary.types.count > 1) /* пустой проект: массива нет */
+        qsort(summary.types.items, summary.types.count, sizeof(TlTileTypeSummary), compare_types_by_area);
     return summary;
 }
 
@@ -395,13 +521,23 @@ const TlRoomSummary *tl_summary_room(const TlSummary *summary, const TlSpace *sp
 
 void tl_summary_free(TlSummary *summary)
 {
-    for (size_t i = 0; i < summary->types.count; i++)
+    for (size_t i = 0; i < summary->types.count; i++) {
         tl_space_list_free(&summary->types.items[i].spaces);
+        if (summary->types.items[i].pieces) {
+            tl_piece_list_free(summary->types.items[i].pieces);
+            free(summary->types.items[i].pieces);
+        }
+    }
     tl_room_summary_list_free(&summary->rooms);
     tl_tile_type_summary_list_free(&summary->types);
     tl_pack_line_list_free(&summary->glue);
     tl_pack_line_list_free(&summary->clips);
     tl_pack_line_list_free(&summary->grout);
     tl_pack_line_list_free(&summary->primer);
+    tl_pack_line_list_free(&summary->crosses);
+    tl_pack_line_list_free(&summary->waterproof);
+    tl_pack_line_list_free(&summary->tape);
+    tl_pack_line_list_free(&summary->thresholds);
+    tl_pack_line_list_free(&summary->corners);
     tl_offcut_pair_list_free(&summary->offcut_pairs);
 }

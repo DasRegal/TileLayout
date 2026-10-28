@@ -25,6 +25,10 @@ const ICONS = {
   catalog: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.2 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>',
   rooms: '<rect x="3.5" y="4" width="8" height="7" rx="1"/><rect x="12.5" y="4" width="8" height="7" rx="1"/><rect x="3.5" y="13" width="17" height="7" rx="1"/>',
+  walls: '<rect x="2.5" y="5" width="6" height="14"/><rect x="9" y="5" width="6" height="14"/><rect x="15.5" y="5" width="6" height="14"/><path d="M2.5 14h19"/><path d="M10.7 19v-6.5h2.6V19"/>',
+  divider: '<rect x="3.5" y="4.5" width="17" height="15" rx="1"/><path d="M11 3v18" stroke-width="2.2"/><path d="M5.5 7.5h3M5.5 10.5h3M5.5 13.5h3M5.5 16.5h3" stroke-width="1.2"/>',
+  fixture: '<rect x="2.5" y="7" width="19" height="11" rx="2"/><rect x="5" y="9.5" width="14" height="6" rx="2"/><circle cx="7.5" cy="12.5" r="0.8" fill="currentColor"/>',
+  drain: '<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M3.5 3.5l17 17M20.5 3.5l-17 17" stroke-dasharray="2 2"/><rect x="9.5" y="9.5" width="5" height="5" fill="currentColor"/>',
   trash: '<path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 13h9l1-13"/>',
 };
 

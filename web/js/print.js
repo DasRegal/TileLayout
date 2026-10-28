@@ -1,10 +1,12 @@
 // Печать и PDF — листы A4 как у настольной программы (src/app/app_print.c):
 // план в масштабе 1:N (если не влезает — на нескольких листах), план с
-// номерами плиток, чертежи подрезок карточками 63×56 мм, лист расчёта.
+// номерами плиток, развёртки стен комнат с облицовкой, чертежи подрезок карточками
+// 63×56 мм, лист расчёта.
 // Листы собираются на странице, печатает браузер («Сохранить как PDF» — там же).
 
 import { drawScene } from './render.js';
 import { View } from './view.js';
+import { drawRoomWalls, wallsBounds } from './walls.js';
 
 const PX_PER_MM = 96 / 25.4; // CSS-пикселей на мм бумаги
 const MARGIN_MM = 10;
@@ -18,12 +20,14 @@ export const PRINT_SCALES = [10, 20, 25, 50, 75, 100, 150, 200, 250, 500];
 
 /**
  * Собрать листы и открыть печать браузера. options: {tiles, dims, clips, cuts,
- * calc, mono, landscape, scale (0 — по размеру листа)}; image(ссылка) — рисунок
+ * calc, estimate (смета для заказчика), mono, landscape, scale (0 — по размеру листа)}; image(ссылка) — рисунок
  * плитки; loadImages(scene) — обещание: рисунки плиток сцены загружены.
  */
 export async function printProject({ core, title, options, image, loadImages }) {
   const scene = core.scene();
+  const walls = scene.spaces.map((space) => core.roomWalls(space.id)).filter((data) => data?.enabled && data.walls.length);
   await loadImages(scene);
+  await loadImages({ spaces: walls.flatMap((data) => [...data.layouts, ...data.pannos]) }); // рисунки плитки стен и панно
   const paper = options.landscape ? { width: 297, height: 210 } : { width: 210, height: 297 };
   const area = { width: (paper.width - 2 * MARGIN_MM) * PX_PER_MM, height: (paper.height - 2 * MARGIN_MM) * PX_PER_MM };
   const root = document.createElement('div');
@@ -31,11 +35,14 @@ export async function printProject({ core, title, options, image, loadImages }) 
   const sheets = [];
   const plan = layoutPlan(scene.bounds, area, options.scale);
   sheets.push(...planSheets(scene, plan, area, title, options, image, null));
+  if (options.cuts) sheets.push(...planSheets(scene, plan, area, title, options, image, core.tileNumbers()));
+  for (const data of walls) sheets.push(wallsSheet(data, area, title, options, image));
   if (options.cuts) {
-    sheets.push(...planSheets(scene, plan, area, title, options, image, core.tileNumbers()));
     sheets.push(...cardSheets(core.cutCards(), area, title, options.mono));
+    sheets.push(cutMapSheet(core.cutMap(), title, options.mono));
   }
   if (options.calc) sheets.push(calculationSheet(core.summary(), title, options.mono));
+  if (options.estimate) sheets.push(customerSheet(core.summary(), title, options.mono));
   root.append(...sheets);
   document.body.append(root);
   setPageSize(paper);
@@ -122,6 +129,34 @@ function planSheets(scene, plan, area, title, options, image, numbers) {
     sheets.push(sheet);
   }
   return sheets;
+}
+
+/** Развёртка стен комнаты на одном листе — в стандартном масштабе; с чертежами подрезок — с номерами. */
+function wallsSheet(data, area, title, options, image) {
+  const areaHeight = area.height - HEADER_PX;
+  const [left, top, right, bottom] = wallsBounds(data);
+  const fit = Math.min((area.width - 2 * DIMENSION_MARGIN_PX) / Math.max(right - left, 1),
+    (areaHeight - 2 * DIMENSION_MARGIN_PX) / Math.max(bottom - top, 1));
+  const wanted = PX_PER_MM / fit;
+  const scale = FIT_SCALES.find((s) => s >= wanted - 1e-6) ?? Math.ceil(wanted);
+  const sheet = makeSheet(title, `развёртка стен: ${data.name}`, `Масштаб 1:${scale}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(area.width * RESOLUTION);
+  canvas.height = Math.round(areaHeight * RESOLUTION);
+  canvas.style.width = `${area.width}px`;
+  canvas.style.height = `${areaHeight}px`;
+  const view = new View();
+  view.scale = PX_PER_MM / scale;
+  view.panX = (area.width - (right - left) * view.scale) / 2 - left * view.scale;
+  view.panY = (areaHeight - (bottom - top) * view.scale) / 2 - top * view.scale;
+  drawRoomWalls(canvas.getContext('2d'), data, view, {
+    dpr: RESOLUTION,
+    printing: true,
+    image: options.mono ? () => null : image,
+    layers: { tiles: true, numbers: options.cuts, dims: options.dims, clips: options.clips },
+  });
+  sheet.querySelector('.sheet-body').append(canvas);
+  return sheet;
 }
 
 function makeSheet(title, subject, right) {
@@ -268,6 +303,20 @@ function drawCard(ctx, card, x, y, w, h, mono) {
   const labels = new Labels([x + 2, y + 26, x + w - 2, y + h - 2]);
   for (const part of card.parts) for (const shape of part.shapes) pieceLines(ctx, labels, shape, card, scale, ox, oy, mono);
   for (const part of card.parts) for (const drill of part.drills) drawDrill(ctx, labels, drill, part, scale, ox, oy, mono);
+  for (const part of card.parts) { // запил 45° — толстой линией по стороне
+    for (const [x0, y0, x1, y1] of part.miters || []) {
+      ctx.beginPath();
+      ctx.moveTo(ox + x0 * scale, oy + y0 * scale);
+      ctx.lineTo(ox + x1 * scale, oy + y1 * scale);
+      ctx.strokeStyle = mono ? '#000000' : '#c62828';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.font = '600 9px "Segoe UI", Roboto, Arial, sans-serif';
+      ctx.fillStyle = mono ? '#000000' : '#c62828';
+      ctx.textAlign = 'center';
+      ctx.fillText('запил 45°', ox + ((x0 + x1) / 2) * scale, oy + ((y0 + y1) / 2) * scale - 4);
+    }
+  }
   if (card.kind !== 'drilled') { // у целой плитки размеры — в подписи
     for (const part of card.parts) for (const shape of part.shapes) pieceDimensions(ctx, labels, shape, scale, ox, oy);
   }
@@ -475,6 +524,61 @@ const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2, minimu
 const decimal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
 
 const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 });
+const amount = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+
+/** Смета для заказчика: материалы и работы с ценами, итог, места для подписей. */
+/** Карта раскроя: одинаковые подрезки — стопкой, две подрезки — из одной плитки. */
+function cutMapSheet(types, title, mono) {
+  const sheet = document.createElement('section');
+  sheet.className = 'sheet calculation';
+  const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const swatch = (color) => (mono || !color ? '' : `<span class="swatch-mark" style="color:${color}">■</span> `);
+  const sections = types.map((type) => {
+    const stacks = type.stacks.length
+      ? `<table><thead><tr><th>Кусок, мм</th><th class="n">Плиток</th><th>Номера на плане</th></tr></thead><tbody>${
+        type.stacks.map((s) => `<tr><td>${s.width} × ${s.height}</td><td class="n">${s.numbers.length}</td><td>${s.numbers.join(', ')}</td></tr>`).join('')}</tbody></table>`
+      : '';
+    const pairs = type.pairs.length
+      ? `<p><b>Две подрезки из одной плитки</b> (полосы — по ширине, остальное — в отход)</p>
+        <table><thead><tr><th>Куски</th><th>Полосы, мм</th></tr></thead><tbody>${
+        type.pairs.map((p) => `<tr><td>№${p.first} + №${p.second}</td><td>${p.sizes[0]} + ${p.sizes[1]}</td></tr>`).join('')}</tbody></table>`
+      : '';
+    return `<h2>${swatch(type.color)}Плитка ${escape(type.name)}</h2>${stacks}${pairs}`;
+  });
+  sheet.innerHTML = `<h1>Карта раскроя: ${escape(title)}</h1>
+    <p>Номера — как на плане с номерами и в чертежах подрезок. Одинаковые куски режьте стопкой: целые плитки — одним размером за раз.</p>
+    ${sections.length ? sections.join('') : '<p>Подрезок нет — вся плитка целая.</p>'}`;
+  return sheet;
+}
+
+function customerSheet(summary, title, mono) {
+  const sheet = document.createElement('section');
+  sheet.className = 'sheet calculation';
+  const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const swatch = (color) => (mono || !color ? '' : `<span class="swatch-mark" style="color:${color}">■</span> `);
+  const estimate = summary.estimate;
+  const section = (group, heading, total) => {
+    const lines = estimate.lines.filter((line) => line.group === group);
+    if (!lines.length) return '';
+    const rows = lines.map((line, i) => `<tr><td>${i + 1}</td><td>${swatch(line.color)}${escape(line.name)}</td>
+      <td class="n">${amount.format(line.quantity)} ${line.unit}</td><td class="n">${amount.format(line.price)}</td>
+      <td class="n">${rubles.format(line.cost)}</td></tr>`);
+    return `<h2>${heading}</h2>
+      <table><thead><tr><th>№</th><th>Наименование</th><th class="n">Количество</th><th class="n">Цена, ₽</th><th class="n">Сумма</th></tr></thead>
+      <tbody>${rows.join('')}</tbody></table><p><b>${group === 'work' ? 'Итого работы' : 'Итого материалы'}: ${rubles.format(total)}</b></p>`;
+  };
+  const body = estimate.lines.length
+    ? `${section('materials', 'Материалы', estimate.materials)}${section('work', 'Работы', estimate.work)}
+       <p><big><b>Всего к оплате: ${rubles.format(estimate.total)}</b></big></p>
+       <p><small>Количество плитки — с запасом на бой и подрезку; материалы — целыми упаковками.</small></p>`
+    : '<p>Цены не заданы: задайте их в разделе «Цены для сметы» у комнат.</p>';
+  sheet.innerHTML = `<h1>Смета: ${escape(title)}</h1>
+    <p>Дата: ${new Date().toLocaleDateString('ru-RU')}<br>Укладка плитки: <b>${amount.format(summary.tiled_area)} м²</b>${summary.wall_area > 0 ? `, стены <b>${amount.format(summary.wall_area)} м²</b>` : ''}
+    (площадь комнат ${amount.format(summary.room_area)} м²)</p>
+    ${body}
+    <p class="signatures">Исполнитель: ______________________ &nbsp;&nbsp;&nbsp; Заказчик: ______________________</p>`;
+  return sheet;
+}
 
 /** Смета на листе расчёта; без цен — ничего. */
 function estimateTable(estimate, swatch, escape) {
@@ -517,15 +621,20 @@ function calculationSheet(summary, title, mono) {
   });
   sheet.innerHTML = `
     <h1>${escape(title)}</h1>
-    <p>Дата: ${date}<br>Площадь комнат: <b>${number.format(summary.room_area)} м²</b>; под плитку: <b>${number.format(summary.tiled_area)} м²</b> (с полом под дверьми)${untiled > 0.001 ? `, без плитки: ${number.format(untiled)} м²` : ''}</p>
+    <p>Дата: ${date}<br>Площадь комнат: <b>${number.format(summary.room_area)} м²</b>; под плитку: <b>${number.format(summary.tiled_area)} м²</b> (с полом под дверьми)${untiled > 0.001 ? `, без плитки: ${number.format(untiled)} м²` : ''}${summary.wall_area > 0 ? `; стены: <b>${number.format(summary.wall_area)} м²</b>` : ''}</p>
     <h2>Плитка к покупке</h2>
     <table><thead><tr><th>№</th><th>Плитка</th><th>Комнаты</th><th class="n">Площадь, м²</th><th class="n">Нужно, шт.</th><th class="n">Запас</th><th class="n">Купить, шт.</th><th class="n">Купить, м²</th></tr></thead>
     <tbody>${types.join('')}</tbody></table>
-    <h2>Клей, СВП, затирка, грунт</h2>
+    <h2>Клей, СВП, затирка, грунт и прочее</h2>
     <p>${summary.glue.total_kg > 0 ? `Клей: <b>${decimal.format(summary.glue.total_kg)} кг</b> =${packs(summary.glue.packs, 'кг', 'мешк.')}<br>` : ''}
        ${summary.clips.total > 0 ? `СВП: <b>${summary.clips.total} шт.</b> =${packs(summary.clips.packs, 'шт.', 'уп.')}<br>` : ''}
        ${summary.grout.total_kg > 0 ? `Затирка: <b>${number.format(summary.grout.total_kg)} кг</b> =${packs(summary.grout.packs, 'кг', 'уп.')}<br>` : ''}
-       ${summary.primer.total_l > 0 ? `Грунт: <b>${decimal.format(summary.primer.total_l)} л</b> =${packs(summary.primer.packs, 'л', 'кан.')}` : ''}</p>
+       ${summary.primer.total_l > 0 ? `Грунт: <b>${decimal.format(summary.primer.total_l)} л</b> =${packs(summary.primer.packs, 'л', 'кан.')}<br>` : ''}
+       ${summary.crosses.total > 0 ? `Крестики: <b>${summary.crosses.total} шт.</b> =${packs(summary.crosses.packs, 'шт.', 'уп.')}<br>` : ''}
+       ${summary.waterproof.total_kg > 0 ? `Гидроизоляция: <b>${decimal.format(summary.waterproof.total_kg)} кг</b> =${packs(summary.waterproof.packs, 'кг', 'уп.')}; лента <b>${decimal.format(summary.waterproof.tape_m)} м</b><br>` : ''}
+       ${summary.profiles.thresholds_m > 0 ? `Пороги: <b>${number.format(summary.profiles.thresholds_m)} м</b> =${packs(summary.profiles.thresholds, 'мм', 'планк.')}<br>` : ''}
+       ${summary.profiles.corners_m > 0 ? `Уголки: <b>${number.format(summary.profiles.corners_m)} м</b> =${packs(summary.profiles.corners, 'мм', 'планк.')}<br>` : ''}
+       Подрезка: <b>${decimal.format(summary.cut_m)} пог. м</b> резов</p>
     ${estimateTable(summary.estimate, swatch, escape)}
     <h2>По комнатам</h2>
     <table><thead><tr><th>Комната</th><th class="n">Площадь, м²</th><th class="n">Под плитку, м²</th><th>Плитка / раскладка</th><th class="n">Плиток</th><th class="n">Клей, кг</th><th class="n">СВП</th></tr></thead>

@@ -9,6 +9,7 @@
 #include "tl_project.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -266,6 +267,128 @@ static void assign_joint_strips(TlProject *project)
     }
 }
 
+static bool inside_first_only(const bool *inside, size_t count, void *context)
+{
+    (void)context;
+    if (!inside[0])
+        return false;
+    for (size_t i = 1; i < count; i++)
+        if (inside[i])
+            return false;
+    return true;
+}
+
+/* Каждой комнате — части пола между линиями (швами и линиями раздела) и её участки на них. */
+static void assign_regions(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_region_list_free_all(&space->regions);
+        if (space->joint_strips.count > 0) {
+            TlPolygonList polygons = {0};
+            tl_polygon_list_push(&polygons, tl_polygon_copy(&space->outline));
+            for (size_t i = 0; i < space->holes.count; i++)
+                tl_polygon_list_push(&polygons, tl_polygon_copy(&space->holes.items[i]));
+            for (size_t i = 0; i < space->joint_strips.count; i++)
+                tl_polygon_list_push(&polygons, tl_polygon_copy(&space->joint_strips.items[i]));
+            space->regions = tl_regions_build_merged(polygons.items, polygons.count, inside_first_only, NULL);
+            tl_polygon_list_free_all(&polygons);
+        }
+        if (space->regions.count == 0) /* без линий — весь пол одна часть */
+            tl_region_list_push(&space->regions,
+                                (TlRegion){tl_polygon_copy(&space->outline), tl_polygon_list_deep_copy(&space->holes)});
+        tl_space_match_areas(space);
+    }
+}
+
+#define FIXTURE_ON_WALL_MM 30.0 /* спинка предмета ближе — стоит у стены */
+
+/* Каждой комнате — предметы в ней: пол под ними без плитки и стены, которые они закрывают. */
+static void assign_fixtures(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_polygon_list_free_all(&space->fixture_floor);
+        tl_fixture_list_clear(&space->stairs);
+        TlPolygon walls = tl_space_wall_outline(space);
+        for (size_t f = 0; f < project->fixtures.count; f++) {
+            const TlFixture *fixture = &project->fixtures.items[f];
+            if (!tl_space_contains(space, fixture->center))
+                continue;
+            TlPolygon outline = tl_fixture_outline(fixture);
+            if (fixture->kind == TL_FIXTURE_STAIRS && fixture->steps > 0)
+                tl_fixture_list_push(&space->stairs, *fixture);
+            if (!fixture->under)
+                tl_polygon_list_push(&space->fixture_floor, tl_polygon_copy(&outline));
+            for (size_t w = 0; !fixture->behind && w < walls.count; w++) { /* закрытый кусок стены */
+                TlVec2 a = tl_polygon_edge_start(&walls, w), b = tl_polygon_edge_end(&walls, w);
+                double length = tl_distance(a, b), from = INFINITY, to = -INFINITY;
+                for (size_t e = 0; length > 1 && e < outline.count; e++) { /* стороны предмета вдоль стены */
+                    TlVec2 p = tl_polygon_edge_start(&outline, e), q = tl_polygon_edge_end(&outline, e);
+                    double tp, tq;
+                    if (tl_point_segment_distance(p, a, b, &tp) < FIXTURE_ON_WALL_MM &&
+                        tl_point_segment_distance(q, a, b, &tq) < FIXTURE_ON_WALL_MM) {
+                        from = fmin(from, fmin(tp, tq) * length);
+                        to = fmax(to, fmax(tp, tq) * length);
+                    }
+                }
+                if (to - from > 1)
+                    tl_wall_opening_list_push(&space->wall_openings,
+                                              (TlWallOpening){SIZE_MAX, f, w, from, to, 0, fixture->height, 0});
+            }
+            tl_polygon_free(&outline);
+        }
+        tl_polygon_free(&walls);
+    }
+}
+
+/* Шов плитки на части пола region комнаты: участка — своей плитки, иначе — комнаты. */
+static double part_joint(TlSpace *space, size_t region)
+{
+    size_t area = tl_space_area_of_region(space, region);
+    double joint = area != SIZE_MAX && space->areas.items[area].tiled ? space->areas.items[area].zone.tile.joint_width
+                                                                       : tl_space_effective_tile(space)->joint_width;
+    return fmax(joint, 1);
+}
+
+/* Каждой комнате — трапы в ней: решётки без плитки, разрезы конверта от точечного трапа к углам его
+   части пола; что режет плитку — швы и эти разрезы. */
+static void assign_drains(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_polygon_list_free_all(&space->slope_lines);
+        tl_polygon_list_free_all(&space->cut_strips);
+        space->cut_strips = tl_polygon_list_deep_copy(&space->joint_strips);
+        for (size_t d = 0; d < project->drains.count; d++) {
+            const TlDrain *drain = &project->drains.items[d];
+            if (!tl_space_contains(space, drain->center))
+                continue;
+            tl_polygon_list_push(&space->fixture_floor, tl_drain_outline(drain));
+            size_t region = tl_space_region_at(space, drain->center);
+            if (drain->kind != TL_DRAIN_POINT || !drain->envelope || region == SIZE_MAX)
+                continue;
+            TlPolygon corners = tl_polygon_copy(&space->regions.items[region].outline);
+            tl_polygon_clean(&corners, 1.0);
+            double half = part_joint(space, region) / 2;
+            for (size_t i = 0; i < corners.count; i++) {
+                TlVec2 corner = corners.items[i];
+                if (tl_distance(corner, drain->center) < drain->size)
+                    continue;
+                const TlVec2 line[2] = {drain->center, corner};
+                tl_polygon_list_push(&space->slope_lines, tl_polygon_from_points(line, 2));
+                TlVec2 along = tl_vec2_normalized(tl_vec2_sub(corner, drain->center));
+                TlVec2 side = tl_vec2_scale(tl_vec2_perpendicular(along), half);
+                TlVec2 end = tl_vec2_add(corner, tl_vec2_scale(along, 5)); /* за угол — наверняка до стены */
+                const TlVec2 strip[4] = {tl_vec2_add(drain->center, side), tl_vec2_add(end, side),
+                                         tl_vec2_sub(end, side), tl_vec2_sub(drain->center, side)};
+                tl_polygon_list_push(&space->cut_strips, tl_polygon_from_points(strip, 4));
+            }
+            tl_polygon_free(&corners);
+        }
+    }
+}
+
 /* Каждой комнате — трубы, задевающие её пол. */
 static void assign_pipes(TlProject *project)
 {
@@ -278,6 +401,40 @@ static void assign_pipes(TlProject *project)
             if (tl_circle_touches_rect(circle, bounds) && tl_space_contains(space, circle.center))
                 tl_circle_list_push(&space->pipes, circle);
         }
+    }
+}
+
+/* Каждой комнате — проёмы на её стенах: где вырез проёма касается стороны контура комнаты. */
+static void assign_wall_openings(TlProject *project)
+{
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        tl_wall_opening_list_clear(&space->wall_openings);
+        TlPolygon walls = tl_space_wall_outline(space);
+        for (size_t i = 0; i < project->openings.count; i++) {
+            const TlOpening *opening = project->openings.items[i];
+            TlPolygon cut;
+            if (!tl_project_opening_cut(project, opening, &cut))
+                continue;
+            for (size_t w = 0; w < walls.count; w++) {
+                TlVec2 a = tl_polygon_edge_start(&walls, w), b = tl_polygon_edge_end(&walls, w);
+                double length = tl_distance(a, b), from = INFINITY, to = -INFINITY;
+                for (size_t k = 0; length > 1 && k < cut.count; k++) {
+                    double along;
+                    if (tl_point_segment_distance(cut.items[k], a, b, &along) < 2.0) { /* вырез — с запасом 1 мм */
+                        from = fmin(from, along * length);
+                        to = fmax(to, along * length);
+                    }
+                }
+                if (to - from > 1) {
+                    TlWallOpening hole = {i, SIZE_MAX, w, from, to, opening->sill, opening->sill + opening->height,
+                                          opening->reveal};
+                    tl_wall_opening_list_push(&space->wall_openings, hole);
+                }
+            }
+            tl_polygon_free(&cut);
+        }
+        tl_polygon_free(&walls);
     }
 }
 
@@ -356,6 +513,10 @@ void tl_project_update_spaces(TlProject *project)
             make_room_name(&named, names_in_use, name, sizeof name);
             TlTileSettings tile = parent[c] ? parent[c]->tile : tl_tile_settings_for_new_room();
             space = tl_space_new(tl_project_take_space_id(project), name, tile);
+            if (parent[c]) { /* часть разделённой комнаты — её высота и стены */
+                space->height = parent[c]->height;
+                space->walls = parent[c]->walls;
+            }
             tl_space_list_push(&named, space);
             names_in_use++;
             sort_key = (long)old.count + space->id;
@@ -389,4 +550,8 @@ void tl_project_update_spaces(TlProject *project)
     assign_joint_strips(project);
     assign_threshold_strips(project);
     assign_pipes(project);
+    assign_wall_openings(project);
+    assign_regions(project);
+    assign_fixtures(project);
+    assign_drains(project);
 }

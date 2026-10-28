@@ -463,3 +463,49 @@ void tl_region_list_free_all(TlRegionList *regions)
         tl_region_free(&regions->items[i]);
     tl_region_list_free(regions);
 }
+
+static bool inside_slab_not_holes(const bool *inside, size_t count, void *context)
+{
+    (void)context;
+    if (!inside[0] || !inside[1])
+        return false;
+    for (size_t i = 2; i < count; i++)
+        if (inside[i])
+            return false;
+    return true;
+}
+
+TlPolygonList tl_region_pieces(const TlRegion *region)
+{
+    TlPolygonList pieces = {0};
+    if (region->holes.count == 0) {
+        tl_polygon_list_push(&pieces, tl_polygon_copy(&region->outline));
+        return pieces;
+    }
+    TlRect bounds = tl_polygon_bounds(&region->outline);
+    TlDoubleArray cuts = {0}; /* полосы между вертикалями через середины дыр: дыра режется пополам */
+    tl_double_array_push(&cuts, bounds.left - 1);
+    for (size_t h = 0; h < region->holes.count; h++) {
+        TlRect hole = tl_polygon_bounds(&region->holes.items[h]);
+        tl_double_array_push(&cuts, (hole.left + hole.right) / 2);
+    }
+    tl_double_array_push(&cuts, bounds.right + 1);
+    qsort(cuts.items, cuts.count, sizeof(double), compare_doubles);
+    for (size_t i = 0; i + 1 < cuts.count; i++) {
+        if (cuts.items[i + 1] - cuts.items[i] < 0.01)
+            continue;
+        TlPolygonList polygons = {0};
+        TlRect slab = {cuts.items[i], bounds.top - 1, cuts.items[i + 1], bounds.bottom + 1};
+        tl_polygon_list_push(&polygons, tl_polygon_from_rect(slab));
+        tl_polygon_list_push(&polygons, tl_polygon_copy(&region->outline));
+        for (size_t h = 0; h < region->holes.count; h++)
+            tl_polygon_list_push(&polygons, tl_polygon_copy(&region->holes.items[h]));
+        TlRegionList parts = tl_regions_build_merged(polygons.items, polygons.count, inside_slab_not_holes, NULL);
+        for (size_t k = 0; k < parts.count; k++) /* дыры разрезаны — у кусков их нет */
+            tl_polygon_list_push(&pieces, tl_polygon_copy(&parts.items[k].outline));
+        tl_region_list_free_all(&parts);
+        tl_polygon_list_free_all(&polygons);
+    }
+    tl_double_array_free(&cuts);
+    return pieces;
+}

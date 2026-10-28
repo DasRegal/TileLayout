@@ -11,8 +11,12 @@
  *   проём — вдоль своей стены; стык полов в нём — поперёк стены, за конец у
  *     косяка — только этот конец (стык наискосок);
  *   линейка и деформационный шов за линию — целиком, за конец — с притягиванием
- *     к стенам и выравниванием по другому концу;
+ *     к стенам и выравниванием по другому концу; концы других швов и линий
+ *     раздела, лежащие на тянутой линии, держатся за неё (сочленения);
  *   труба — целиком, по сетке;
+ *   панно на полу — целиком, в осях раскладки комнаты, по сетке;
+ *   предмет (ванна, тумба…) — целиком; у стены встаёт к ней спинкой;
+ *   трап — по сетке; линейный — у стены вдоль неё;
  *   сетка плитки комнаты — сдвиг раскладки (целыми мм).
  *
  * Вызывающий решает, когда начинается перетаскивание (порог в пикселях) и
@@ -37,7 +41,10 @@ typedef enum TlDragKind {
     TL_DRAG_RULER,     /* ruler, index — 0 линия, 1 начало, 2 конец */
     TL_DRAG_JOINT,     /* joint (деформационный шов), index — как у линейки */
     TL_DRAG_TILES,     /* space — сетка плитки (у общего пола — комнаты-источника) */
-    TL_DRAG_PIPE       /* pipe — отверстие под трубу */
+    TL_DRAG_PIPE,      /* pipe — отверстие под трубу */
+    TL_DRAG_PANNO,     /* space, index — панно на полу (space->pannos) */
+    TL_DRAG_FIXTURE,   /* index — предмет (project->fixtures) */
+    TL_DRAG_DRAIN      /* index — трап (project->drains) */
 } TlDragKind;
 
 #define TL_DRAG_PARTITION_BODY 0
@@ -48,6 +55,8 @@ typedef enum TlDragKind {
 #define TL_DRAG_THRESHOLD_LINE 1 /* стык целиком */
 #define TL_DRAG_THRESHOLD_FROM 2 /* конец у косяка в начале проёма */
 #define TL_DRAG_THRESHOLD_TO 3   /* у косяка в конце */
+
+#define TL_DRAG_MAX_FOLLOWERS 32
 
 typedef struct TlDragTarget {
     TlDragKind kind;
@@ -78,6 +87,9 @@ typedef struct TlDrag {
     double original_shares[2];     /* стык: доли у косяков в начале и в конце проёма */
     double original_share;         /* стык: доля под курсором, когда взяли */
     TlSnapPoint measure;           /* линейка и шов: к чему притянулся конец */
+    TlVec2 *followers[TL_DRAG_MAX_FOLLOWERS]; /* шов: концы других линий на нём */
+    double follower_at[TL_DRAG_MAX_FOLLOWERS]; /* где на линии (0 — начало, 1 — конец) */
+    size_t follower_count;
     double original_offset_x, original_offset_y; /* сетка плитки */
     struct TlMeasureAnchors *measures;   /* проём: концы линеек на его краях едут с ним */
     bool geometry_changed;

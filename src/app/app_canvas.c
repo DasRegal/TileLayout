@@ -16,7 +16,8 @@
 static const AppTool *const TOOLS[APP_TOOL_COUNT] = {
     &APP_SELECT_TOOL, &APP_RECT_TOOL, &APP_CONTOUR_TOOL,
     &APP_PARTITION_TOOL, &APP_OPENING_TOOL, &APP_TILES_TOOL, &APP_RULER_TOOL,
-    &APP_EXPANSION_JOINT_TOOL, &APP_PIPE_TOOL,
+    &APP_EXPANSION_JOINT_TOOL, &APP_PIPE_TOOL, &APP_DIVIDER_TOOL, &APP_FIXTURE_TOOL, &APP_DRAIN_TOOL,
+    &APP_UNDERLAY_TOOL,
 };
 
 #define RULER_SNAP_RADIUS_PX 10.0
@@ -365,6 +366,21 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         app_render_pipe(cr, view, s->pipe, app_color_hex(APP_BLUE), true);
         return;
     }
+    if (s->kind == APP_SELECT_DRAIN) {
+        app_render_drain(cr, view, &canvas->document->project->drains.items[s->index], app_color_hex(APP_BLUE));
+        return;
+    }
+    if (s->kind == APP_SELECT_FIXTURE) {
+        app_render_fixture(cr, view, &canvas->document->project->fixtures.items[s->index], app_color_hex(APP_BLUE), true);
+        return;
+    }
+    if (s->kind == APP_SELECT_PANNO && s->space->pannos.items[s->index].wall == TL_PANNO_FLOOR) {
+        TlPolygon outline = tl_space_panno_outline(s->space, (size_t)s->index);
+        app_path_polygon(cr, view, &outline);
+        tl_polygon_free(&outline);
+        app_stroke_dashed(cr, app_color_hex(APP_BLUE), 2.5, 7);
+        return;
+    }
     if (s->kind == APP_SELECT_RULER) {
         app_render_ruler(cr, view, s->ruler, app_color_hex(APP_BLUE), 1.5);
         draw_handle(cr, app_view_to_screen(view, s->ruler->start), s->index == 1 ? 5 : 3.5, s->index == 1, APP_BLUE);
@@ -458,6 +474,11 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         }
         if (count > 1)
             return; /* несколько комнат — без углов дома */
+        if (s->index > 0 && (size_t)(s->index - 1) < s->space->regions.count) { /* выделенная часть пола */
+            const TlRegion *region = &s->space->regions.items[s->index - 1];
+            app_path_polygon_with_holes(cr, view, &region->outline, &region->holes);
+            fill_and_outline(cr, app_color_rgba(26, 115, 232, 0.22), APP_BLUE, 1.6);
+        }
     } else if (s->kind == APP_SELECT_WALL) {
         TlPolygon quad = tl_outline_wall_quad(outline, (size_t)s->index, NULL);
         app_path_polygon(cr, view, &quad);
@@ -626,7 +647,9 @@ static bool switch_tool_by_letter(AppCanvas *canvas, gunichar character)
                    {'p', 0x0437, APP_TOOL_CONTOUR}, {'w', 0x0446, APP_TOOL_PARTITION},
                    {'o', 0x0449, APP_TOOL_OPENING}, {'t', 0x0435, APP_TOOL_TILES},
                    {'m', 0x044c, APP_TOOL_RULER},   {'j', 0x043e, APP_TOOL_EXPANSION_JOINT},
-                   {'h', 0x0440, APP_TOOL_PIPE},    {'f', 0x0430, -1}};
+                   {'h', 0x0440, APP_TOOL_PIPE},    {'d', 0x0432, APP_TOOL_DIVIDER},
+                   {'b', 0x0438, APP_TOOL_FIXTURE}, {'g', 0x043f, APP_TOOL_DRAIN},
+                   {'f', 0x0430, -1}};
     gunichar lower = g_unichar_tolower(character);
     for (size_t i = 0; i < sizeof LETTERS / sizeof LETTERS[0]; i++)
         if (lower == LETTERS[i].latin || lower == LETTERS[i].cyrillic) {
@@ -723,14 +746,33 @@ void app_canvas_on_pointer(AppCanvas *canvas, AppCanvasPointerListener listener,
     canvas->pointer_listener_data = user_data;
 }
 
+void app_canvas_on_open_space(AppCanvas *canvas, AppCanvasSpaceListener listener, void *user_data)
+{
+    canvas->open_space_listener = listener;
+    canvas->open_space_listener_data = user_data;
+}
+
 void app_canvas_fit(AppCanvas *canvas)
 {
     TlRect bounds;
-    if (app_render_plan_bounds(canvas->document->project, &bounds))
+    const TlUnderlay *underlay = &canvas->document->project->underlay;
+    bool found = app_render_plan_bounds(canvas->document->project, &bounds);
+    if (underlay->visible && tl_underlay_present(underlay)) { /* на экране — и подложка */
+        TlRect r = tl_underlay_bounds(underlay);
+        bounds = found ? tl_rect_united(bounds, r) : r;
+        found = true;
+    }
+    if (found)
         app_view_fit(&canvas->view, bounds, FIT_MARGIN);
     else
         canvas->view = (AppView){0.1, 60, 60, canvas->view.width, canvas->view.height};
     app_canvas_redraw(canvas);
+}
+
+void app_canvas_edit_underlay(AppCanvas *canvas, bool move)
+{
+    canvas->underlay_move = move;
+    app_canvas_set_tool(canvas, APP_TOOL_UNDERLAY);
 }
 
 void app_canvas_zoom(AppCanvas *canvas, double factor)

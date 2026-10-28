@@ -1,6 +1,7 @@
 #include "app_commands.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include "app_catalogs.h"
 #include "tl_layout.h"
@@ -118,6 +119,21 @@ void app_command_add_ruler(AppDocument *document, TlVec2 start, TlVec2 end)
     app_document_notify(document, APP_CHANGED_SELECTION);
 }
 
+void app_command_add_divider(AppDocument *document, TlVec2 start, TlVec2 end)
+{
+    if (tl_distance(start, end) < 1)
+        return;
+    app_document_checkpoint(document, "");
+    TlExpansionJoint *line = tl_expansion_joint_new(start, end, document->preferences.divider_gap);
+    line->kind = TL_LINE_DIVIDER;
+    tl_project_add_expansion_joint(document->project, line);
+    tl_project_update_spaces(document->project);
+    document->selection = (AppSelection){.kind = APP_SELECT_EXPANSION_JOINT, .expansion_joint = line};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+    app_document_status(document, "Линия раздела. Щёлкните часть комнаты, чтобы задать её покрытие");
+}
+
 void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2 end)
 {
     if (tl_distance(start, end) < 1)
@@ -129,6 +145,30 @@ void app_command_add_expansion_joint(AppDocument *document, TlVec2 start, TlVec2
     document->selection = (AppSelection){.kind = APP_SELECT_EXPANSION_JOINT, .expansion_joint = joint};
     app_document_commit(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_add_drain(AppDocument *document, TlDrain drain)
+{
+    app_document_checkpoint(document, "");
+    tl_drain_list_push(&document->project->drains, drain);
+    tl_project_update_spaces(document->project);
+    document->selection = (AppSelection){.kind = APP_SELECT_DRAIN, .index = (int)document->project->drains.count - 1};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_add_fixture(AppDocument *document, TlFixture fixture)
+{
+    app_document_checkpoint(document, "");
+    tl_fixture_list_push(&document->project->fixtures, fixture);
+    tl_project_update_spaces(document->project);
+    document->selection =
+        (AppSelection){.kind = APP_SELECT_FIXTURE, .index = (int)document->project->fixtures.count - 1};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+    app_document_status(document, "%s: под ней %s, за ней на стенах %s — поменять можно на панели",
+                        tl_fixture_kind_name(fixture.kind), fixture.under ? "плитка" : "без плитки",
+                        fixture.behind ? "плитка" : "без плитки");
 }
 
 void app_command_add_pipe(AppDocument *document, TlVec2 center)
@@ -221,7 +261,14 @@ void app_command_set_tile_texture(AppDocument *document, const TlCatalog *catalo
     app_document_commit(document);
 }
 
-void app_command_set_zone_texture(AppDocument *document, TlZoneKind kind, const TlCatalog *catalog,
+TlZone *app_space_zone(TlSpace *space, int zone)
+{
+    if (zone >= APP_ZONE_TOTAL)
+        return &space->areas.items[zone - APP_ZONE_TOTAL].zone;
+    return zone < TL_ZONE_COUNT ? &space->zones[zone] : &space->walls.bands[zone - APP_ZONE_WALL(0)];
+}
+
+void app_command_set_zone_texture(AppDocument *document, int zone, const TlCatalog *catalog,
                                   const TlCatalogTile *tile)
 {
     TlSpace *rooms[APP_MAX_ROOMS];
@@ -230,7 +277,7 @@ void app_command_set_zone_texture(AppDocument *document, TlZoneKind kind, const 
         return;
     app_document_checkpoint(document, "");
     for (size_t i = 0; i < count; i++) {
-        TlTileSettings *settings = &rooms[i]->zones[kind].tile;
+        TlTileSettings *settings = &app_space_zone(rooms[i], zone)->tile;
         if (catalog && tile)
             app_catalogs_apply(catalog, tile, settings);
         else
@@ -253,6 +300,33 @@ void app_command_delete_selection(AppDocument *document)
         return;
     }
     switch (s.kind) {
+    case APP_SELECT_WALL_PIPE:
+    case APP_SELECT_WALL_RULER:
+    case APP_SELECT_PANNO:
+        app_document_checkpoint(document, "");
+        if (s.kind == APP_SELECT_WALL_PIPE)
+            tl_wall_pipe_list_remove_at(&s.space->wall_pipes, (size_t)s.index);
+        else if (s.kind == APP_SELECT_PANNO)
+            tl_panno_list_remove_at(&s.space->pannos, (size_t)s.index);
+        else
+            tl_wall_ruler_list_remove_at(&s.space->wall_rulers, (size_t)s.index);
+        document->selection = (AppSelection){.kind = APP_SELECT_SPACE, .space = s.space};
+        app_document_commit(document);
+        app_document_notify(document, APP_CHANGED_SELECTION);
+        return;
+    case APP_SELECT_ROOM_WALL:
+        app_document_status(document, "Стены образуют план: правьте их на вкладке «План»");
+        return;
+    case APP_SELECT_DRAIN:
+        app_document_checkpoint(document, "");
+        tl_drain_list_remove_at(&project->drains, (size_t)s.index);
+        tl_project_update_spaces(project);
+        break;
+    case APP_SELECT_FIXTURE:
+        app_document_checkpoint(document, "");
+        tl_fixture_list_remove_at(&project->fixtures, (size_t)s.index);
+        tl_project_update_spaces(project);
+        break;
     case APP_SELECT_RULER:
         app_document_checkpoint(document, "");
         tl_project_delete_ruler(project, s.ruler);
@@ -314,6 +388,96 @@ void app_command_delete_selection(AppDocument *document)
     document->selection = (AppSelection){0};
     app_document_commit(document);
     app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+/* ---- стены комнаты ------------------------------------------------------------ */
+
+void app_command_add_wall_pipe(AppDocument *document, TlSpace *space, size_t wall, TlVec2 at, double diameter)
+{
+    const TlRoomWall *room_wall = tl_space_wall_at(space, wall);
+    if (!room_wall)
+        return;
+    app_document_checkpoint(document, "");
+    tl_wall_pipe_list_push(&space->wall_pipes, (TlWallPipe){room_wall->edge, at, diameter});
+    document->selection =
+        (AppSelection){.kind = APP_SELECT_WALL_PIPE, .space = space, .index = (int)space->wall_pipes.count - 1};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_add_wall_ruler(AppDocument *document, TlSpace *space, size_t wall, TlVec2 start, TlVec2 end)
+{
+    const TlRoomWall *room_wall = tl_space_wall_at(space, wall);
+    if (!room_wall || tl_distance(start, end) < 1)
+        return;
+    app_document_checkpoint(document, "");
+    tl_wall_ruler_list_push(&space->wall_rulers, (TlWallRuler){room_wall->edge, start, end});
+    document->selection =
+        (AppSelection){.kind = APP_SELECT_WALL_RULER, .space = space, .index = (int)space->wall_rulers.count - 1};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_add_panno(AppDocument *document, TlSpace *space, long wall)
+{
+    const TlRoomWall *room_wall = wall >= 0 ? tl_space_wall_at(space, (size_t)wall) : NULL;
+    if (wall >= 0 && !room_wall)
+        return;
+    TlPanno panno = tl_panno_default(room_wall ? room_wall->edge : TL_PANNO_FLOOR);
+    if (room_wall) /* посередине стены */
+        panno.at.x = fmax(0, (room_wall->length - tl_panno_width(&panno)) / 2);
+    app_document_checkpoint(document, "");
+    tl_panno_list_push(&space->pannos, panno);
+    document->selection = (AppSelection){.kind = APP_SELECT_PANNO, .space = space, .index = (int)space->pannos.count - 1};
+    app_document_commit(document);
+    app_document_notify(document, APP_CHANGED_SELECTION);
+}
+
+void app_command_set_panno_texture(AppDocument *document, const TlCatalog *catalog, const TlCatalogTile *tile)
+{
+    const AppSelection *s = &document->selection;
+    if (s->kind != APP_SELECT_PANNO)
+        return;
+    TlPanno *panno = &s->space->pannos.items[s->index];
+    app_document_checkpoint(document, "");
+    if (catalog && tile) { /* картинка и её цвет — как у плитки из каталога */
+        TlTileSettings settings = tl_panno_tile(panno, tl_space_effective_tile(s->space));
+        app_catalogs_apply(catalog, tile, &settings);
+        snprintf(panno->texture, sizeof panno->texture, "%s", settings.texture);
+        snprintf(panno->color, sizeof panno->color, "%s", settings.color);
+    } else {
+        panno->texture[0] = '\0';
+    }
+    app_document_commit(document);
+}
+
+void app_command_set_area_covering(AppDocument *document, TlSpace *space, size_t region, int covering)
+{
+    size_t area = tl_space_area_of_region(space, region);
+    if (covering == 0 && area == SIZE_MAX)
+        return;
+    app_document_checkpoint(document, "");
+    if (covering == 0)
+        tl_space_remove_area(space, area);
+    else
+        tl_space_add_area(space, region, covering == 1);
+    app_document_commit(document);
+}
+
+void app_command_align_walls_to_floor(AppDocument *document, TlSpace *space, long wall)
+{
+    app_document_checkpoint(document, "");
+    size_t aligned = 0, count = tl_space_wall_count(space);
+    for (size_t w = 0; w < count; w++)
+        if ((wall < 0 || (size_t)wall == w) && tl_space_wall_align_floor(space, w))
+            aligned++;
+    app_document_commit(document);
+    if (aligned == 0)
+        app_document_status(document, "Швы пола у стены не вдоль неё (или нет облицовки) — совмещать не с чем");
+    else if (wall < 0)
+        app_document_status(document, "Швы стен совмещены со швами пола: %zu из %zu", aligned, count);
+    else
+        app_document_status(document, "Шов стены продолжает шов пола");
 }
 
 void app_command_delete_outline(AppDocument *document)

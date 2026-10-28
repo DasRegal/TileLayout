@@ -24,5 +24,13 @@ int main(void)
     spec_estimate();
     spec_pipes();
     spec_zones();
+    spec_walls();
+    spec_panno();
+    spec_areas();
+    spec_fixtures();
+    spec_drains();
+    spec_cutmap();
+    spec_dxf();
+    spec_underlay();
     return spec_report() == 0 ? 0 : 1;
 }

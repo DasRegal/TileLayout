@@ -13,6 +13,7 @@
  * бордюра в углах — шов бордюра; от стены плитка бордюра отступает на свой wall_gap.
  */
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "tl_layout.h"
@@ -24,6 +25,17 @@
 
 TL_ARRAY_DEFINE(ZoneLayoutList, TlLayout *, zone_layout_list)
 
+/* Участок пола, как он был, когда строили, — для проверки, не устарел ли кэш. */
+typedef struct AreaKey {
+    bool tiled;
+    TlZone zone;
+    TlPolygon outline;
+    size_t holes;
+} AreaKey;
+
+TL_ARRAY_DEFINE(AreaKeyList, AreaKey, area_key_list)
+TL_ARRAY_DEFINE(TileSettingsList, TlTileSettings, tile_settings_list)
+
 struct TlZoneCache {
     /* по чему построено — для проверки, не устарело ли */
     TlZone zones[TL_ZONE_COUNT];
@@ -31,10 +43,15 @@ struct TlZoneCache {
     TlPolygon outline, room_outline, frame;
     TlPolygonList holes, joint_strips;
     TlCircleList pipes;
+    TlPannoList pannos;
+    AreaKeyList areas;
+    TlPolygonList fixture_floor;
     /* что построено */
     TlTileSettings tiles[TL_ZONE_COUNT]; /* настройки плитки зон (tl_zone_tile) */
+    TileSettingsList area_tiles;         /* и участков — по номеру участка */
     ZoneLayoutList layouts;
-    TlZoneKind kinds[MAX_ZONE_LAYOUTS];  /* чья раскладка — параллельно layouts */
+    TlZoneKind kinds[MAX_ZONE_LAYOUTS];  /* чья раскладка — параллельно layouts (у участка — TL_ZONE_COUNT) */
+    size_t area_of[MAX_ZONE_LAYOUTS];    /* номер участка или SIZE_MAX */
 };
 
 /* ---- геометрия ------------------------------------------------------------------- */
@@ -48,13 +65,19 @@ static bool zone_on(const TlSpace *space, TlZoneKind kind)
     return zone->enabled && zone->width > 0 && (kind == TL_ZONE_BORDER || zone->height > 0);
 }
 
-/* Контур, вдоль которого бордюр: комната без пола под дверьми, без лишних точек. */
-static TlPolygon border_outline(const TlSpace *space)
+/* Что участок вырезает из плитки вокруг: его часть пола без внутренних частей (у них своё покрытие). */
+static void add_area_cutouts(TlPolygonList *cutouts, const TlFloorArea *area)
 {
-    TlPolygon outline = tl_polygon_copy(tl_space_room_outline(space));
-    tl_polygon_clean(&outline, 0.5);
-    return outline;
+    if (area->region.outline.count < 3)
+        return;
+    TlPolygonList pieces = tl_region_pieces(&area->region);
+    for (size_t i = 0; i < pieces.count; i++)
+        tl_polygon_list_push(cutouts, pieces.items[i]);
+    tl_polygon_list_free(&pieces);
 }
+
+/* Контур, вдоль которого бордюр, — стены комнаты. */
+static TlPolygon border_outline(const TlSpace *space) { return tl_space_wall_outline(space); }
 
 /* Кусок бордюра: часть полосы у стены (стена — сторона wall контура outer). */
 typedef struct BorderPiece {
@@ -201,6 +224,14 @@ TlPolygonList tl_space_zone_cutouts(TlSpace *space)
     }
     if (zone_on(space, TL_ZONE_CARPET))
         tl_polygon_list_push(&cutouts, carpet_rect(space, gap, NULL));
+    for (size_t i = 0; i < space->areas.count; i++) /* участки — своё покрытие; шов даёт линия */
+        add_area_cutouts(&cutouts, &space->areas.items[i]);
+    for (size_t i = 0; i < space->fixture_floor.count; i++) /* под предметами без плитки */
+        tl_polygon_list_push(&cutouts, tl_polygon_copy(&space->fixture_floor.items[i]));
+    TlPolygonList pannos = tl_space_panno_cutouts(space, TL_PANNO_FLOOR, gap); /* и панно на полу */
+    for (size_t i = 0; i < pannos.count; i++)
+        tl_polygon_list_push(&cutouts, pannos.items[i]);
+    tl_polygon_list_free(&pannos);
     return cutouts;
 }
 
@@ -211,19 +242,22 @@ static bool on_wall(const TlSpace *space, TlVec2 a, TlVec2 b)
     return tl_polygon_on_boundary(&space->outline, tl_vec2_midpoint(a, b), ON_WALL_MM);
 }
 
-/* Поверхность зоны: перегородки, швы и трубы — комнаты. */
+/* Поверхность зоны: перегородки, швы и трубы — комнаты; панно на полу зона обходит. */
 static TlSurface zone_surface(TlSpace *space, const TlPolygon *outline, const double *insets, TlVec2 origin,
-                              double angle, const TlTileSettings *tile)
+                              double angle, const TlTileSettings *tile, const TlPolygonList *pannos)
 {
     return (TlSurface){.outline = outline,
+                       .cutouts = pannos,
                        .insets = insets,
                        .holes = &space->holes,
-                       .joint_strips = &space->joint_strips,
+                       .joint_strips = &space->cut_strips,
                        .pipes = &space->pipes,
                        .origin = origin,
                        .angle = angle,
                        .tile = tile};
 }
+
+static TlPolygonList zone_cutouts(TlSpace *space, double gap);
 
 static void add_layout(struct TlZoneCache *cache, TlLayout *layout, TlZoneKind kind)
 {
@@ -231,6 +265,7 @@ static void add_layout(struct TlZoneCache *cache, TlLayout *layout, TlZoneKind k
         tl_layout_free(layout);
         return;
     }
+    cache->area_of[cache->layouts.count] = SIZE_MAX;
     cache->kinds[cache->layouts.count] = kind;
     zone_layout_list_push(&cache->layouts, layout);
 }
@@ -279,8 +314,10 @@ static void lay_border(TlSpace *space, struct TlZoneCache *cache)
             angle += 180;
         }
         double *insets = piece_insets(space, piece, &outline, depth, tile);
-        TlSurface surface = zone_surface(space, &piece->shape, insets, origin, angle, tile);
+        TlPolygonList pannos = zone_cutouts(space, tile->joint_width);
+        TlSurface surface = zone_surface(space, &piece->shape, insets, origin, angle, tile, &pannos);
         add_layout(cache, tl_layout_compute_surface(&surface, NULL), TL_ZONE_BORDER);
+        tl_polygon_list_free_all(&pannos);
         free(insets);
     }
     free_pieces(&pieces);
@@ -293,10 +330,51 @@ static void lay_carpet(TlSpace *space, struct TlZoneCache *cache)
     TlVec2 corner;
     TlPolygon rect = carpet_rect(space, 0, &corner);
     const double insets[4] = {0, 0, 0, 0};
-    TlSurface surface =
-        zone_surface(space, &rect, insets, corner, tl_space_effective_tile(space)->rotation_degrees, tile);
+    TlPolygonList pannos = zone_cutouts(space, tile->joint_width);
+    TlSurface surface = zone_surface(space, &rect, insets, corner, tl_space_effective_tile(space)->rotation_degrees,
+                                     tile, &pannos);
     add_layout(cache, tl_layout_compute_surface(&surface, NULL), TL_ZONE_CARPET);
+    tl_polygon_list_free_all(&pannos);
     tl_polygon_free(&rect);
+}
+
+/* Что обходят зоны: панно на полу (со швом зоны) и участки. */
+static TlPolygonList zone_cutouts(TlSpace *space, double gap)
+{
+    TlPolygonList cutouts = tl_space_panno_cutouts(space, TL_PANNO_FLOOR, gap);
+    for (size_t i = 0; i < space->fixture_floor.count; i++)
+        tl_polygon_list_push(&cutouts, tl_polygon_copy(&space->fixture_floor.items[i]));
+    for (size_t i = 0; i < space->areas.count; i++)
+        add_area_cutouts(&cutouts, &space->areas.items[i]);
+    return cutouts;
+}
+
+/* Участок со своей плиткой: оси — как у основного пола (угол габарита комнаты), поворот и смещение —
+   плитки участка; у стен — отступ wall_gap, у линий — 0 (зазор даёт линия). */
+static void lay_areas(TlSpace *space, struct TlZoneCache *cache)
+{
+    TlRect bounds = tl_polygon_bounds(tl_space_frame(space));
+    for (size_t a = 0; a < space->areas.count && cache->layouts.count < MAX_ZONE_LAYOUTS; a++) {
+        const TlFloorArea *area = &space->areas.items[a];
+        if (!area->tiled || area->region.outline.count < 3)
+            continue;
+        const TlTileSettings *tile = &cache->area_tiles.items[a];
+        const TlPolygon *outline = &area->region.outline;
+        double *insets = tl_malloc(outline->count * sizeof *insets);
+        for (size_t e = 0; e < outline->count; e++)
+            insets[e] = on_wall(space, tl_polygon_edge_start(outline, e), tl_polygon_edge_end(outline, e)) ? tile->wall_gap
+                                                                                                          : 0;
+        TlPolygonList pannos = tl_space_panno_cutouts(space, TL_PANNO_FLOOR, tile->joint_width);
+        for (size_t h = 0; h < area->region.holes.count; h++) /* внутренние части — со своим покрытием */
+            tl_polygon_list_push(&pannos, tl_polygon_copy(&area->region.holes.items[h]));
+        for (size_t i = 0; i < space->fixture_floor.count; i++) /* под предметами без плитки */
+            tl_polygon_list_push(&pannos, tl_polygon_copy(&space->fixture_floor.items[i]));
+        TlSurface surface = zone_surface(space, outline, insets, tl_vec2(bounds.left, bounds.top), 0, tile, &pannos);
+        add_layout(cache, tl_layout_compute_surface(&surface, NULL), TL_ZONE_COUNT);
+        cache->area_of[cache->layouts.count - 1] = a;
+        tl_polygon_list_free_all(&pannos);
+        free(insets);
+    }
 }
 
 /* ---- кэш ---------------------------------------------------------------------------- */
@@ -316,6 +394,20 @@ static bool same_polygons(const TlPolygonList *a, const TlPolygonList *b)
     return true;
 }
 
+static bool areas_same(const AreaKeyList *keys, const TlFloorAreaList *areas)
+{
+    if (keys->count != areas->count)
+        return false;
+    for (size_t i = 0; i < keys->count; i++) {
+        const AreaKey *key = &keys->items[i];
+        const TlFloorArea *area = &areas->items[i];
+        if (key->tiled != area->tiled || !tl_zones_equal(&key->zone, &area->zone) ||
+            !same_polygon(&key->outline, &area->region.outline) || key->holes != area->region.holes.count)
+            return false;
+    }
+    return true;
+}
+
 static bool cache_is_current(const struct TlZoneCache *cache, TlSpace *space)
 {
     if (!cache || !tl_tile_settings_equal(&cache->room_tile, tl_space_effective_tile(space)))
@@ -326,9 +418,12 @@ static bool cache_is_current(const struct TlZoneCache *cache, TlSpace *space)
     return same_polygon(&cache->outline, &space->outline) &&
            same_polygon(&cache->room_outline, tl_space_room_outline(space)) &&
            same_polygon(&cache->frame, tl_space_frame(space)) && same_polygons(&cache->holes, &space->holes) &&
-           same_polygons(&cache->joint_strips, &space->joint_strips) && cache->pipes.count == space->pipes.count &&
+           same_polygons(&cache->joint_strips, &space->cut_strips) && cache->pipes.count == space->pipes.count &&
            (cache->pipes.count == 0 ||
-            memcmp(cache->pipes.items, space->pipes.items, cache->pipes.count * sizeof(TlCircle)) == 0);
+            memcmp(cache->pipes.items, space->pipes.items, cache->pipes.count * sizeof(TlCircle)) == 0) &&
+           areas_same(&cache->areas, &space->areas) && same_polygons(&cache->fixture_floor, &space->fixture_floor) && cache->pannos.count == space->pannos.count &&
+           (cache->pannos.count == 0 ||
+            memcmp(cache->pannos.items, space->pannos.items, cache->pannos.count * sizeof(TlPanno)) == 0);
 }
 
 void tl_zone_cache_free(struct TlZoneCache *cache)
@@ -344,6 +439,12 @@ void tl_zone_cache_free(struct TlZoneCache *cache)
     tl_polygon_list_free_all(&cache->holes);
     tl_polygon_list_free_all(&cache->joint_strips);
     tl_circle_list_free(&cache->pipes);
+    tl_panno_list_free(&cache->pannos);
+    for (size_t i = 0; i < cache->areas.count; i++)
+        tl_polygon_free(&cache->areas.items[i].outline);
+    area_key_list_free(&cache->areas);
+    tl_polygon_list_free_all(&cache->fixture_floor);
+    tile_settings_list_free(&cache->area_tiles);
     free(cache);
 }
 
@@ -363,26 +464,58 @@ static struct TlZoneCache *zone_cache(TlSpace *space)
     cache->room_outline = tl_polygon_copy(tl_space_room_outline(space));
     cache->frame = tl_polygon_copy(tl_space_frame(space));
     cache->holes = tl_polygon_list_deep_copy(&space->holes);
-    cache->joint_strips = tl_polygon_list_deep_copy(&space->joint_strips);
+    cache->joint_strips = tl_polygon_list_deep_copy(&space->cut_strips);
     cache->pipes = tl_circle_list_copy(&space->pipes);
+    cache->pannos = tl_panno_list_copy(&space->pannos);
+    cache->fixture_floor = tl_polygon_list_deep_copy(&space->fixture_floor);
+    for (size_t i = 0; i < space->areas.count; i++) {
+        const TlFloorArea *area = &space->areas.items[i];
+        area_key_list_push(&cache->areas, (AreaKey){area->tiled, area->zone, tl_polygon_copy(&area->region.outline),
+                                                    area->region.holes.count});
+        TlTileSettings tile = tl_zone_tile(&area->zone, room_tile);
+        tile.enabled = true;
+        tile_settings_list_push(&cache->area_tiles, tile);
+    }
     if (room_tile->enabled && zone_on(space, TL_ZONE_BORDER))
         lay_border(space, cache);
     if (room_tile->enabled && zone_on(space, TL_ZONE_CARPET))
         lay_carpet(space, cache);
+    if (room_tile->enabled)
+        lay_areas(space, cache);
     space->zone_cache = cache;
     return cache;
 }
 
 /* ---- раскладки комнаты по номерам ------------------------------------------------------ */
 
-size_t tl_space_layout_count(TlSpace *space) { return 1 + zone_cache(space)->layouts.count; }
+size_t tl_space_floor_layout_count(TlSpace *space) { return 1 + zone_cache(space)->layouts.count; }
+
+size_t tl_space_layout_count(TlSpace *space)
+{
+    return tl_space_floor_layout_count(space) + tl_space_wall_layout_count(space);
+}
+
+bool tl_space_layout_on_wall(TlSpace *space, size_t index)
+{
+    size_t floors = tl_space_floor_layout_count(space);
+    return tl_space_layout_wall(space, index, NULL, NULL) &&
+           tl_space_wall_layout_stairs(space, index - floors, NULL, NULL) == SIZE_MAX;
+}
+
+bool tl_space_layout_wall(TlSpace *space, size_t index, size_t *wall, TlWallBand *band)
+{
+    size_t floors = tl_space_floor_layout_count(space);
+    return index >= floors && tl_space_wall_layout_at(space, index - floors, wall, band) != NULL;
+}
 
 TlLayout *tl_space_layout_at(TlSpace *space, size_t index)
 {
     if (index == 0)
         return tl_space_layout(space);
     struct TlZoneCache *cache = zone_cache(space);
-    return index - 1 < cache->layouts.count ? cache->layouts.items[index - 1] : NULL;
+    if (index - 1 < cache->layouts.count)
+        return cache->layouts.items[index - 1];
+    return tl_space_wall_layout_at(space, index - 1 - cache->layouts.count, NULL, NULL);
 }
 
 const TlTileSettings *tl_space_layout_tile(TlSpace *space, size_t index)
@@ -390,7 +523,19 @@ const TlTileSettings *tl_space_layout_tile(TlSpace *space, size_t index)
     if (index == 0)
         return tl_space_effective_tile(space);
     struct TlZoneCache *cache = zone_cache(space);
-    return &cache->tiles[index - 1 < cache->layouts.count ? cache->kinds[index - 1] : 0];
+    if (index - 1 < cache->layouts.count) {
+        size_t area = cache->area_of[index - 1];
+        return area != SIZE_MAX ? &cache->area_tiles.items[area] : &cache->tiles[cache->kinds[index - 1]];
+    }
+    TlWallBand band = TL_WALL_MAIN;
+    tl_space_wall_layout_at(space, index - 1 - cache->layouts.count, NULL, &band);
+    return tl_space_wall_tile(space, band);
+}
+
+size_t tl_space_layout_area(TlSpace *space, size_t index)
+{
+    struct TlZoneCache *cache = zone_cache(space);
+    return index >= 1 && index - 1 < cache->layouts.count ? cache->area_of[index - 1] : SIZE_MAX;
 }
 
 TlZoneKind tl_space_layout_zone(TlSpace *space, size_t index)

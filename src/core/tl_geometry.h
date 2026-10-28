@@ -118,6 +118,8 @@ TlAffine tl_affine_identity(void);
 /* Поворот на angle_degrees (по часовой на экране) и перенос в origin. */
 TlAffine tl_affine_rotation_translation(TlVec2 origin, double angle_degrees);
 TlAffine tl_affine_inverted(const TlAffine *m);
+/* Сначала inner, затем outer. */
+TlAffine tl_affine_multiply(const TlAffine *outer, const TlAffine *inner);
 TlVec2 tl_affine_apply(const TlAffine *m, TlVec2 p);
 TlPolygon tl_affine_apply_polygon(const TlAffine *m, const TlPolygon *polygon);
 

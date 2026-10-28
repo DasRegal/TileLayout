@@ -263,6 +263,7 @@ void tl_catalog_apply(const TlCatalog *catalog, const TlCatalogTile *tile, TlTil
 {
     settings->tile_width = tile->width;
     settings->tile_height = tile->height;
+    settings->real_width = settings->real_height = 0; /* калибр у новой плитки — свой */
     tl_catalog_reference(catalog, tile, settings->texture, sizeof settings->texture);
     if (tile->color[0])
         snprintf(settings->color, sizeof settings->color, "%s", tile->color);

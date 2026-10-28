@@ -15,7 +15,7 @@
 static struct {
     TlProject *project;
     TlHistory *history;
-    char error[256];
+    char error[TL_WEB_ERROR_SIZE];
     char *saved, *tile, *aligned;
 } web;
 
@@ -57,6 +57,7 @@ static void replace_project(TlProject *project)
 {
     tl_project_free(web.project);
     web.project = project;
+    tl_web_underlay_touched();
     if (!web.history)
         web.history = tl_history_new();
     tl_history_clear(web.history);
@@ -76,6 +77,8 @@ bool tl_web_open(const char *json)
 }
 
 const char *tl_web_error(void) { return web.error; }
+
+char *tl_web_error_buffer(void) { return web.error; }
 
 #ifndef TL_VERSION
 #define TL_VERSION "?"
@@ -119,6 +122,34 @@ TlJson *tl_web_tile_json(const TlTileSettings *tile)
     for (size_t i = 0; i < count; i++)
         tl_json_object_set(object, fields[i].key, field_value(tile, &fields[i]));
     return object;
+}
+
+/* Стены комнаты: высота помещения, облицовка, полосы (как зоны: поля и плитка; spans — где кладутся). */
+static TlJson *walls_json(TlSpace *space)
+{
+    TlJson *json = tl_json_object(), *bands = tl_json_object();
+    tl_json_object_set(json, "room_height", tl_json_number(space->height));
+    tl_json_object_set(json, "enabled", tl_json_bool(space->walls.enabled));
+    tl_json_object_set(json, "height", tl_json_number(space->walls.height));
+    for (int band = 0; band < TL_WALL_BAND_COUNT; band++) {
+        const TlZone *zone = &space->walls.bands[band];
+        TlJson *item = tl_json_object(), *spans_json = tl_json_array();
+        tl_json_object_set(item, "enabled", tl_json_bool(band == TL_WALL_MAIN || zone->enabled));
+        tl_json_object_set(item, "width", tl_json_number(zone->width));
+        tl_json_object_set(item, "dy", tl_json_number(zone->dy));
+        tl_json_object_set(item, "fit", tl_json_bool(zone->fit));
+        double spans[2][2];
+        size_t count = tl_wall_band_spans(&space->walls, (TlWallBand)band, space->height, spans);
+        for (size_t i = 0; i < count; i++) {
+            tl_json_array_push(spans_json, tl_web_number(spans[i][0]));
+            tl_json_array_push(spans_json, tl_web_number(spans[i][1]));
+        }
+        tl_json_object_set(item, "spans", spans_json);
+        tl_json_object_set(item, "tile", tl_web_tile_json(&zone->tile));
+        tl_json_object_set(bands, tl_wall_band_key((TlWallBand)band), item);
+    }
+    tl_json_object_set(json, "bands", bands);
+    return json;
 }
 
 const char *tl_web_space_tile(int space_id)
@@ -173,6 +204,42 @@ const char *tl_web_space_tile(int space_id)
         tl_json_object_set(zones, tl_zone_key((TlZoneKind)kind), json);
     }
     tl_json_object_set(result, "zones", zones);
+    tl_json_object_set(result, "walls", walls_json(space));
+    TlJson *pannos = tl_json_array();
+    for (size_t i = 0; i < space->pannos.count; i++) {
+        const TlPanno *p = &space->pannos.items[i];
+        TlJson *item = tl_json_object();
+        size_t wall = p->wall == TL_PANNO_FLOOR ? SIZE_MAX : tl_space_wall_of_edge(space, p->wall);
+        tl_json_object_set(item, "wall", tl_json_number(wall == SIZE_MAX ? -1 : (double)wall));
+        tl_json_object_set(item, "x", tl_json_number(p->at.x));
+        tl_json_object_set(item, "y", tl_json_number(p->at.y));
+        tl_json_object_set(item, "columns", tl_json_number(p->columns));
+        tl_json_object_set(item, "rows", tl_json_number(p->rows));
+        tl_json_object_set(item, "w", tl_json_number(p->tile_width));
+        tl_json_object_set(item, "h", tl_json_number(p->tile_height));
+        tl_json_object_set(item, "gap", tl_json_number(p->joint_width));
+        tl_json_object_set(item, "price", tl_json_number(p->price));
+        tl_json_object_set(item, "color", tl_json_string(p->color));
+        tl_json_object_set(item, "texture", tl_json_string(p->texture));
+        tl_json_object_set(item, "width", tl_json_number(round(tl_panno_width(p))));
+        tl_json_object_set(item, "height", tl_json_number(round(tl_panno_height(p))));
+        tl_json_array_push(pannos, item);
+    }
+    tl_json_object_set(result, "pannos", pannos);
+    TlJson *regions = tl_json_array(); /* части пола между линиями и их покрытие */
+    for (size_t r = 0; space->regions.count > 1 && r < space->regions.count; r++) {
+        size_t area = tl_space_area_of_region(space, r);
+        TlJson *item = tl_json_object();
+        tl_json_object_set(item, "index", tl_json_number((double)r));
+        tl_json_object_set(item, "area", tl_json_number(round(tl_region_area(&space->regions.items[r]) / 1e4) / 100));
+        tl_json_object_set(item, "covering", tl_json_string(area == SIZE_MAX ? "room" : space->areas.items[area].tiled ? "own" : "none"));
+        tl_json_object_set(item, "name", tl_json_string(area == SIZE_MAX ? "" : space->areas.items[area].name));
+        tl_json_object_set(item, "outline", tl_web_polygon(&space->regions.items[r].outline));
+        if (area != SIZE_MAX)
+            tl_json_object_set(item, "tile", tl_web_tile_json(&space->areas.items[area].zone.tile));
+        tl_json_array_push(regions, item);
+    }
+    tl_json_object_set(result, "regions", regions);
     TlJson *doors_json = tl_json_array();
     TlOpeningList doors = tl_project_space_doors(project, space);
     for (size_t i = 0; i < doors.count; i++)
@@ -344,13 +411,21 @@ bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, dou
     return ok;
 }
 
-/* Зона комнаты по ключу "border" / "carpet"; TL_ZONE_COUNT — нет такой. */
-static TlZoneKind zone_kind(const char *key)
+/* Зона комнаты по ключу: "border", "carpet" — пола; "wall_lower", "wall_frieze", "wall_main" — полосы
+   стен; "area:N" — участок на части пола N. NULL — нет такой. */
+static TlZone *space_zone(TlSpace *space, const char *key)
 {
+    if (strncmp(key, "area:", 5) == 0) {
+        size_t area = tl_space_area_of_region(space, (size_t)atoi(key + 5));
+        return area == SIZE_MAX ? NULL : &space->areas.items[area].zone;
+    }
     for (int kind = 0; kind < TL_ZONE_COUNT; kind++)
         if (strcmp(tl_zone_key((TlZoneKind)kind), key) == 0)
-            return (TlZoneKind)kind;
-    return TL_ZONE_COUNT;
+            return &space->zones[kind];
+    for (int band = 0; band < TL_WALL_BAND_COUNT; band++)
+        if (strncmp(key, "wall_", 5) == 0 && strcmp(key + 5, tl_wall_band_key((TlWallBand)band)) == 0)
+            return &space->walls.bands[band];
+    return NULL;
 }
 
 /* Поля зоны из объекта: геометрия ("enabled", "width", "height", "dx", "dy") и поля плитки. */
@@ -392,13 +467,12 @@ bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char 
 {
     TlSpace *spaces[MAX_ROOMS];
     size_t count = spaces_by_ids(space_ids, spaces);
-    TlZoneKind kind = zone_kind(zone);
     TlJson *parsed = tl_json_parse(fields, NULL, 0);
-    bool ok = count > 0 && kind < TL_ZONE_COUNT && parsed && tl_json_type(parsed) == TL_JSON_OBJECT;
+    bool ok = count > 0 && space_zone(spaces[0], zone) && parsed && tl_json_type(parsed) == TL_JSON_OBJECT;
     TlZone *changed = ok ? malloc(count * sizeof *changed) : NULL; /* в куче: стек WebAssembly мал */
     ok = ok && changed;
     for (size_t i = 0; ok && i < count; i++) {
-        changed[i] = spaces[i]->zones[kind];
+        changed[i] = *space_zone(spaces[i], zone);
         ok = apply_zone_fields(&changed[i], parsed);
     }
     if (ok) { /* одно поле — серия правок склеивается */
@@ -407,9 +481,59 @@ bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char 
             snprintf(merge_key, sizeof merge_key, "zone_%s_%s_%s", zone, space_ids, tl_json_key_at(parsed, 0));
         tl_web_checkpoint(merge_key, now_seconds);
         for (size_t i = 0; i < count; i++)
-            spaces[i]->zones[kind] = changed[i];
+            *space_zone(spaces[i], zone) = changed[i];
     }
     free(changed);
+    tl_json_free(parsed);
+    return ok;
+}
+
+bool tl_web_set_area(int space_id, int region, const char *covering, const char *name, double now_seconds)
+{
+    TlSpace *space = tl_project_space_by_id(tl_web_project(), space_id);
+    if (!space || region < 0 || (size_t)region >= space->regions.count)
+        return false;
+    size_t area = tl_space_area_of_region(space, (size_t)region);
+    bool room = strcmp(covering, "room") == 0, own = strcmp(covering, "own") == 0, none = strcmp(covering, "none") == 0;
+    bool rename = !covering[0] && name[0] && area != SIZE_MAX;
+    if (!room && !own && !none && !rename)
+        return false;
+    tl_web_checkpoint(name[0] ? "area_name" : "", now_seconds);
+    if (room) {
+        tl_space_remove_area(space, area);
+        return true;
+    }
+    if (own || none)
+        area = tl_space_add_area(space, (size_t)region, own);
+    if (name[0] && area != SIZE_MAX)
+        snprintf(space->areas.items[area].name, sizeof space->areas.items[area].name, "%s", name);
+    return true;
+}
+
+bool tl_web_set_walls(const char *space_ids, const char *fields, double now_seconds)
+{
+    TlSpace *spaces[MAX_ROOMS];
+    size_t count = spaces_by_ids(space_ids, spaces);
+    TlJson *parsed = tl_json_parse(fields, NULL, 0);
+    const TlJson *room_height = tl_json_get(parsed, "room_height"), *enabled = tl_json_get(parsed, "enabled");
+    const TlJson *height = tl_json_get(parsed, "height");
+    bool ok = count > 0 && parsed && tl_json_type(parsed) == TL_JSON_OBJECT &&
+              (!room_height || tl_json_number_or(room_height, 0) >= 500) &&
+              (!height || tl_json_number_or(height, -1) >= 0) && (!enabled || tl_json_type(enabled) == TL_JSON_BOOL);
+    if (ok) {
+        char merge_key[200] = "";
+        if (tl_json_length(parsed) == 1)
+            snprintf(merge_key, sizeof merge_key, "walls_%s_%s", space_ids, tl_json_key_at(parsed, 0));
+        tl_web_checkpoint(merge_key, now_seconds);
+        for (size_t i = 0; i < count; i++) {
+            if (room_height)
+                spaces[i]->height = tl_json_number_or(room_height, spaces[i]->height);
+            if (enabled)
+                spaces[i]->walls.enabled = tl_json_bool_or(enabled, false);
+            if (height)
+                spaces[i]->walls.height = tl_json_number_or(height, 0);
+        }
+    }
     tl_json_free(parsed);
     return ok;
 }
@@ -431,6 +555,9 @@ bool tl_web_swap_tiles(const char *space_ids, double now_seconds)
         double width = tile->tile_width;
         tile->tile_width = tile->tile_height;
         tile->tile_height = width;
+        double real = tile->real_width; /* и фактический размер */
+        tile->real_width = tile->real_height;
+        tile->real_height = real;
     }
     tl_tile_settings_remember_as_default(tl_space_effective_tile(spaces[0]));
     return true;

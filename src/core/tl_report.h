@@ -24,6 +24,13 @@ typedef struct TlRoomSummary {
     double grout_kg;
     double primer_l;
     double tiled_area;           /* мм² под плитку — основной пол и зоны */
+    double wall_area;            /* мм² облицовки стен */
+    double cut_length;           /* мм резов */
+    int cross_count;             /* крестиков (если вместо СВП они) */
+    double waterproof_area;      /* мм² гидроизоляции: пол и заход на стены */
+    double waterproof_kg;
+    double tape_length;          /* мм ленты по стыку пола и стен */
+    int corner_count;            /* наружных углов стен (колонны, короба) */
     int shared_tiles;            /* плиток, вторая часть которых — в другой комнате */
 } TlRoomSummary;
 
@@ -34,9 +41,11 @@ typedef struct TlTileTypeSummary {
     int count;                   /* нужно плиток (без запаса) */
     int whole;
     int to_buy;                  /* с запасом */
+    int packs;                   /* упаковок, если плитка продаётся упаковками (tile_pack), иначе 0 */
     double area;                 /* мм² пола */
     int shared_saving;           /* сэкономлено: одна плитка на две комнаты */
     int offcut_saving;           /* сэкономлено: остатки подрезок */
+    struct TlPieceList *pieces;  /* подрезки этого вида (в его осях) — для карты раскроя */
 } TlTileTypeSummary;
 
 /* Строка «N мешков по M кг» / «N упаковок по M шт.»: по размеру упаковки и цене. */
@@ -83,8 +92,20 @@ typedef struct TlSummary {
     double grout_total_kg;
     TlPackLineList primer;       /* по объёму канистры */
     double primer_total_l;
+    TlPackLineList crosses;      /* крестики — по количеству в упаковке */
+    int cross_total;
+    TlPackLineList waterproof;   /* гидроизоляция — по массе упаковки */
+    double waterproof_total_kg;
+    TlPackLineList tape;         /* лента гидроизоляции — метрами (unit_size 1) */
+    double tape_total_m;
+    TlPackLineList thresholds;   /* пороги в дверях — планками (unit_size — длина планки, мм) */
+    double threshold_total_mm;
+    TlPackLineList corners;      /* уголки на наружные углы — планками */
+    double corner_total_mm;
+    double cut_total_mm;         /* резов по проекту */
     double floor_area, tiled_area; /* пол с полом под дверьми; из него — под плитку */
     double room_area;              /* площадь комнат — без пола дверных проёмов */
+    double wall_area;              /* облицовка стен */
     TlOffcutPairList offcut_pairs;
 } TlSummary;
 
@@ -102,6 +123,7 @@ typedef struct TlCutPart {
     int number;            /* 0 — номер общий, он в заголовке карточки */
     TlPolygonList shapes;  /* от угла плитки; первый — внешний контур */
     TlCircleList drills;   /* отверстия под трубы, от угла плитки */
+    TlPolygonList miters;  /* стороны с запилом 45° (отрезки от угла плитки) */
 } TlCutPart;
 
 TL_ARRAY_DEFINE(TlCutPartList, TlCutPart, tl_cut_part_list)
@@ -147,6 +169,37 @@ const TlRoomSummary *tl_summary_room(const TlSummary *summary, const TlSpace *sp
  * allowance). Жадно: самая широкая полоса — с самой узкой; не подошла — идёт из
  * целой плитки. Куски — одного вида, по его осям. */
 TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, const TlPieceList *pieces);
+
+/* ---- карта раскроя ----------------------------------------------------------
+ * По виду плитки: одинаковые подрезки — резать стопкой (размер куска и номера на плане),
+ * и пары — две подрезки из одной плитки. */
+
+typedef struct TlCutStack {
+    double width, height;        /* кусок, мм (по осям вида плитки) */
+    TlIntArray numbers;          /* номера на плане */
+} TlCutStack;
+
+typedef struct TlCutMapPair {
+    int first, second;           /* номера на плане */
+    double first_size, second_size; /* ширина полос, мм (поперёк реза) */
+    bool across_width;
+} TlCutMapPair;
+
+TL_ARRAY_DEFINE(TlCutStackList, TlCutStack, tl_cut_stack_list)
+TL_ARRAY_DEFINE(TlCutMapPairList, TlCutMapPair, tl_cut_map_pair_list)
+
+typedef struct TlCutMapType {
+    const TlTileTypeSummary *type;
+    TlCutStackList stacks;       /* по убыванию числа кусков */
+    TlCutMapPairList pairs;
+} TlCutMapType;
+
+TL_ARRAY_DEFINE(TlCutMapTypeList, TlCutMapType, tl_cut_map_type_list)
+
+/* Карта раскроя по сводке (номера — tl_report_assign_numbers, его вызывает сводка). Виды без
+   подрезок не входят. */
+TlCutMapTypeList tl_report_cut_map(const TlSummary *summary);
+void tl_cut_map_free(TlCutMapTypeList *map);
 
 TlCutCardList tl_report_cut_cards(TlProject *project);
 void tl_cut_card_list_free_all(TlCutCardList *cards);

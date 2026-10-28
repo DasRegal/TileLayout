@@ -132,6 +132,62 @@ static void draw_partition(cairo_t *cr)
     cairo_stroke(cr);
 }
 
+/* Трап: квадрат плитки, конверт к углам и решётка в центре. */
+static void draw_drain(cairo_t *cr)
+{
+    fill_hex(cr, "#d9c9a8");
+    cairo_rectangle(cr, 3, 3, 26, 26);
+    cairo_fill(cr);
+    ink(cr, "#3d5a80", 1.3);
+    cairo_move_to(cr, 3, 3);
+    cairo_line_to(cr, 29, 29);
+    cairo_move_to(cr, 29, 3);
+    cairo_line_to(cr, 3, 29);
+    cairo_stroke(cr);
+    fill_hex(cr, "#d7dde3");
+    cairo_rectangle(cr, 12, 12, 8, 8);
+    cairo_fill_preserve(cr);
+    ink(cr, "#37474f", 1.4);
+    cairo_stroke(cr);
+}
+
+/* Ванна сверху: чаша и слив. */
+static void draw_fixture(cairo_t *cr)
+{
+    fill_hex(cr, "#f2f4f6");
+    cairo_rectangle(cr, 3, 9, 26, 15);
+    cairo_fill_preserve(cr);
+    ink(cr, "#37474f", 1.6);
+    cairo_stroke(cr);
+    ink(cr, "#5d6470", 1.2);
+    cairo_rectangle(cr, 6, 12, 20, 9);
+    cairo_stroke(cr);
+    fill_hex(cr, "#1a73e8");
+    cairo_arc(cr, 9, 16.5, 1.6, 0, 2 * TL_PI);
+    cairo_fill(cr);
+}
+
+/* Комната, разделённая линией: слева мозаика, справа крупная плитка. */
+static void draw_divider(cairo_t *cr)
+{
+    fill_hex(cr, "#d9c9a8");
+    cairo_rectangle(cr, 4, 5, 24, 22);
+    cairo_fill(cr);
+    fill_hex(cr, "#7fb3c8");
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 7; j++) {
+            cairo_rectangle(cr, 4.6 + i * 2.6, 5.6 + j * 3.1, 2.1, 2.6);
+        }
+    cairo_fill(cr);
+    ink(cr, "#37474f", 1.4);
+    cairo_rectangle(cr, 4, 5, 24, 22);
+    cairo_stroke(cr);
+    ink(cr, "#1a73e8", 2.2);
+    cairo_move_to(cr, 15, 3);
+    cairo_line_to(cr, 15, 29);
+    cairo_stroke(cr);
+}
+
 /* Две плитки и шов между ними — пунктир в щели. */
 static void draw_expansion_joint(cairo_t *cr)
 {
@@ -401,6 +457,28 @@ static void draw_app(cairo_t *cr)
 static void draw_undo_icon(cairo_t *cr) { draw_undo(cr, false); }
 static void draw_redo_icon(cairo_t *cr) { draw_undo(cr, true); }
 static void draw_covering(cairo_t *cr) { tiles_grid(cr, 3, 3, 3, 8, 1.5); }
+
+/* Развёртка стен: три стены в ряд, низ — другой плиткой, в средней — дверь. */
+static void draw_walls(cairo_t *cr)
+{
+    for (int wall = 0; wall < 3; wall++) {
+        double x = 2 + wall * 10;
+        fill_hex(cr, "#e8e4dc");
+        cairo_rectangle(cr, x, 6, 8, 20);
+        cairo_fill(cr);
+        fill_hex(cr, "#7c8f99");
+        cairo_rectangle(cr, x, 18, 8, 8);
+        cairo_fill(cr);
+        ink(cr, "#37474f", 1.4);
+        cairo_rectangle(cr, x, 6, 8, 20);
+        cairo_stroke(cr);
+    }
+    fill_hex(cr, "#ffffff");
+    cairo_rectangle(cr, 14, 13, 4, 13);
+    cairo_fill_preserve(cr);
+    ink(cr, "#7a6a4f", 1.2);
+    cairo_stroke(cr);
+}
 static void draw_lock_closed(cairo_t *cr) { draw_lock(cr, true); }
 static void draw_lock_open(cairo_t *cr) { draw_lock(cr, false); }
 
@@ -412,6 +490,7 @@ static const IconEntry ICONS[] = {
     {"lock", draw_lock_closed}, {"unlock", draw_lock_open}, {"house", draw_house},
     {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print}, {"heart", draw_heart},
     {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint}, {"pipe", draw_pipe},
+    {"walls", draw_walls}, {"divider", draw_divider}, {"fixture", draw_fixture}, {"drain", draw_drain},
 };
 
 void app_icon_draw(cairo_t *cr, const char *name, double x, double y, double size)

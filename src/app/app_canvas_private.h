@@ -46,6 +46,10 @@ extern const AppTool APP_PARTITION_TOOL;
 extern const AppTool APP_OPENING_TOOL;
 extern const AppTool APP_TILES_TOOL;
 extern const AppTool APP_RULER_TOOL;
+extern const AppTool APP_DIVIDER_TOOL;
+extern const AppTool APP_FIXTURE_TOOL;
+extern const AppTool APP_DRAIN_TOOL;
+extern const AppTool APP_UNDERLAY_TOOL;
 extern const AppTool APP_EXPANSION_JOINT_TOOL;
 extern const AppTool APP_PIPE_TOOL;
 
@@ -63,6 +67,13 @@ typedef struct AppDrag {
 } AppDrag;
 
 struct AppCanvas {
+    TlFixture fixture_preview;  /* инструмент «Предмет»: как встанет под курсором */
+    TlDrain drain_preview;      /* инструмент «Трап» */
+    bool underlay_move;         /* инструмент «Подложка»: сдвиг (иначе калибровка) */
+    int underlay_points;        /* калибровка: отмечено точек */
+    TlVec2 underlay_a;
+    bool underlay_dragging;
+    TlVec2 underlay_start, underlay_origin;
     GtkWidget *area;
     AppDocument *document;
     AppView view;
@@ -102,6 +113,8 @@ struct AppCanvas {
     void *tool_listener_data;
     AppCanvasPointerListener pointer_listener;
     void *pointer_listener_data;
+    AppCanvasSpaceListener open_space_listener;
+    void *open_space_listener_data;
 };
 
 /* ---- общее для инструментов --------------------------------------------- */

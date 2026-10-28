@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include "tl_layout.h"
 #include "tl_project_io.h"
 
 typedef struct Subscriber {
@@ -32,7 +33,7 @@ AppDocument *app_document_new(void)
     document->preferences = (AppEditPreferences){
         .snap_step = 10, .partition_thickness = 100, .opening_width = 800, .link_walls = true,
         .keep_angles = true, .measure_magnet = true, .auto_align = true,
-        .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .pipe_diameter = TL_PIPE_DEFAULT_DIAMETER,
+        .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .divider_gap = TL_DIVIDER_DEFAULT_GAP, .pipe_diameter = TL_PIPE_DEFAULT_DIAMETER,
         .house_width = 6000, .house_height = 4000, .house_thickness = 200, .outline_thickness = 200};
     document->view = (AppViewFlags){.tiles = true, .clips = true, .dims = true, .grid = true,
                                     .expansion_joints = true};
@@ -127,9 +128,17 @@ void app_document_clear_selection(AppDocument *document)
     app_document_select(document, (AppSelection){0});
 }
 
+bool app_selection_on_walls(const AppSelection *selection)
+{
+    return selection->kind == APP_SELECT_ROOM_WALL || selection->kind == APP_SELECT_WALL_PIPE ||
+           selection->kind == APP_SELECT_WALL_RULER;
+}
+
 size_t app_selection_spaces(const AppSelection *selection, TlSpace **spaces)
 {
-    if (selection->kind != APP_SELECT_SPACE || !selection->space)
+    if (!app_selection_on_walls(selection) && selection->kind != APP_SELECT_SPACE && selection->kind != APP_SELECT_PANNO)
+        return 0;
+    if (!selection->space)
         return 0;
     spaces[0] = selection->space;
     for (size_t i = 0; i < selection->more_count; i++)
@@ -198,6 +207,20 @@ static bool selection_is_valid(AppDocument *document)
     case APP_SELECT_EXPANSION_JOINT:
         return contains_pointer((void *const *)p->expansion_joints.items, p->expansion_joints.count, s->expansion_joint);
     case APP_SELECT_PIPE: return contains_pointer((void *const *)p->pipes.items, p->pipes.count, s->pipe);
+    case APP_SELECT_FIXTURE: return s->index >= 0 && (size_t)s->index < p->fixtures.count;
+    case APP_SELECT_DRAIN: return s->index >= 0 && (size_t)s->index < p->drains.count;
+    case APP_SELECT_ROOM_WALL:
+    case APP_SELECT_WALL_PIPE:
+    case APP_SELECT_WALL_RULER:
+    case APP_SELECT_PANNO: {
+        if (!contains_pointer((void *const *)p->spaces.items, p->spaces.count, s->space) || s->index < 0)
+            return false;
+        size_t count = s->kind == APP_SELECT_ROOM_WALL  ? tl_space_wall_count(s->space)
+                       : s->kind == APP_SELECT_WALL_PIPE ? s->space->wall_pipes.count
+                       : s->kind == APP_SELECT_PANNO     ? s->space->pannos.count
+                                                          : s->space->wall_rulers.count;
+        return (size_t)s->index < count;
+    }
     case APP_SELECT_NODE: {
         TlNode node;
         return contains_pointer((void *const *)p->partitions.items, p->partitions.count, s->partition) &&
@@ -280,6 +303,10 @@ static SelectionKey selection_key(AppDocument *document)
     case APP_SELECT_WALL:
         key.position = position_in((void *const *)p->outlines.items, p->outlines.count, s->outline);
         break;
+    case APP_SELECT_ROOM_WALL:
+    case APP_SELECT_WALL_PIPE:
+    case APP_SELECT_WALL_RULER:
+    case APP_SELECT_PANNO:
     case APP_SELECT_SPACE:
         key.position = position_in((void *const *)p->spaces.items, p->spaces.count, s->space);
         for (size_t i = 0; i < s->more_count; i++)
@@ -320,6 +347,10 @@ static void restore_selection(AppDocument *document, SelectionKey key)
         if (found)
             s.outline = p->outlines.items[position];
         break;
+    case APP_SELECT_ROOM_WALL:
+    case APP_SELECT_WALL_PIPE:
+    case APP_SELECT_WALL_RULER:
+    case APP_SELECT_PANNO:
     case APP_SELECT_SPACE:
         found = found && position < p->spaces.count;
         if (found)
@@ -350,6 +381,8 @@ static void restore_selection(AppDocument *document, SelectionKey key)
         if (found)
             s.expansion_joint = p->expansion_joints.items[position];
         break;
+    case APP_SELECT_FIXTURE:
+    case APP_SELECT_DRAIN: found = true; break; /* номер — в index */
     case APP_SELECT_PIPE:
         found = found && position < p->pipes.count;
         if (found)

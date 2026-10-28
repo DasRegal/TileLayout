@@ -116,5 +116,89 @@ void spec_estimate(void)
             tl_project_free(loaded);
             tl_project_free(project);
         }
+        IT("подрезка: 900×302 и плитка 600×300 — один рез 300 мм; в смете — за погонный метр")
+        {
+            TlProject *project = room_project(900, 302);
+            TlTileSettings *tile = &only_space(project)->tile;
+            EXPECT_NEAR(tl_layout_cut_length(tl_space_layout(only_space(project))), 300, 0.01);
+            tile->price_cut_m = 200;
+            TlSummary summary = tl_report_summarize(project);
+            TlEstimate estimate = tl_estimate_from_summary(&summary);
+            const TlEstimateLine *cut = line_named(&estimate, "Подрезка плитки");
+            EXPECT(cut != NULL);
+            if (cut)
+                EXPECT_NEAR(cut->cost, 0.3 * 200, 1e-9);
+            tl_estimate_free(&estimate);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("крестики вместо СВП: 3 × 3 плитки — 4 пересечения швов внутри, у стен — нет")
+        {
+            TlProject *project = room_project(1804, 904);
+            TlTileSettings *tile = &only_space(project)->tile;
+            tile->use_crosses = true;
+            EXPECT_INT(tl_layout_cross_count(tl_space_layout(only_space(project))), 4);
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.cross_total, 4);
+            EXPECT_INT(summary.clip_total, 0);
+            EXPECT_INT(summary.crosses.count, 1);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("гидроизоляция: пол и заход 200 мм на стены, два слоя; лента — по стыку пола и стен")
+        {
+            TlProject *project = room_project(2000, 1500);
+            TlTileSettings *tile = &only_space(project)->tile;
+            tile->waterproof = true;
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_NEAR(summary.waterproof_total_kg, (3.0 + 7.0 * 0.2) * 0.8 * 2, 1e-6);
+            EXPECT_NEAR(summary.tape_total_m, 7, 1e-6);
+            EXPECT_INT(summary.waterproof.count, 1);
+            if (summary.waterproof.count == 1)
+                EXPECT_INT(summary.waterproof.items[0].units, 1);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("уголки: у колонны — 4 наружных угла; по 2500 мм — 4 планки по 2700 мм")
+        {
+            TlProject *project = room_project(4000, 3000);
+            const TlVec2 a = {1800, 1500}, b = {2200, 1500};
+            tl_project_add_partition(project, tl_partition_new(a, b, 400)); /* колонна 400×400 */
+            tl_project_update_spaces(project);
+            TlTileSettings *tile = &only_space(project)->tile;
+            tile->corner_profile_height = 2500;
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.rooms.items[0].corner_count, 4);
+            EXPECT_NEAR(summary.corner_total_mm, 10000, 1e-6);
+            EXPECT_INT(summary.corners.count, 1);
+            if (summary.corners.count == 1)
+                EXPECT_INT(summary.corners.items[0].units, 4);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
+        IT("порог-профиль — по проёму один раз; плитка упаковками — к покупке целые упаковки")
+        {
+            TlProject *project = tl_project_demo();
+            for (size_t i = 0; i < project->spaces.count; i++) {
+                project->spaces.items[i]->tile.threshold_profile = true;
+                project->spaces.items[i]->tile.tile_pack = 8;
+                project->spaces.items[i]->tile.price_tile_unit = TL_PRICE_PER_PACK;
+                project->spaces.items[i]->tile.price_tile_m2 = 2000;
+            }
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT(summary.threshold_total_mm > 600 && summary.threshold_total_mm < 800); /* одна дверь 700 */
+            for (size_t i = 0; i < summary.types.count; i++) {
+                const TlTileTypeSummary *type = &summary.types.items[i];
+                EXPECT_INT(type->packs, (type->to_buy + 7) / 8);
+            }
+            TlEstimate estimate = tl_estimate_from_summary(&summary);
+            bool by_pack = false;
+            for (size_t i = 0; i < estimate.lines.count; i++)
+                by_pack |= strcmp(estimate.lines.items[i].unit, "уп.") == 0 && strstr(estimate.lines.items[i].name, "по 8 шт.");
+            EXPECT(by_pack);
+            tl_estimate_free(&estimate);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
     }
 }

@@ -279,25 +279,30 @@ static void open_user_folder(GtkWindow *parent)
     g_free(uri);
 }
 
-/* Выбранное — основному полу (zone == TL_ZONE_COUNT) или зоне пола. */
-static void apply_choice(AppDocument *document, TlZoneKind zone, const TlCatalog *catalog, const TlCatalogTile *tile)
+/* Выбранное — основному полу (zone == TL_ZONE_COUNT) или зоне (app_space_zone). */
+static void apply_choice(AppDocument *document, int zone, const TlCatalog *catalog, const TlCatalogTile *tile)
 {
-    if (zone == TL_ZONE_COUNT)
+    if (zone == APP_ZONE_PANNO)
+        app_command_set_panno_texture(document, catalog, tile);
+    else if (zone == TL_ZONE_COUNT)
         app_command_set_tile_texture(document, catalog, tile);
     else
         app_command_set_zone_texture(document, zone, catalog, tile);
 }
 
-static void run_dialog(GtkWindow *parent, AppDocument *document, TlZoneKind zone)
+static void run_dialog(GtkWindow *parent, AppDocument *document, int zone)
 {
-    TlSpace *space = document->selection.kind == APP_SELECT_SPACE ? document->selection.space : NULL;
+    TlSpace *rooms[APP_MAX_ROOMS];
+    TlSpace *space = app_selection_spaces(&document->selection, rooms) ? rooms[0] : NULL;
     if (!space) {
         app_document_status(document, "Выделите комнату — плитка выбирается для неё");
         return;
     }
     Picker picker = {0};
     build(&picker, parent);
-    const char *current = zone == TL_ZONE_COUNT ? tl_space_effective_tile(space)->texture : space->zones[zone].tile.texture;
+    const char *current = zone == APP_ZONE_PANNO ? space->pannos.items[document->selection.index].texture
+                          : zone == TL_ZONE_COUNT ? tl_space_effective_tile(space)->texture
+                                                  : app_space_zone(space, zone)->tile.texture;
     fill_catalogs(&picker);
     fill_tiles(&picker, current);
     on_tile_selected(GTK_FLOW_BOX(picker.tiles), &picker);
@@ -336,7 +341,7 @@ void app_catalog_dialog_for_selection(GtkWindow *parent, AppDocument *document)
     run_dialog(parent, document, TL_ZONE_COUNT);
 }
 
-void app_catalog_dialog_for_zone(GtkWindow *parent, AppDocument *document, TlZoneKind zone)
+void app_catalog_dialog_for_zone(GtkWindow *parent, AppDocument *document, int zone)
 {
     run_dialog(parent, document, zone);
 }

@@ -41,6 +41,10 @@ TlRegionList tl_regions_difference(const TlPolygon *base, const TlPolygon *cutte
 
 double tl_polygons_overlap_area(const TlPolygon *a, const TlPolygon *b);
 
+/* Область как многоугольники без дыр (вырезы раскладки дыр не знают): у области с дырами — куски
+   между вертикалями через середины дыр; дыры в них — вырезы по краю. */
+TlPolygonList tl_region_pieces(const TlRegion *region);
+
 double tl_region_area(const TlRegion *region);
 bool tl_region_contains(const TlRegion *region, TlVec2 point);
 void tl_region_free(TlRegion *region);

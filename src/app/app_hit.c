@@ -1,6 +1,9 @@
 #include "app_hit.h"
 
 #include <math.h>
+#include <stdint.h>
+
+#include "tl_layout.h"
 
 static AppSelection none(void) { return (AppSelection){0}; }
 
@@ -98,6 +101,36 @@ static bool hit_pipe(TlProject *project, TlVec2 world, double tolerance, AppSele
         TlPipe *pipe = project->pipes.items[i];
         if (tl_distance(world, pipe->center) < fmax(pipe->diameter / 2, tolerance)) {
             *hit = (AppSelection){.kind = APP_SELECT_PIPE, .pipe = pipe};
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Предметы — поверх пола, под проёмами и стенами: внутри контура. */
+static bool hit_fixture(TlProject *project, TlVec2 world, AppSelection *hit)
+{
+    for (size_t i = project->fixtures.count; i-- > 0;) {
+        TlPolygon outline = tl_fixture_outline(&project->fixtures.items[i]);
+        bool inside = tl_polygon_contains(&outline, world);
+        tl_polygon_free(&outline);
+        if (inside) {
+            *hit = (AppSelection){.kind = APP_SELECT_FIXTURE, .index = (int)i};
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Трапы — поверх пола: решётка или лоток (не меньше нескольких мм). */
+static bool hit_drain(TlProject *project, TlVec2 world, double tolerance, AppSelection *hit)
+{
+    for (size_t i = project->drains.count; i-- > 0;) {
+        TlPolygon outline = tl_drain_outline(&project->drains.items[i]);
+        bool inside = tl_polygon_contains(&outline, world) || tl_distance(world, project->drains.items[i].center) < tolerance;
+        tl_polygon_free(&outline);
+        if (inside) {
+            *hit = (AppSelection){.kind = APP_SELECT_DRAIN, .index = (int)i};
             return true;
         }
     }
@@ -293,7 +326,7 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
     AppSelection hit = none();
     bool found = hit_ruler(project, world, vertex_tolerance, wall_tolerance, &hit) ||
                  hit_expansion_joint(project, world, vertex_tolerance, wall_tolerance, &hit) ||
-                 hit_pipe(project, world, vertex_tolerance, &hit) ||
+                 hit_pipe(project, world, vertex_tolerance, &hit) || hit_drain(project, world, vertex_tolerance, &hit) ||
                  hit_node(project, current, world, vertex_tolerance, &hit) ||
                  hit_tee(project, world, vertex_tolerance, &hit) ||
                  hit_selected_partition_handle(project, current, world, vertex_tolerance, &hit) ||
@@ -303,11 +336,22 @@ AppSelection app_hit_test(TlProject *project, const AppView *view, TlVec2 screen
                                vertex_tolerance, &hit) ||
                  hit_opening(project, world, app_view_pixels_to_mm(view, 3), &hit) ||
                  hit_partition_body(project, world, wall_tolerance, &hit) ||
-                 hit_wall(outlines, outline_count, world, wall_tolerance, &hit);
+                 hit_wall(outlines, outline_count, world, wall_tolerance, &hit) || hit_fixture(project, world, &hit);
     if (!found) {
         TlSpace *space = tl_project_space_at(project, world);
-        if (space)
-            hit = (AppSelection){.kind = APP_SELECT_SPACE, .space = space};
+        if (space) { /* часть пола между линиями — index = номер части + 1 */
+            size_t region = space->regions.count > 1 ? tl_space_region_at(space, world) : SIZE_MAX;
+            hit = (AppSelection){.kind = APP_SELECT_SPACE, .space = space,
+                                 .index = region == SIZE_MAX ? 0 : (int)region + 1};
+        }
+        for (size_t i = 0; space && i < space->pannos.count; i++) { /* панно на полу — поверх комнаты */
+            if (space->pannos.items[i].wall != TL_PANNO_FLOOR)
+                continue;
+            TlPolygon outline = tl_space_panno_outline(space, i);
+            if (tl_polygon_contains(&outline, world))
+                hit = (AppSelection){.kind = APP_SELECT_PANNO, .space = space, .index = (int)i};
+            tl_polygon_free(&outline);
+        }
     }
     g_free(outlines);
     return hit;

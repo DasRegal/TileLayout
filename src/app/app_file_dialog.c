@@ -8,7 +8,10 @@ static GtkFileChooserNative *new_chooser(GtkWindow *parent, const char *title, G
     GtkFileChooserNative *chooser = gtk_file_chooser_native_new(title, parent, action, accept, "Отмена");
     GtkFileFilter *filter = gtk_file_filter_new();
     gtk_file_filter_set_name(filter, type->name);
-    gtk_file_filter_add_pattern(filter, type->pattern);
+    gchar **patterns = g_strsplit(type->pattern, ";", -1);
+    for (gchar **pattern = patterns; *pattern; pattern++)
+        gtk_file_filter_add_pattern(filter, *pattern);
+    g_strfreev(patterns);
     gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
     if (folder)
         gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), folder);

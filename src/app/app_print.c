@@ -22,11 +22,11 @@ const int APP_PRINT_SCALE_COUNT = sizeof APP_PRINT_SCALES / sizeof APP_PRINT_SCA
 /* Масштабы, из которых выбирается «по размеру листа». */
 static const int FIT_SCALES[] = {5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300, 400, 500, 750, 1000};
 
-typedef enum PageKind { PAGE_PLAN, PAGE_PLAN_NUMBERS, PAGE_CARDS, PAGE_SHEET } PageKind;
+typedef enum PageKind { PAGE_PLAN, PAGE_PLAN_NUMBERS, PAGE_WALLS, PAGE_CARDS, PAGE_CUT_MAP, PAGE_SHEET, PAGE_ESTIMATE } PageKind;
 
 typedef struct Page {
     PageKind kind;
-    int index;        /* лист плана / страница карточек / страница расчёта */
+    int index;        /* лист плана / комната (развёртка стен) / страница карточек / страница расчёта */
 } Page;
 
 /* Как план разложен на листы. */
@@ -50,6 +50,8 @@ struct AppPrintJob {
     TlCutCardList cards;
     int card_columns, card_rows;
     AppSheet *sheet;
+    AppSheet *estimate;      /* смета для заказчика */
+    AppSheet *cut_map;       /* карта раскроя — с чертежами подрезок */
     GArray *pages;
 };
 
@@ -112,17 +114,29 @@ AppPrintJob *app_print_job_new(TlProject *project, const char *title, const AppP
 
     int plan_pages = job->plan.empty ? 0 : job->plan.columns * job->plan.rows;
     add_pages(job->pages, PAGE_PLAN, plan_pages);
-    if (options->cuts) {
+    if (options->cuts)
         add_pages(job->pages, PAGE_PLAN_NUMBERS, plan_pages);
+    for (size_t s = 0; s < project->spaces.count; s++) /* развёртка — у комнат с облицовкой стен */
+        if (project->spaces.items[s]->walls.enabled && tl_space_wall_count(project->spaces.items[s]) > 0) {
+            Page page = {PAGE_WALLS, (int)s};
+            g_array_append_val(job->pages, page);
+        }
+    if (options->cuts) {
         job->cards = tl_report_cut_cards(project);
         job->card_columns = (int)fmax(1, floor(job->area_width / CARD_WIDTH_PX));
         job->card_rows = (int)fmax(1, floor((job->area_height - HEADER_PX) / CARD_HEIGHT_PX));
         int per_page = job->card_columns * job->card_rows;
         add_pages(job->pages, PAGE_CARDS, (int)((job->cards.count + per_page - 1) / per_page));
+        job->cut_map = app_sheet_new_cut_map(project, job->title, options->mono, job->area_width);
+        add_pages(job->pages, PAGE_CUT_MAP, app_sheet_page_count(job->cut_map, job->area_height));
     }
     if (options->calc) {
         job->sheet = app_sheet_new_calculation(project, job->title, options->mono, job->area_width);
         add_pages(job->pages, PAGE_SHEET, app_sheet_page_count(job->sheet, job->area_height));
+    }
+    if (options->estimate) {
+        job->estimate = app_sheet_new_estimate(project, job->title, options->mono, job->area_width);
+        add_pages(job->pages, PAGE_ESTIMATE, app_sheet_page_count(job->estimate, job->area_height));
     }
     return job;
 }
@@ -133,6 +147,8 @@ void app_print_job_free(AppPrintJob *job)
         return;
     tl_cut_card_list_free_all(&job->cards);
     app_sheet_free(job->sheet);
+    app_sheet_free(job->estimate);
+    app_sheet_free(job->cut_map);
     g_array_free(job->pages, TRUE);
     g_free(job);
 }
@@ -199,6 +215,46 @@ static void render_plan_page(AppPrintJob *job, cairo_t *cr, int index, bool numb
     cairo_rectangle(cr, 0, 0, job->area_width, area_height);
     cairo_clip(cr);
     app_render_plan(cr, job->project, &view, &options);
+    cairo_restore(cr);
+}
+
+/* Развёртка стен комнаты на одном листе — в стандартном масштабе; с чертежами подрезок — с номерами. */
+static void render_walls_page(AppPrintJob *job, cairo_t *cr, int index)
+{
+    TlSpace *space = job->project->spaces.items[index];
+    double area_height = job->area_height - HEADER_PX;
+    TlRect bounds = app_render_walls_bounds(space);
+    double fit = fmin((job->area_width - 2 * DIMENSION_MARGIN_PX) / fmax(tl_rect_width(bounds), 1),
+                      (area_height - 2 * DIMENSION_MARGIN_PX) / fmax(tl_rect_height(bounds), 1));
+    double wanted = APP_PX_PER_MM / fit;
+    int scale = (int)ceil(wanted);
+    for (size_t i = 0; i < G_N_ELEMENTS(FIT_SCALES); i++)
+        if (FIT_SCALES[i] >= wanted - 1e-6) {
+            scale = FIT_SCALES[i];
+            break;
+        }
+    double pixels_per_mm = APP_PX_PER_MM / scale;
+    char subject[160], right[64];
+    g_snprintf(subject, sizeof subject, "развёртка стен: %s", space->name);
+    g_snprintf(right, sizeof right, "Масштаб 1:%d", scale);
+    draw_header(job, cr, subject, right);
+    AppView view = {pixels_per_mm,
+                    (job->area_width - tl_rect_width(bounds) * pixels_per_mm) / 2 - bounds.left * pixels_per_mm,
+                    (area_height - tl_rect_height(bounds) * pixels_per_mm) / 2 - bounds.top * pixels_per_mm,
+                    job->area_width, area_height};
+    AppRenderOptions options = {
+        .show_tiles = true,
+        .show_clips = job->options.clips,
+        .show_dims = job->options.dims,
+        .show_numbers = job->options.cuts,
+        .printing = true,
+        .mono = job->options.mono,
+    };
+    cairo_save(cr);
+    cairo_translate(cr, 0, HEADER_PX);
+    cairo_rectangle(cr, 0, 0, job->area_width, area_height);
+    cairo_clip(cr);
+    app_render_walls(cr, job->project, space, &view, &options, NULL);
     cairo_restore(cr);
 }
 
@@ -459,6 +515,20 @@ static void draw_drill(cairo_t *cr, AppLabels *labels, const TlCutPart *part, Tl
     app_labels_place(labels, cr, text, &bold, 0, c, places, sizeof places / sizeof places[0], false);
 }
 
+/* Сторона с запилом 45°: толстая линия и подпись «45°». */
+static void draw_miter(cairo_t *cr, AppLabels *labels, const TlPolygon *edge, double scale, double ox, double oy, bool mono)
+{
+    TlVec2 a = on_card(edge->items[0], scale, ox, oy), b = on_card(edge->items[1], scale, ox, oy);
+    cairo_move_to(cr, a.x, a.y);
+    cairo_line_to(cr, b.x, b.y);
+    cairo_set_source_rgb(cr, mono ? 0 : 0.78, mono ? 0 : 0.16, mono ? 0 : 0.16);
+    cairo_set_line_width(cr, 3);
+    cairo_stroke(cr);
+    AppTextStyle style = {9, true, mono ? (AppColor){0, 0, 0, 1} : app_color_hex("#c62828"), app_color_rgba(255, 255, 255, 0.9)};
+    TlVec2 normal = tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a)));
+    app_labels_place_along(labels, cr, "запил 45°", &style, a, b, normal, false);
+}
+
 static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, double x, double y, double w, double h)
 {
     bool mono = job->options.mono;
@@ -531,6 +601,9 @@ static void draw_card(AppPrintJob *job, cairo_t *cr, const TlCutCard *card, doub
     for (size_t p = 0; p < card->parts.count; p++)
         for (size_t d = 0; d < card->parts.items[p].drills.count && card->parts.items[p].shapes.count; d++)
             draw_drill(cr, labels, &card->parts.items[p], card->parts.items[p].drills.items[d], scale, ox, oy, mono);
+    for (size_t p = 0; p < card->parts.count; p++) /* запил 45° — толстой линией по стороне */
+        for (size_t m = 0; m < card->parts.items[p].miters.count; m++)
+            draw_miter(cr, labels, &card->parts.items[p].miters.items[m], scale, ox, oy, mono);
     for (size_t p = 0; p < card->parts.count; p++)
         for (size_t s = 0; s < card->parts.items[p].shapes.count; s++)
             if (card->kind != TL_CARD_DRILLED) /* у целой плитки размеры — в подписи */
@@ -571,8 +644,11 @@ void app_print_job_render(AppPrintJob *job, cairo_t *cr, int page)
     switch (p.kind) {
     case PAGE_PLAN: render_plan_page(job, cr, p.index, false); break;
     case PAGE_PLAN_NUMBERS: render_plan_page(job, cr, p.index, true); break;
+    case PAGE_WALLS: render_walls_page(job, cr, p.index); break;
     case PAGE_CARDS: render_cards_page(job, cr, p.index); break;
     case PAGE_SHEET: app_sheet_render_page(job->sheet, cr, p.index, job->area_height); break;
+    case PAGE_ESTIMATE: app_sheet_render_page(job->estimate, cr, p.index, job->area_height); break;
+    case PAGE_CUT_MAP: app_sheet_render_page(job->cut_map, cr, p.index, job->area_height); break;
     }
     cairo_restore(cr);
 }

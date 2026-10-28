@@ -80,8 +80,11 @@ export function drawScene(ctx, scene, view, options) {
   if (!scene) return;
 
   world();
+  if (options.underlay && !options.printing) drawUnderlay(ctx, scene.underlay, options.underlay, px);
   for (const space of scene.spaces) drawFloor(ctx, space, view, px, { ...options, image, layers });
   if (layers.joints) for (const joint of scene.joints) drawJoint(ctx, joint, px);
+  for (const fixture of scene.fixtures || []) drawFixture(ctx, fixture, view, px);
+  drawDrains(ctx, scene, px);
   drawWalls(ctx, scene, view, px, dpr, options.mono);
   drawOpenings(ctx, scene, view, px);
   screen(); // трубы — поверх стен: у стены видны целиком
@@ -110,6 +113,7 @@ export function drawScene(ctx, scene, view, options) {
     for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
   }
   if (layers.labels) for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
+  for (const fixture of scene.fixtures || []) drawFixtureLabel(ctx, fixture, view);
   if (layers.rulers) for (const ruler of scene.rulers) drawRuler(ctx, ruler, view);
   if (options.overlay) options.overlay(ctx);
 }
@@ -214,11 +218,43 @@ function drawFloor(ctx, space, view, px, options) {
   }
   drawLayout(ctx, tile, layout, view, px, options);
   for (const zone of space.zones) if (!zone.too_many) drawLayout(ctx, zone.tile, zone, view, px, options); // бордюр, ковёр
+  for (const panno of space.pannos || []) drawPanno(ctx, panno, view, px, options);
   ctx.restore();
 }
 
-/** Одна раскладка (основной пол или зона): швы — заливкой пола, поверх — плитки. */
-function drawLayout(ctx, tile, layout, view, px, options) {
+/** Панно (tl_web_panno_json): картинка на всё панно, у каждой плитки — своя часть; без картинки — цвет. */
+export function drawPanno(ctx, panno, view, px, options) {
+  ctx.save();
+  const [a, b, c, d, tx, ty] = panno.matrix;
+  ctx.transform(a, b, c, d, tx, ty);
+  const [width, height] = panno.size;
+  ctx.fillStyle = C.grout;
+  ctx.fillRect(0, 0, width, height);
+  const image = options.mono ? null : options.image(panno.tile.texture);
+  const tiles = panno.tiles;
+  for (let i = 0; i < tiles.length; i += TILE_STRIDE) {
+    const [left, top, right, bottom] = [tiles[i], tiles[i + 1], tiles[i + 2], tiles[i + 3]];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, right - left, bottom - top);
+    if (image) {
+      ctx.clip();
+      ctx.drawImage(image, 0, 0, width, height);
+    } else {
+      ctx.fillStyle = options.mono ? '#ffffff' : panno.tile.color;
+      ctx.fill();
+      ctx.lineWidth = px(0.8);
+      ctx.strokeStyle = options.mono ? '#000000' : darker(panno.tile.color, 1.5);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** Одна раскладка (основной пол, зона, полоса стены): швы — заливкой пола, поверх — плитки.
+ *  options: {image(reference), layers, mono}; ctx — в мм (мир). */
+export function drawLayout(ctx, tile, layout, view, px, options) {
   ctx.save();
   const [a, b, c, d, tx, ty] = layout.matrix;
   ctx.transform(a, b, c, d, tx, ty);
@@ -272,8 +308,22 @@ function drawTiles(ctx, tile, layout, view, px, image, options) {
     }
   }
   if (options.layers.clips && Math.min(tile.w, tile.h) * view.scale > 24) {
-    const clips = layout.clips;
     const size = px(5);
+    if (tile.crosses) { // крестики — на пересечениях швов
+      const crosses = layout.crosses;
+      ctx.beginPath();
+      for (let i = 0; i < crosses.length; i += 2) {
+        ctx.moveTo(crosses[i] - size, crosses[i + 1]);
+        ctx.lineTo(crosses[i] + size, crosses[i + 1]);
+        ctx.moveTo(crosses[i], crosses[i + 1] - size);
+        ctx.lineTo(crosses[i], crosses[i + 1] + size);
+      }
+      ctx.strokeStyle = C.clip;
+      ctx.lineWidth = px(1.6);
+      ctx.stroke();
+      return;
+    }
+    const clips = layout.clips;
     ctx.fillStyle = C.clip;
     for (let i = 0; i < clips.length; i += 2) ctx.fillRect(clips[i] - size / 2, clips[i + 1] - size / 2, size, size);
   }
@@ -410,10 +460,132 @@ function stroke(ctx, color, width, dash = []) {
 // ---- деформационные швы и линейки -------------------------------------------------
 
 /** Шов: щель шириной gap (не уже 3 px) и пунктир по оси. */
+/** Предмет на плане: контур, значок вида, название и размер. */
+function drawFixture(ctx, fixture, view, px) {
+  const o = fixture.outline;
+  ctx.beginPath();
+  for (let i = 0; i < o.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, o[i], o[i + 1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(247, 248, 250, 0.92)';
+  ctx.fill();
+  stroke(ctx, C.wall, px(1.6));
+  const radians = (fixture.angle * Math.PI) / 180;
+  const at = (x, y) => [fixture.center[0] + x * Math.cos(radians) - y * Math.sin(radians),
+    fixture.center[1] + x * Math.sin(radians) + y * Math.cos(radians)];
+  const w = fixture.w / 2;
+  const d = fixture.d / 2;
+  const segment = (x0, y0, x1, y1) => {
+    ctx.moveTo(...at(x0, y0));
+    ctx.lineTo(...at(x1, y1));
+  };
+  ctx.beginPath();
+  if (fixture.kind === 'bath') {
+    const inset = Math.min(60, Math.min(w, d) / 3);
+    segment(-w + inset, -d + inset, w - inset, -d + inset);
+    segment(w - inset, -d + inset, w - inset, d - inset);
+    segment(w - inset, d - inset, -w + inset, d - inset);
+    segment(-w + inset, d - inset, -w + inset, -d + inset);
+  } else if (fixture.kind === 'tray') {
+    segment(-w, -d, w, d);
+    segment(w, -d, -w, d);
+  } else if (fixture.kind === 'installation') {
+    for (let x = -w; x < w; x += 100) segment(x, -d, Math.min(x + 2 * d, w), d);
+  } else if (fixture.kind === 'cabinet') {
+    segment(0, -d, 0, d);
+  } else if (fixture.kind === 'stairs') { // ступени и стрелка подъёма — от переда к спинке
+    const steps = fixture.steps || 1;
+    const inset = Math.min(60, Math.min(w, d) / 3);
+    for (let i = 1; i < steps; i++) segment(-w, d - (2 * d * i) / steps, w, d - (2 * d * i) / steps);
+    segment(0, d - inset, 0, -d + inset);
+    segment(0, -d + inset, -inset / 2, -d + 2 * inset);
+    segment(0, -d + inset, inset / 2, -d + 2 * inset);
+  } else {
+    for (let x = -w + 600; x < w - 1; x += 600) segment(x, -d, x, d);
+  }
+  stroke(ctx, C.wall, px(0.9));
+}
+
+/**
+ * Подложка под планом: фото или линии DXF-плана с её прозрачностью. place — положение из сцены,
+ * content — {image: загруженная картинка, lines: [[x0, y0, …], …]} (src/web/tl_web_underlay.c).
+ */
+function drawUnderlay(ctx, place, content, px) {
+  if (!place?.present || !place.visible) return;
+  ctx.save();
+  ctx.globalAlpha = place.opacity;
+  ctx.translate(place.origin[0], place.origin[1]);
+  ctx.scale(place.scale, place.scale);
+  if (content.image?.complete && content.image.naturalWidth) {
+    ctx.drawImage(content.image, 0, 0, content.size[0], content.size[1]);
+  } else if (content.lines) {
+    ctx.beginPath();
+    for (const line of content.lines) {
+      ctx.moveTo(line[0], line[1]);
+      for (let i = 2; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1]);
+    }
+    ctx.strokeStyle = '#8c5c1f'; // коричневым — не спутать со стенами
+    ctx.lineWidth = px(1) / place.scale;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Трапы: разрезы конверта пунктиром, решётка или лоток. */
+function drawDrains(ctx, scene, px) {
+  const slopes = scene.slopes || [];
+  ctx.beginPath();
+  for (let i = 0; i < slopes.length; i += 4) {
+    ctx.moveTo(slopes[i], slopes[i + 1]);
+    ctx.lineTo(slopes[i + 2], slopes[i + 3]);
+  }
+  stroke(ctx, '#3d5a80', px(1.2), [px(6), px(5)]);
+  for (const drain of scene.drains || []) {
+    const o = drain.outline;
+    ctx.beginPath();
+    for (let i = 0; i < o.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, o[i], o[i + 1]);
+    ctx.closePath();
+    ctx.fillStyle = '#d7dde3';
+    ctx.fill();
+    stroke(ctx, '#3d5a80', px(1.6));
+    const lerp = (a, b, t) => [o[a] + (o[b] - o[a]) * t, o[a + 1] + (o[b + 1] - o[a + 1]) * t];
+    ctx.beginPath();
+    const slots = drain.kind === 'linear' ? 1 : 4;
+    for (let k = 1; k <= slots; k++) { // решётка — полосы, лоток — продольная щель
+      const t = k / (slots + 1);
+      const [a, b] = drain.kind === 'linear' ? [lerp(0, 6, t), lerp(2, 4, t)] : [lerp(0, 2, t), lerp(6, 4, t)];
+      ctx.moveTo(...a);
+      ctx.lineTo(...b);
+    }
+    stroke(ctx, '#3d5a80', px(0.9));
+  }
+}
+
+/** Название и размер предмета — в пикселях экрана. */
+function drawFixtureLabel(ctx, fixture, view) {
+  if (Math.min(fixture.w, fixture.d) * view.scale < 30) return;
+  ctx.save();
+  const [sx, sy] = view.toScreen(...fixture.center);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = C.wall;
+  ctx.font = `600 10.5px ${FONT}`;
+  ctx.fillText(fixture.name, sx, sy - 7);
+  ctx.font = `10.5px ${FONT}`;
+  ctx.fillText(`${Math.round(fixture.w)}×${Math.round(fixture.d)}`, sx, sy + 7);
+  ctx.restore();
+}
+
 function drawJoint(ctx, joint, px) {
   const [x0, y0, x1, y1] = joint.line;
   const length = Math.hypot(x1 - x0, y1 - y0);
   if (length < px(1)) return;
+  if (joint.divider) { // линия раздела — сплошная, шов обычный
+    ctx.beginPath();
+    line(ctx, joint.line);
+    stroke(ctx, C.joint, Math.max(px(1.6), joint.gap));
+    return;
+  }
   const half = Math.max(joint.gap, px(3)) / 2;
   const [nx, ny] = [(-(y1 - y0) / length) * half, ((x1 - x0) / length) * half];
   ctx.beginPath();

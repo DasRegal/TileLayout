@@ -21,7 +21,7 @@ typedef struct PrintDialog {
     AppPrintJob *job;
     bool updating;
 
-    GtkWidget *tiles, *clips, *dims, *expansion_joints, *cuts, *calc, *mono;
+    GtkWidget *tiles, *clips, *dims, *expansion_joints, *cuts, *calc, *estimate, *mono;
     GtkWidget *orientation, *scale, *offset_x_spin, *offset_y_spin, *info;
 } PrintDialog;
 
@@ -103,6 +103,7 @@ static void read_controls(PrintDialog *self)
     self->options.expansion_joints = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->expansion_joints));
     self->options.cuts = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->cuts));
     self->options.calc = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->calc));
+    self->options.estimate = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->estimate));
     self->options.mono = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->mono));
     self->options.landscape = gtk_combo_box_get_active(GTK_COMBO_BOX(self->orientation)) == 0;
     int scale_index = gtk_combo_box_get_active(GTK_COMBO_BOX(self->scale));
@@ -258,6 +259,9 @@ static GtkWidget *build_controls(PrintDialog *self)
                               "всеми размерами. Плитка на две комнаты и две подрезки из одной плитки —\n"
                               "на одном чертеже");
     self->calc = option_check(self, checks, "Расчёты на отдельном листе", self->options.calc, NULL);
+    self->estimate = option_check(self, checks, "Смета для заказчика", self->options.estimate,
+                                  "Отдельный лист: материалы и работы с ценами, итог, места для подписей.\n"
+                                  "Цены — в разделе «Цены для сметы» у комнат");
     self->mono = option_check(self, checks, "Чёрно-белая (без серого)", self->options.mono,
                               "Только чёрный и белый: стены и линии — чёрные, плитка — белая\n"
                               "с чёрными швами. Для лазерных принтеров и ксерокопий.");

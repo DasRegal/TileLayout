@@ -1,12 +1,13 @@
 /*
- * Инструменты-отрезки «Линейка» и «Деформационный шов»: клик — начало,
+ * Инструменты-отрезки «Линейка», «Деформационный шов» и «Раздел»: клик — начало,
  * клик — конец (или протянуть мышью, или набрать длину и Enter).
  * Почти горизонтальный или вертикальный отрезок выпрямляется; концы
  * притягиваются: у линейки — к углам, серединам, граням и осям стен и к
- * швам плитки, у шва — только к поверхностям стен. Shift — без того и
+ * швам плитки, у шва и раздела — к поверхностям стен и к концам и линиям других
+ * швов и разделов (так линии сочленяются). Shift — без того и
  * другого. Отрезков может быть сколько угодно: инструмент остаётся включённым.
  *
- * Оба инструмента — одна «Стратегия»; различаются вариантом SegmentKind.
+ * Все инструменты — одна «Стратегия»; различаются вариантом SegmentKind.
  */
 #include "app_canvas_private.h"
 
@@ -30,18 +31,29 @@ static void draw_ruler_preview(AppCanvas *canvas, cairo_t *cr, TlVec2 start, TlV
 
 static void draw_joint_preview(AppCanvas *canvas, cairo_t *cr, TlVec2 start, TlVec2 end)
 {
-    TlExpansionJoint preview = {start, end, canvas->document->preferences.expansion_joint_gap};
+    TlExpansionJoint preview = {start, end, canvas->document->preferences.expansion_joint_gap, TL_LINE_EXPANSION_JOINT};
+    app_render_expansion_joint(cr, &canvas->view, &preview, app_color_hex(APP_BLUE));
+    app_canvas_draw_dimension(canvas, cr, start, end, false, APP_BLUE);
+}
+
+static void draw_divider_preview(AppCanvas *canvas, cairo_t *cr, TlVec2 start, TlVec2 end)
+{
+    TlExpansionJoint preview = {start, end, canvas->document->preferences.divider_gap, TL_LINE_DIVIDER};
     app_render_expansion_joint(cr, &canvas->view, &preview, app_color_hex(APP_BLUE));
     app_canvas_draw_dimension(canvas, cr, start, end, false, APP_BLUE);
 }
 
 static const SegmentKind RULER = {TL_SNAP_TO_ALL, app_command_add_ruler, draw_ruler_preview};
-static const SegmentKind EXPANSION_JOINT = {TL_SNAP_TO_WALL_SURFACES, app_command_add_expansion_joint,
+static const SegmentKind EXPANSION_JOINT = {TL_SNAP_TO_WALL_SURFACES | TL_SNAP_TO_LINES, app_command_add_expansion_joint,
                                             draw_joint_preview};
+static const SegmentKind DIVIDER = {TL_SNAP_TO_WALL_SURFACES | TL_SNAP_TO_LINES, app_command_add_divider,
+                                    draw_divider_preview};
 
 static const SegmentKind *kind_of(const AppCanvas *canvas)
 {
-    return canvas->tool_id == APP_TOOL_EXPANSION_JOINT ? &EXPANSION_JOINT : &RULER;
+    return canvas->tool_id == APP_TOOL_EXPANSION_JOINT ? &EXPANSION_JOINT
+           : canvas->tool_id == APP_TOOL_DIVIDER       ? &DIVIDER
+                                                        : &RULER;
 }
 
 static void track(AppCanvas *canvas, const AppPointer *pointer)
@@ -121,3 +133,4 @@ static void draw(AppCanvas *canvas, cairo_t *cr)
 
 const AppTool APP_RULER_TOOL = {SEGMENT_TOOL_HANDLERS};
 const AppTool APP_EXPANSION_JOINT_TOOL = {SEGMENT_TOOL_HANDLERS};
+const AppTool APP_DIVIDER_TOOL = {SEGMENT_TOOL_HANDLERS};

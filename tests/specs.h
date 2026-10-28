@@ -23,5 +23,13 @@ void spec_pattern(void);
 void spec_estimate(void);
 void spec_pipes(void);
 void spec_zones(void);
+void spec_walls(void);
+void spec_panno(void);
+void spec_areas(void);
+void spec_fixtures(void);
+void spec_drains(void);
+void spec_cutmap(void);
+void spec_dxf(void);
+void spec_underlay(void);
 
 #endif

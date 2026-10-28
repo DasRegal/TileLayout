@@ -78,6 +78,17 @@ static bool nearest_vertex(const TlSnapContext *context, TlVec2 point, TlVec2 *v
         consider(partition->start, point, &best_distance, vertex, &found);
         consider(partition->end, point, &best_distance, vertex, &found);
     }
+    const TlUnderlay *underlay = &project->underlay; /* углы DXF-подложки — чтобы обводить план */
+    if (underlay->visible && underlay->lines.count) {
+        TlVec2 local = tl_underlay_from_plan(underlay, point);
+        double reach = best_distance / underlay->scale;
+        for (size_t i = 0; i < underlay->lines.count; i++) {
+            const TlPolygon *line = &underlay->lines.items[i];
+            for (size_t k = 0; k < line->count; k++)
+                if (fabs(line->items[k].x - local.x) < reach && fabs(line->items[k].y - local.y) < reach)
+                    consider(tl_underlay_to_plan(underlay, line->items[k]), point, &best_distance, vertex, &found);
+        }
+    }
     return found;
 }
 
@@ -105,6 +116,28 @@ TlSnapResult tl_snap_point(const TlSnapContext *context, TlVec2 point, const TlV
         tl_guides_add(&result.guides, tracking.y_reference, false);
     }
     return result;
+}
+
+/* Ближайшая точка на линиях DXF-подложки не дальше tolerance (иначе — сама точка). */
+static TlVec2 underlay_line_point(const TlUnderlay *underlay, TlVec2 point, double tolerance)
+{
+    TlVec2 local = tl_underlay_from_plan(underlay, point), best = point;
+    double reach = tolerance / underlay->scale, best_distance = reach;
+    for (size_t i = 0; i < underlay->lines.count; i++) {
+        const TlPolygon *line = &underlay->lines.items[i];
+        for (size_t k = 0; k + 1 < line->count; k++) {
+            TlVec2 a = line->items[k], b = line->items[k + 1];
+            if (fmin(a.x, b.x) > local.x + reach || fmax(a.x, b.x) < local.x - reach ||
+                fmin(a.y, b.y) > local.y + reach || fmax(a.y, b.y) < local.y - reach)
+                continue;
+            double t, d = tl_point_segment_distance(local, a, b, &t);
+            if (d < best_distance) {
+                best_distance = d;
+                best = tl_underlay_to_plan(underlay, tl_vec2_lerp(a, b, t));
+            }
+        }
+    }
+    return best;
 }
 
 /* Опорные точки для выравнивания: start, точки инструмента, углы домов, концы перегородок. */
@@ -184,6 +217,8 @@ TlSnapResult tl_snap_wall_point(const TlSnapContext *context, TlVec2 point, cons
             tl_point_segment_distance(q, best->start, best->end, &t);
             result.point = tl_vec2_lerp(best->start, best->end, t);
         }
+    } else if (context->project->underlay.visible && context->project->underlay.lines.count) {
+        result.point = underlay_line_point(&context->project->underlay, q, tolerance);
     }
     tl_face_list_free(&faces);
     tl_guides_keep_valid(&result.guides, result.point);

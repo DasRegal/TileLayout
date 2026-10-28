@@ -19,7 +19,8 @@
 
 typedef struct TlTileSettings {
     bool enabled;
-    double tile_width, tile_height;  /* мм */
+    double tile_width, tile_height;  /* номинальный размер (так продаётся), мм */
+    double real_width, real_height;  /* фактический (калибр: 598×298 у 600×300), мм; 0 — как номинальный */
     double joint_width;              /* шов между плитками, мм */
     double offset_x, offset_y;       /* смещение сетки в осях раскладки, мм */
     double rotation_degrees;         /* поворот раскладки */
@@ -49,15 +50,40 @@ typedef struct TlTileSettings {
     /* грунт под плитку */
     double primer_l_per_m2;
     double primer_can_l;
+    /* фиксация шва: СВП или крестики */
+    bool use_crosses;                /* крестики вместо СВП — по одному на пересечение швов */
+    int crosses_per_pack;
+    /* гидроизоляция: пол и заход на стены по периметру, лента по стыку пола и стен */
+    bool waterproof;
+    double waterproof_height;        /* заход на стены, мм */
+    double waterproof_kg_per_m2;     /* расход на слой */
+    int waterproof_layers;
+    double waterproof_pack_kg;
+    /* профили: порог в дверях и уголки на наружные углы стен (колонны, короба) */
+    bool threshold_profile;
+    double corner_profile_height;    /* высота уголка на наружный угол, мм; 0 — не нужны */
+    double profile_length;           /* длина планки профиля, мм */
+    /* плитка продаётся упаковками */
+    int tile_pack;                   /* плиток в упаковке; 0 — поштучно */
 
     /* цены для сметы, ₽; 0 — не считать */
-    double price_tile_m2;
+    double price_tile_m2;            /* за единицу price_tile_unit */
+    int price_tile_unit;             /* TlPriceUnit: за м², за штуку, за упаковку */
     double price_glue_bag;
     double price_clip_pack;
     double price_grout_pack;
     double price_primer_can;
     double price_work_m2;            /* укладка, за м² */
+    double price_cut_m;              /* подрезка, за погонный метр реза */
+    double price_cross_pack;
+    double price_waterproof_pack;
+    double price_tape_m;             /* лента гидроизоляции, за метр */
+    double price_threshold;          /* планка порога */
+    double price_corner;             /* планка уголка */
 } TlTileSettings;
+
+/* За что цена плитки. */
+typedef enum TlPriceUnit { TL_PRICE_PER_M2, TL_PRICE_PER_PIECE, TL_PRICE_PER_PACK } TlPriceUnit;
 
 /* Заводские значения. */
 TlTileSettings tl_tile_settings_factory(void);
@@ -90,5 +116,9 @@ typedef struct TlTileField {
 
 const TlTileField *tl_tile_settings_fields(size_t *count);
 bool tl_tile_settings_is_square(const TlTileSettings *settings);
+
+/* Размер, по которому кладут (фактический, если задан, иначе номинальный), мм. */
+double tl_tile_laid_width(const TlTileSettings *tile);
+double tl_tile_laid_height(const TlTileSettings *tile);
 
 #endif

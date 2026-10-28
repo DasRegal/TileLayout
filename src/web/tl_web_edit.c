@@ -4,10 +4,12 @@
  * Геометрия — в ядре (tl_project_commands.c, tl_snap.c), как у программы.
  */
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "tl_drag.h"
+#include "tl_layout.h"
 #include "tl_snap.h"
 #include "tl_web.h"
 #include "tl_web_internal.h"
@@ -178,6 +180,136 @@ int tl_web_add_joint(double x0, double y0, double x1, double y1, double gap, dou
     return (int)project->expansion_joints.count - 1;
 }
 
+int tl_web_add_divider(double x0, double y0, double x1, double y1, double gap, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (tl_distance(tl_vec2(x0, y0), tl_vec2(x1, y1)) < 1 || !(gap >= 0 && gap <= 50))
+        return -1;
+    tl_web_checkpoint("", now_seconds);
+    TlExpansionJoint *line = tl_expansion_joint_new(tl_vec2(x0, y0), tl_vec2(x1, y1), gap);
+    line->kind = TL_LINE_DIVIDER;
+    tl_project_add_expansion_joint(project, line);
+    tl_project_update_spaces(project);
+    return (int)project->expansion_joints.count - 1;
+}
+
+#define FIXTURE_WALL_REACH_MM 400.0
+
+int tl_web_add_drain(const char *kind, double x, double y, bool free, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlDrain drain = tl_drain_default(tl_drain_kind_from_key(kind), tl_vec2(x, y));
+    TlSpace *space = tl_project_space_at(project, drain.center);
+    if (space && drain.kind == TL_DRAIN_POINT) /* решётка — по плитке комнаты */
+        drain.angle = tl_space_effective_tile(space)->rotation_degrees;
+    if (space && drain.kind == TL_DRAIN_LINEAR && !free) {
+        TlPolygon walls = tl_space_wall_outline(space);
+        tl_drain_snap_to_walls(&drain, &walls, FIXTURE_WALL_REACH_MM);
+        tl_polygon_free(&walls);
+    }
+    tl_web_checkpoint("", now_seconds);
+    tl_drain_list_push(&project->drains, drain);
+    tl_project_update_spaces(project);
+    return (int)project->drains.count - 1;
+}
+
+bool tl_web_set_drain(int index, const char *fields, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlJson *parsed = tl_json_parse(fields, NULL, 0);
+    bool ok = index >= 0 && (size_t)index < project->drains.count && parsed && tl_json_type(parsed) == TL_JSON_OBJECT;
+    if (ok) {
+        TlDrain drain = project->drains.items[index];
+        const TlJson *kind = tl_json_get(parsed, "kind");
+        if (kind && tl_drain_kind_from_key(tl_json_string_or(kind, "")) != drain.kind) {
+            double angle = drain.angle;
+            drain = tl_drain_default(tl_drain_kind_from_key(tl_json_string_or(kind, "")), drain.center);
+            drain.angle = angle;
+        }
+        static const char *const NUMBERS[] = {"size", "length", "angle", "slope", "x", "y"};
+        double *const targets[] = {&drain.size, &drain.length, &drain.angle, &drain.slope, &drain.center.x, &drain.center.y};
+        for (size_t i = 0; i < 6; i++) {
+            const TlJson *value = tl_json_get(parsed, NUMBERS[i]);
+            if (value)
+                ok = ok && isfinite(*targets[i] = tl_json_number_or(value, NAN));
+        }
+        const TlJson *envelope = tl_json_get(parsed, "envelope");
+        if (envelope)
+            drain.envelope = tl_json_bool_or(envelope, drain.envelope);
+        ok = ok && drain.size >= 10 && (drain.kind != TL_DRAIN_LINEAR || drain.length >= 10) && drain.slope >= 0;
+        if (ok) {
+            char merge_key[48] = "";
+            if (tl_json_length(parsed) == 1)
+                snprintf(merge_key, sizeof merge_key, "drain_%d_%s", index, tl_json_key_at(parsed, 0));
+            tl_web_checkpoint(merge_key, now_seconds);
+            project->drains.items[index] = drain;
+            tl_project_update_spaces(project);
+        }
+    }
+    tl_json_free(parsed);
+    return ok;
+}
+
+int tl_web_add_fixture(const char *kind, double x, double y, bool free, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlFixture fixture = tl_fixture_default(tl_fixture_kind_from_key(kind), tl_vec2(x, y));
+    TlSpace *space = free ? NULL : tl_project_space_at(project, fixture.center);
+    if (space) { /* у стены — спинкой к ней */
+        TlPolygon walls = tl_space_wall_outline(space);
+        tl_fixture_snap_to_walls(&fixture, &walls, FIXTURE_WALL_REACH_MM);
+        tl_polygon_free(&walls);
+    }
+    tl_web_checkpoint("", now_seconds);
+    tl_fixture_list_push(&project->fixtures, fixture);
+    tl_project_update_spaces(project);
+    return (int)project->fixtures.count - 1;
+}
+
+bool tl_web_set_fixture(int index, const char *fields, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    TlJson *parsed = tl_json_parse(fields, NULL, 0);
+    bool ok = index >= 0 && (size_t)index < project->fixtures.count && parsed && tl_json_type(parsed) == TL_JSON_OBJECT;
+    if (ok) {
+        TlFixture fixture = project->fixtures.items[index];
+        const TlJson *kind = tl_json_get(parsed, "kind");
+        if (kind && tl_fixture_kind_from_key(tl_json_string_or(kind, "")) != fixture.kind) { /* вид — обычные размеры */
+            double angle = fixture.angle;
+            fixture = tl_fixture_default(tl_fixture_kind_from_key(tl_json_string_or(kind, "")), fixture.center);
+            fixture.angle = angle;
+        }
+        static const char *const NUMBERS[] = {"w", "d", "h", "angle", "x", "y"};
+        double *const targets[] = {&fixture.width, &fixture.depth, &fixture.height, &fixture.angle, &fixture.center.x,
+                                   &fixture.center.y};
+        for (size_t i = 0; i < 6; i++) {
+            const TlJson *value = tl_json_get(parsed, NUMBERS[i]);
+            if (value)
+                ok = ok && isfinite(*targets[i] = tl_json_number_or(value, NAN));
+        }
+        const TlJson *under = tl_json_get(parsed, "under"), *behind = tl_json_get(parsed, "behind");
+        if (under)
+            fixture.under = tl_json_bool_or(under, fixture.under);
+        if (behind)
+            fixture.behind = tl_json_bool_or(behind, fixture.behind);
+        const TlJson *steps = tl_json_get(parsed, "steps");
+        if (steps && fixture.kind == TL_FIXTURE_STAIRS)
+            fixture.steps = (int)tl_json_number_or(steps, fixture.steps);
+        ok = ok && (fixture.kind != TL_FIXTURE_STAIRS || (fixture.steps >= 1 && fixture.steps <= 50));
+        ok = ok && fixture.width >= 10 && fixture.depth >= 10 && fixture.height >= 0;
+        if (ok) {
+            char merge_key[48] = "";
+            if (tl_json_length(parsed) == 1)
+                snprintf(merge_key, sizeof merge_key, "fixture_%d_%s", index, tl_json_key_at(parsed, 0));
+            tl_web_checkpoint(merge_key, now_seconds);
+            project->fixtures.items[index] = fixture;
+            tl_project_update_spaces(project);
+        }
+    }
+    tl_json_free(parsed);
+    return ok;
+}
+
 int tl_web_add_pipe(double x, double y, double diameter, double now_seconds)
 {
     TlProject *project = tl_web_project();
@@ -210,7 +342,8 @@ const char *tl_web_measure_point(double x, double y, bool has_anchor, double anc
     TlGuides guides = {0};
     TlVec2 point = free ? world
                         : tl_measure_point(tl_web_project(), world, has_anchor ? &anchor : NULL, tolerance,
-                                           strcmp(targets, "walls") == 0 ? TL_SNAP_TO_WALL_SURFACES : TL_SNAP_TO_ALL,
+                                           strcmp(targets, "walls") == 0 ? TL_SNAP_TO_WALL_SURFACES | TL_SNAP_TO_LINES
+                                                                         : TL_SNAP_TO_ALL,
                                            true, true, &snap, &guides);
     TlJson *json = tl_json_object();
     tl_json_object_set(json, "point", point_json(point));
@@ -413,8 +546,34 @@ const char *tl_web_pick(double x, double y, double tolerance)
         if (wall >= 0)
             return item_json((Item){"wall", (int)i, wall, 0, 0});
     }
+    for (size_t i = project->drains.count; i-- > 0;) { /* трапы — поверх пола и предметов */
+        TlPolygon outline = tl_drain_outline(&project->drains.items[i]);
+        bool inside = tl_polygon_contains(&outline, point) || tl_distance(point, project->drains.items[i].center) < tolerance;
+        tl_polygon_free(&outline);
+        if (inside)
+            return item_json((Item){"drain", (int)i, 0, 0, 0});
+    }
+    for (size_t i = project->fixtures.count; i-- > 0;) { /* предметы — поверх пола */
+        TlPolygon outline = tl_fixture_outline(&project->fixtures.items[i]);
+        bool inside = tl_polygon_contains(&outline, point);
+        tl_polygon_free(&outline);
+        if (inside)
+            return item_json((Item){"fixture", (int)i, 0, 0, 0});
+    }
     TlSpace *space = tl_project_space_at(project, point);
-    return item_json(space ? (Item){"space", 0, 0, 0, space->id} : item);
+    for (size_t i = 0; space && i < space->pannos.count; i++) { /* панно на полу — поверх комнаты */
+        if (space->pannos.items[i].wall != TL_PANNO_FLOOR)
+            continue;
+        TlPolygon outline = tl_space_panno_outline(space, i);
+        bool inside = tl_polygon_contains(&outline, point);
+        tl_polygon_free(&outline);
+        if (inside)
+            return item_json((Item){"panno", (int)i, 0, 0, space->id});
+    }
+    if (!space)
+        return item_json(item);
+    size_t region = space->regions.count > 1 ? tl_space_region_at(space, point) : SIZE_MAX; /* часть пола + 1 */
+    return item_json((Item){"space", 0, region == SIZE_MAX ? 0 : (int)region + 1, 0, space->id});
 }
 
 static TlPartition *partition_at(int index)
@@ -570,6 +729,11 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         tl_polygon_free(&cut);
         tl_json_object_set(json, "width", tl_json_number(opening->width));
         tl_json_object_set(json, "name", tl_json_string(opening->name));
+        static const char *const KINDS[] = {"door", "window", "arch"};
+        tl_json_object_set(json, "opening_kind", tl_json_string(KINDS[opening->kind]));
+        tl_json_object_set(json, "height", tl_json_number(opening->height));
+        tl_json_object_set(json, "sill", tl_json_number(opening->sill));
+        tl_json_object_set(json, "reveal", tl_json_number(opening->reveal));
         double span_start, span_end;
         if (hosted && tl_project_opening_span(project, opening, &span_start, &span_end)) {
             double along;
@@ -619,7 +783,45 @@ const char *tl_web_object(const char *kind, int index, int part, int end)
         add_handle(handles, joint->end, "end", (Item){"joint", index, 2, 0, 0});
         add_middle(handles, joint->start, joint->end, (Item){"joint", index, 0, 0, 0});
         tl_json_object_set(json, "gap", tl_json_number(joint->gap));
+        tl_json_object_set(json, "divider", tl_json_bool(joint->kind == TL_LINE_DIVIDER));
         tl_json_object_set(json, "length", tl_json_number(round(tl_expansion_joint_length(joint))));
+        tl_json_object_set(json, "locked", tl_json_bool(false));
+    } else if (is(kind, "drain") && index >= 0 && (size_t)index < project->drains.count) {
+        const TlDrain *drain = &project->drains.items[index];
+        TlPolygon outline = tl_drain_outline(drain);
+        add_outline(outlines, &outline);
+        tl_polygon_free(&outline);
+        add_handle(handles, drain->center, "middle", (Item){"drain", index, 0, 0, 0});
+        tl_json_object_set(json, "drain_kind", tl_json_string(tl_drain_kind_key(drain->kind)));
+        tl_json_object_set(json, "name", tl_json_string(tl_drain_kind_name(drain->kind)));
+        tl_json_object_set(json, "size", tl_json_number(drain->size));
+        if (drain->kind == TL_DRAIN_LINEAR)
+            tl_json_object_set(json, "length", tl_json_number(drain->length));
+        else
+            tl_json_object_set(json, "envelope", tl_json_bool(drain->envelope));
+        tl_json_object_set(json, "angle", tl_json_number(round(drain->angle * 10) / 10));
+        tl_json_object_set(json, "slope", tl_json_number(drain->slope));
+        TlSpace *space = tl_project_space_at(project, drain->center);
+        size_t region = space ? tl_space_region_at(space, drain->center) : SIZE_MAX;
+        if (region != SIZE_MAX)
+            tl_json_object_set(json, "drop", tl_json_number(round(tl_drain_drop(drain, &space->regions.items[region].outline))));
+        tl_json_object_set(json, "locked", tl_json_bool(false));
+    } else if (is(kind, "fixture") && index >= 0 && (size_t)index < project->fixtures.count) {
+        const TlFixture *fixture = &project->fixtures.items[index];
+        TlPolygon outline = tl_fixture_outline(fixture);
+        add_outline(outlines, &outline);
+        tl_polygon_free(&outline);
+        add_handle(handles, fixture->center, "middle", (Item){"fixture", index, 0, 0, 0});
+        tl_json_object_set(json, "fixture_kind", tl_json_string(tl_fixture_kind_key(fixture->kind)));
+        tl_json_object_set(json, "name", tl_json_string(tl_fixture_kind_name(fixture->kind)));
+        tl_json_object_set(json, "w", tl_json_number(fixture->width));
+        tl_json_object_set(json, "d", tl_json_number(fixture->depth));
+        tl_json_object_set(json, "h", tl_json_number(fixture->height));
+        tl_json_object_set(json, "angle", tl_json_number(round(fixture->angle * 10) / 10));
+        tl_json_object_set(json, "under", tl_json_bool(fixture->under));
+        tl_json_object_set(json, "behind", tl_json_bool(fixture->behind));
+        if (fixture->kind == TL_FIXTURE_STAIRS)
+            tl_json_object_set(json, "steps", tl_json_number(fixture->steps));
         tl_json_object_set(json, "locked", tl_json_bool(false));
     } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
         const TlPipe *pipe = project->pipes.items[index];
@@ -741,6 +943,38 @@ bool tl_web_set_opening_width(int index, double width, double now_seconds)
     tl_project_set_opening_width(project, opening, width);
     tl_project_merge_straight_nodes(project);
     tl_project_update_spaces(project);
+    return true;
+}
+
+bool tl_web_set_opening(int index, const char *kind, double height, double sill, double now_seconds)
+{
+    TlOpening *opening = opening_at(index);
+    static const char *const KINDS[] = {"door", "window", "arch"};
+    int new_kind = -1;
+    for (int k = 0; k < 3; k++)
+        if (is(kind, KINDS[k]))
+            new_kind = k;
+    if (!opening || (kind[0] && new_kind < 0) || !(height > 0) || !(sill >= 0))
+        return false;
+    tl_web_checkpoint(new_kind >= 0 ? "" : "osize", now_seconds);
+    if (new_kind >= 0 && new_kind != (int)opening->kind) {
+        tl_project_set_opening_kind(tl_web_project(), opening, (TlOpeningKind)new_kind);
+    } else {
+        opening->height = height;
+        opening->sill = sill;
+    }
+    tl_project_update_spaces(tl_web_project());
+    return true;
+}
+
+bool tl_web_set_opening_reveal(int index, double depth, double now_seconds)
+{
+    TlOpening *opening = opening_at(index);
+    if (!opening || !(depth >= 0 && depth <= 1000))
+        return false;
+    tl_web_checkpoint("oreveal", now_seconds);
+    opening->reveal = depth;
+    tl_project_update_spaces(tl_web_project());
     return true;
 }
 
@@ -932,6 +1166,12 @@ bool tl_web_delete(const char *kind, int index, int part, int end, double now_se
     } else if (is(kind, "joint") && index >= 0 && (size_t)index < project->expansion_joints.count) {
         tl_web_checkpoint("", now_seconds);
         tl_project_delete_expansion_joint(project, project->expansion_joints.items[index]);
+    } else if (is(kind, "drain") && index >= 0 && (size_t)index < project->drains.count) {
+        tl_web_checkpoint("", now_seconds);
+        tl_drain_list_remove_at(&project->drains, (size_t)index);
+    } else if (is(kind, "fixture") && index >= 0 && (size_t)index < project->fixtures.count) {
+        tl_web_checkpoint("", now_seconds);
+        tl_fixture_list_remove_at(&project->fixtures, (size_t)index);
     } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
         tl_web_checkpoint("", now_seconds);
         tl_project_delete_pipe(project, project->pipes.items[index]);
@@ -997,6 +1237,20 @@ bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x,
     } else if (is(kind, "pipe") && index >= 0 && (size_t)index < project->pipes.count) {
         target.kind = TL_DRAG_PIPE;
         target.pipe = project->pipes.items[index];
+    } else if (is(kind, "drain") && index >= 0 && (size_t)index < project->drains.count) {
+        target.kind = TL_DRAG_DRAIN;
+        target.index = index;
+    } else if (is(kind, "fixture") && index >= 0 && (size_t)index < project->fixtures.count) {
+        target.kind = TL_DRAG_FIXTURE;
+        target.index = index;
+    } else if (is(kind, "panno")) { /* панно на полу: комната — под точкой */
+        TlSpace *space = tl_project_space_at(project, tl_vec2(x, y));
+        if (!space)
+            return false;
+        target.kind = TL_DRAG_PANNO;
+        target.space = space;
+        target.index = index;
+        dragging.space = space->id;
     } else {
         return false;
     }
@@ -1038,6 +1292,9 @@ static Item dragged_item(TlProject *project)
         }
         return (Item){t->kind == TL_DRAG_RULER ? "ruler" : "joint", index, t->index, 0, 0};
     }
+    case TL_DRAG_PANNO: return (Item){"panno", t->index, 0, 0, dragging.space};
+    case TL_DRAG_FIXTURE: return (Item){"fixture", t->index, 0, 0, 0};
+    case TL_DRAG_DRAIN: return (Item){"drain", t->index, 0, 0, 0};
     case TL_DRAG_PIPE: {
         int index = -1;
         for (size_t i = 0; i < project->pipes.count; i++)

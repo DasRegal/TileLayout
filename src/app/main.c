@@ -4,9 +4,11 @@
  *   tilelayout [проект.tilelayout.json]
  *   tilelayout --export-png картинка.png [проект] [--numbers]
  *   tilelayout --export-pdf листы.pdf [проект] [--mono]
+ *   tilelayout --export-dxf план.dxf [проект] [--cuts]   (--cuts — чертежи подрезок для станка)
  *   tilelayout --screenshot окно.png [проект]      (снимок окна для проверки)
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <gtk/gtk.h>
@@ -15,12 +17,13 @@
 #include "app_export.h"
 #include "app_print.h"
 #include "app_window.h"
+#include "tl_dxf.h"
 
 typedef struct CommandLine {
     const char *command;    /* NULL — обычный запуск */
     const char *output;
     const char *project;
-    bool numbers, mono;
+    bool numbers, mono, cuts;
 } CommandLine;
 
 static CommandLine parse_command_line(int argc, char **argv)
@@ -37,6 +40,8 @@ static CommandLine parse_command_line(int argc, char **argv)
             line.numbers = true;
         else if (strcmp(argv[index], "--mono") == 0)
             line.mono = true;
+        else if (strcmp(argv[index], "--cuts") == 0)
+            line.cuts = true;
         else
             line.project = argv[index];
     }
@@ -74,7 +79,7 @@ static int export_pdf(const CommandLine *line)
     AppDocument *document = load_document(line->project);
     if (!document)
         return 1;
-    AppPrintPreferences print = {.tiles = true, .clips = true, .dims = true, .cuts = true, .calc = true,
+    AppPrintPreferences print = {.tiles = true, .clips = true, .dims = true, .cuts = true, .calc = true, .estimate = true,
                                  .mono = line->mono, .expansion_joints = true, .landscape = true};
     AppPrintJob *job = app_print_job_new(document->project, "TileLayout", &print, 0, 0);
     printf("Страниц: %d\n", app_print_job_page_count(job));
@@ -112,6 +117,23 @@ static int run_gui(int argc, char **argv, const CommandLine *line)
     return 0;
 }
 
+static int export_dxf(const CommandLine *line)
+{
+    AppDocument *document = load_document(line->project);
+    if (!document)
+        return 1;
+    char *text = line->cuts ? tl_dxf_cuts(document->project) : tl_dxf_plan(document->project);
+    GError *error = NULL;
+    bool ok = g_file_set_contents(line->output, text, -1, &error);
+    if (!ok) {
+        fprintf(stderr, "Не удалось сохранить %s: %s\n", line->output, error->message);
+        g_error_free(error);
+    }
+    free(text);
+    app_document_free(document);
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
     CommandLine line = parse_command_line(argc, argv);
@@ -119,6 +141,8 @@ int main(int argc, char **argv)
         return export_png(&line);
     if (line.command && strcmp(line.command, "--export-pdf") == 0)
         return export_pdf(&line);
+    if (line.command && strcmp(line.command, "--export-dxf") == 0)
+        return export_dxf(&line);
     if (line.command && strcmp(line.command, "--screenshot") != 0) {
         fprintf(stderr, "Неизвестный ключ: %s\n", line.command);
         return 2;

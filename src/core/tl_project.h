@@ -15,12 +15,15 @@
 
 #include "tl_band.h"
 #include "tl_expansion_joint.h"
+#include "tl_drain.h"
+#include "tl_fixture.h"
 #include "tl_opening.h"
 #include "tl_outline.h"
 #include "tl_partition.h"
 #include "tl_pipe.h"
 #include "tl_ruler.h"
 #include "tl_space.h"
+#include "tl_underlay.h"
 
 #define TL_MIN_SPACE_AREA 20000.0 /* мм²: меньшие области (щели) — не комнаты */
 
@@ -30,6 +33,7 @@ TL_ARRAY_DEFINE(TlOpeningList, TlOpening *, tl_opening_list)
 TL_ARRAY_DEFINE(TlRulerList, TlRuler *, tl_ruler_list)
 TL_ARRAY_DEFINE(TlExpansionJointList, TlExpansionJoint *, tl_expansion_joint_list)
 TL_ARRAY_DEFINE(TlPipeList, TlPipe *, tl_pipe_list)
+TL_ARRAY_DEFINE(TlDrainList, TlDrain, tl_drain_list)
 
 typedef struct TlProject {
     TlOutlineList outlines;
@@ -39,6 +43,9 @@ typedef struct TlProject {
     TlRulerList rulers;
     TlExpansionJointList expansion_joints;
     TlPipeList pipes;                    /* отверстия под трубы и сливы */
+    TlFixtureList fixtures;              /* предметы: ванны, поддоны, тумбы, кухни */
+    TlDrainList drains;                  /* трапы */
+    TlUnderlay underlay;                 /* подложка: фото или DXF-план */
     int next_space_id;
 } TlProject;
 
@@ -158,6 +165,8 @@ bool tl_project_set_wall_length(TlProject *project, TlOutline *outline, size_t w
                                 bool keep_angles, bool linked);
 /* Ширина проёма (концы линеек на его краях едут с ними). */
 void tl_project_set_opening_width(TlProject *project, TlOpening *opening, double width);
+/* Сменить вид проёма; имя по умолчанию («Д2») — под новый вид («О1»). Комнаты — пересчитать. */
+void tl_project_set_opening_kind(TlProject *project, TlOpening *opening, TlOpeningKind kind);
 /* Проём — на distance мм от начала стены (from_end — от конца) до своего края;
    концы стены — как у tl_project_opening_span. */
 bool tl_project_place_opening_at(TlProject *project, TlOpening *opening, double distance, bool from_end);

@@ -1,8 +1,10 @@
 #include "app_window.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_canvas.h"
+#include "app_room_tabs.h"
 #include "app_catalog_dialog.h"
 #include "app_catalogs.h"
 #include "app_commands.h"
@@ -12,6 +14,7 @@
 #include "app_panel.h"
 #include "app_print_dialog.h"
 #include "app_widgets.h"
+#include "tl_dxf.h"
 
 #define APP_NAME "TileLayout"
 #define PROJECT_EXTENSION ".tilelayout.json"
@@ -96,6 +99,9 @@ static const ToolEntry TOOL_ENTRIES[] = {
     {APP_TOOL_TILES, "tile_move", "Плитка", "Сдвинуть сетку плитки мышью (T)"},
     {APP_TOOL_EXPANSION_JOINT, "expansion_joint", "Шов", "Деформационный шов в покрытии (J)"},
     {APP_TOOL_PIPE, "pipe", "Труба", "Отверстие в плитке под трубу или слив (H)"},
+    {APP_TOOL_DIVIDER, "divider", "Раздел", "Линия раздела покрытия: делит пол комнаты на части со своей плиткой (D)"},
+    {APP_TOOL_DRAIN, "drain", "Трап", "Трап: точечный — с конвертом (плитка режется к углам), линейный — у стены (G)"},
+    {APP_TOOL_FIXTURE, "fixture", "Предмет", "Ванна, поддон, инсталляция, тумба, кухня: плитка под ними и за ними — по выбору (B)"},
     {APP_TOOL_RULER, "ruler", "Линейка", "Линейка: измерить расстояние (M)"},
 };
 
@@ -120,6 +126,7 @@ struct AppWindow {
     AppConfig *config;
     AppCanvas *canvas;
     AppPanel *panel;
+    AppRoomTabs *room_tabs;
     GtkAccelGroup *accelerators;
     GtkWidget *status, *coordinates, *snap;
     GtkWidget *recent_menu;
@@ -185,6 +192,7 @@ static char *project_title(AppWindow *self)
 static const AppFileType PROJECT_FILES = {"Проект TileLayout (*" PROJECT_EXTENSION ", *.tileplan.json, *.json)",
                                            "*.json", ".json", PROJECT_EXTENSION};
 static const AppFileType PNG_FILES = {"Изображение PNG (*.png)", "*.png", ".png", ".png"};
+static const AppFileType DXF_FILES = {"Чертёж DXF (*.dxf)", "*.dxf", ".dxf", ".dxf"};
 
 static bool save_to(AppWindow *self, const char *path)
 {
@@ -354,6 +362,28 @@ static void on_export_png(GtkMenuItem *item, AppWindow *self)
     g_free(path);
 }
 
+/* План или чертежи подрезок (cuts) — в DXF для проектировщика или станка резки. */
+static void export_dxf(AppWindow *self, bool cuts)
+{
+    char *path = app_file_dialog_save(GTK_WINDOW(self->window), cuts ? "Подрезки в DXF" : "План в DXF", NULL,
+                                      cuts ? "cuts.dxf" : "plan.dxf", &DXF_FILES);
+    if (!path)
+        return;
+    char *text = cuts ? tl_dxf_cuts(self->document->project) : tl_dxf_plan(self->document->project);
+    GError *error = NULL;
+    if (g_file_set_contents(path, text, -1, &error)) {
+        app_document_status(self->document, "Сохранён чертёж DXF: %s", path);
+    } else {
+        app_document_status(self->document, "Не удалось сохранить %s: %s", path, error->message);
+        g_error_free(error);
+    }
+    free(text);
+    g_free(path);
+}
+
+static void on_export_dxf_plan(GtkMenuItem *item, AppWindow *self) { export_dxf(self, false); }
+static void on_export_dxf_cuts(GtkMenuItem *item, AppWindow *self) { export_dxf(self, true); }
+
 static void open_print_dialog(void *data)
 {
     AppWindow *self = data;
@@ -423,10 +453,14 @@ static void sync_tool(AppToolId tool, void *data)
     AppWindow *self = data;
     self->syncing = true;
     for (int i = 0; i < APP_TOOL_COUNT; i++) {
-        gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(self->tool_buttons[i]), i == (int)tool);
-        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(self->tool_items[i]), i == (int)tool);
+        if (self->tool_buttons[i]) /* у «Подложки» кнопки нет */
+            gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(self->tool_buttons[i]), i == (int)tool);
+        if (self->tool_items[i])
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(self->tool_items[i]), i == (int)tool);
     }
     self->syncing = false;
+    if (self->room_tabs)
+        app_room_tabs_tool_changed(self->room_tabs, tool);
 }
 
 /* Кнопка панели или пункт меню нажаты. */
@@ -592,6 +626,23 @@ static void on_thanks(GtkButton *button, AppWindow *self)
     gtk_widget_destroy(dialog);
 }
 
+/* ---- вкладки помещений ---------------------------------------------------------- */
+
+static void on_open_space(TlSpace *space, void *data)
+{
+    AppWindow *self = data;
+    app_room_tabs_open(self->room_tabs, space);
+}
+
+/* Кнопка «Стены» панели: стены выделенной комнаты. */
+static void open_room_walls(void *data)
+{
+    AppWindow *self = data;
+    TlSpace *spaces[APP_MAX_ROOMS];
+    if (app_selection_spaces(&self->document->selection, spaces) > 0)
+        app_room_tabs_open(self->room_tabs, spaces[0]);
+}
+
 /* План с кнопкой «Сказать спасибо автору» в левом верхнем углу. */
 static GtkWidget *build_plan(AppWindow *self)
 {
@@ -653,6 +704,8 @@ static GtkWidget *build_menu(AppWindow *self)
     separator(file);
     menu_item(self, file, "Печать / PDF…", "<Control>p", G_CALLBACK(on_print));
     menu_item(self, file, "Экспорт в PNG…", "<Control>e", G_CALLBACK(on_export_png));
+    menu_item(self, file, "План в DXF…", NULL, G_CALLBACK(on_export_dxf_plan));
+    menu_item(self, file, "Подрезки в DXF (для станка)…", NULL, G_CALLBACK(on_export_dxf_cuts));
     separator(file);
     menu_item(self, file, "Выход", "<Control>q", G_CALLBACK(on_quit));
 
@@ -888,14 +941,15 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     gtk_window_add_accel_group(GTK_WINDOW(self->window), self->accelerators);
 
     self->canvas = app_canvas_new(self->document);
-    AppPanelActions actions = {add_house_dialog, open_print_dialog, self};
+    AppPanelActions actions = {add_house_dialog, open_print_dialog, open_room_walls, self};
     self->panel = app_panel_new(self->document, self->canvas, actions);
+    self->room_tabs = app_room_tabs_new(self->document, build_plan(self), self->canvas);
 
     GtkWidget *layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_pack_start(GTK_BOX(layout), build_menu(self), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(layout), build_toolbar(self), FALSE, FALSE, 0);
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_pack1(GTK_PANED(paned), build_plan(self), TRUE, FALSE);
+    gtk_paned_pack1(GTK_PANED(paned), app_room_tabs_widget(self->room_tabs), TRUE, FALSE);
     gtk_paned_pack2(GTK_PANED(paned), app_panel_widget(self->panel), FALSE, FALSE);
     GtkWidget *middle = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0); /* инструменты | план | панель */
     gtk_box_pack_start(GTK_BOX(middle), build_tools_rail(self), FALSE, FALSE, 0);
@@ -907,6 +961,7 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     app_document_add_listener(self->document, on_document_changed, self);
     app_canvas_on_tool_changed(self->canvas, sync_tool, self);
     app_canvas_on_pointer(self->canvas, on_pointer, self);
+    app_canvas_on_open_space(self->canvas, on_open_space, self);
     g_signal_connect(self->window, "key-press-event", G_CALLBACK(on_window_key), self);
     g_signal_connect(self->window, "delete-event", G_CALLBACK(on_delete_event), self);
     g_signal_connect(self->window, "destroy", G_CALLBACK(on_destroy), self);

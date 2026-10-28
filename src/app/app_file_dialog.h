@@ -10,7 +10,7 @@
 /* Тип файлов в фильтре диалога. */
 typedef struct AppFileType {
     const char *name;            /* «Проект TileLayout (*.tilelayout.json)» */
-    const char *pattern;         /* «*.json» */
+    const char *pattern;         /* «*.json»; несколько — через «;» */
     const char *required_suffix; /* имя без этого окончания (без учёта регистра) ... */
     const char *added_suffix;    /* ... дополняется этим */
 } AppFileType;

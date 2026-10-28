@@ -29,49 +29,133 @@ static void add_packs(TlEstimate *estimate, const TlPackLineList *packs, const c
     }
 }
 
-/* Укладка — по площади под плитку (основной пол и зоны — у каждой своя цена), строки — по цене за м². */
+/* Работа одной цены — строкой: цены и объёмы по комнатам. */
+typedef struct WorkPrices {
+    double prices[64], amounts[64];
+    size_t count;
+} WorkPrices;
+
+static void add_work_amount(WorkPrices *work, double price, double amount)
+{
+    if (!(price > 0) || !(amount > 0))
+        return;
+    size_t k = 0;
+    while (k < work->count && work->prices[k] != price)
+        k++;
+    if (k == work->count) {
+        if (work->count == sizeof work->prices / sizeof work->prices[0])
+            return;
+        work->prices[work->count] = price;
+        work->amounts[work->count++] = 0;
+    }
+    work->amounts[k] += amount;
+}
+
+/* Укладка — по площади под плитку (основной пол, зоны, полосы стен — у каждой своя цена; пол и
+   стены — отдельными строками), подрезка — по погонным метрам резов; строки — по цене. */
 static void add_work(TlEstimate *estimate, const TlSummary *summary)
 {
-    double prices[64];
-    double areas[64];
-    size_t count = 0;
+    WorkPrices laying = {0}, walls = {0}, cutting = {0};
     for (size_t i = 0; i < summary->rooms.count; i++) {
         const TlRoomSummary *room = &summary->rooms.items[i];
-        for (size_t l = 0; room->tiled && l < tl_space_layout_count(room->space); l++) {
-            double price = tl_space_layout_tile(room->space, l)->price_work_m2;
-            if (!(price > 0))
+        if (!room->tiled)
+            continue;
+        for (size_t p = 0; p < room->space->pannos.count; p++) { /* панно — по цене укладки плитки вокруг */
+            const TlPanno *panno = &room->space->pannos.items[p];
+            bool on_wall = panno->wall != TL_PANNO_FLOOR;
+            if (on_wall && !room->space->walls.enabled)
                 continue;
+            add_work_amount(on_wall ? &walls : &laying, tl_space_panno_tile(room->space, p).price_work_m2,
+                            tl_panno_width(panno) * tl_panno_height(panno) / 1e6);
+        }
+        for (size_t l = 0; l < tl_space_layout_count(room->space); l++)
+            add_work_amount(tl_space_layout_on_wall(room->space, l) ? &walls : &laying,
+                            tl_space_layout_tile(room->space, l)->price_work_m2,
+                            tl_space_layout_at(room->space, l)->floor_area / 1e6);
+        add_work_amount(&cutting, tl_space_effective_tile(room->space)->price_cut_m, room->cut_length / 1000);
+    }
+    for (size_t k = 0; k < laying.count; k++)
+        add_line(estimate, TL_ESTIMATE_WORK, "Укладка плитки", NULL, laying.amounts[k], "м²", laying.prices[k]);
+    for (size_t k = 0; k < walls.count; k++)
+        add_line(estimate, TL_ESTIMATE_WORK, "Облицовка стен", NULL, walls.amounts[k], "м²", walls.prices[k]);
+    for (size_t k = 0; k < cutting.count; k++)
+        add_line(estimate, TL_ESTIMATE_WORK, "Подрезка плитки", NULL, cutting.amounts[k], "пог. м", cutting.prices[k]);
+}
+
+/* Плитка — по цене за м², штуку или упаковку; продаётся упаковками — к покупке целые упаковки. */
+static void add_tiles(TlEstimate *estimate, const TlTileTypeSummary *type)
+{
+    char size[64], name[160];
+    tl_tile_spec_name(&type->spec, size, sizeof size);
+    const TlTileSettings *tile = type->tile;
+    int pieces = type->packs > 0 ? type->packs * tile->tile_pack : type->to_buy;
+    if (type->packs > 0)
+        snprintf(name, sizeof name, "Плитка %s, %d уп. по %d шт.", size, type->packs, tile->tile_pack);
+    else
+        snprintf(name, sizeof name, "Плитка %s", size);
+    switch (tile->price_tile_unit) {
+    case TL_PRICE_PER_PIECE:
+        add_line(estimate, TL_ESTIMATE_MATERIALS, name, type->spec.color, pieces, "шт.", tile->price_tile_m2);
+        break;
+    case TL_PRICE_PER_PACK:
+        if (type->packs > 0) {
+            add_line(estimate, TL_ESTIMATE_MATERIALS, name, type->spec.color, type->packs, "уп.", tile->price_tile_m2);
+            break;
+        }
+        /* упаковка не задана — цена за штуку */
+        add_line(estimate, TL_ESTIMATE_MATERIALS, name, type->spec.color, pieces, "шт.", tile->price_tile_m2);
+        break;
+    default:
+        add_line(estimate, TL_ESTIMATE_MATERIALS, name, type->spec.color, pieces * tl_tile_spec_area_m2(&type->spec),
+                 "м²", tile->price_tile_m2);
+        break;
+    }
+}
+
+/* Панно — комплектом, по цене за комплект; одинаковые — одной строкой. */
+static void add_pannos(TlEstimate *estimate, const TlSummary *summary)
+{
+    for (size_t r = 0; r < summary->rooms.count; r++) {
+        const TlSpace *space = summary->rooms.items[r].space;
+        for (size_t i = 0; i < space->pannos.count; i++) {
+            const TlPanno *panno = &space->pannos.items[i];
+            if (panno->wall != TL_PANNO_FLOOR && !space->walls.enabled)
+                continue;
+            char name[160];
+            tl_panno_name(panno, name, sizeof name);
             size_t k = 0;
-            while (k < count && prices[k] != price)
+            while (k < estimate->lines.count &&
+                   !(estimate->lines.items[k].group == TL_ESTIMATE_MATERIALS && strcmp(estimate->lines.items[k].name, name) == 0 &&
+                     estimate->lines.items[k].price == panno->price && strcmp(estimate->lines.items[k].color, panno->color) == 0))
                 k++;
-            if (k == count) {
-                if (count == sizeof prices / sizeof prices[0])
-                    continue;
-                prices[count] = price;
-                areas[count++] = 0;
+            if (k < estimate->lines.count) {
+                estimate->lines.items[k].quantity += 1;
+                estimate->lines.items[k].cost += panno->price;
+                estimate->materials += panno->price;
+            } else {
+                add_line(estimate, TL_ESTIMATE_MATERIALS, name, panno->color, 1, "компл.", panno->price);
             }
-            areas[k] += tl_space_layout_at(room->space, l)->floor_area / 1e6;
         }
     }
-    for (size_t k = 0; k < count; k++)
-        add_line(estimate, TL_ESTIMATE_WORK, "Укладка плитки", NULL, areas[k], "м²", prices[k]);
 }
 
 TlEstimate tl_estimate_from_summary(const TlSummary *summary)
 {
     TlEstimate estimate = {0};
-    for (size_t i = 0; i < summary->types.count; i++) {
-        const TlTileTypeSummary *type = &summary->types.items[i];
-        char size[64], name[160];
-        tl_tile_spec_name(&type->spec, size, sizeof size);
-        snprintf(name, sizeof name, "Плитка %s", size);
-        add_line(&estimate, TL_ESTIMATE_MATERIALS, name, type->spec.color,
-                 type->to_buy * tl_tile_spec_area_m2(&type->spec), "м²", type->tile->price_tile_m2);
-    }
+    for (size_t i = 0; i < summary->types.count; i++)
+        add_tiles(&estimate, &summary->types.items[i]);
+    add_pannos(&estimate, summary);
     add_packs(&estimate, &summary->glue, "Клей, мешок %g кг");
     add_packs(&estimate, &summary->grout, "Затирка, упаковка %g кг");
     add_packs(&estimate, &summary->clips, "СВП, упаковка %g шт.");
     add_packs(&estimate, &summary->primer, "Грунт, канистра %g л");
+    add_packs(&estimate, &summary->crosses, "Крестики, упаковка %g шт.");
+    add_packs(&estimate, &summary->waterproof, "Гидроизоляция, упаковка %g кг");
+    for (size_t i = 0; i < summary->tape.count; i++)
+        add_line(&estimate, TL_ESTIMATE_MATERIALS, "Лента гидроизоляции", NULL, summary->tape.items[i].units, "м",
+                 summary->tape.items[i].price);
+    add_packs(&estimate, &summary->thresholds, "Порог-профиль, планка %g мм");
+    add_packs(&estimate, &summary->corners, "Уголок на наружный угол, планка %g мм");
     add_work(&estimate, summary);
     estimate.total = estimate.materials + estimate.work;
     return estimate;

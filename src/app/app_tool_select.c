@@ -79,6 +79,19 @@ static bool drag_target(const AppCanvas *canvas, AppSelection hit, TlDragTarget 
         target->kind = TL_DRAG_PIPE;
         target->pipe = hit.pipe;
         return true;
+    case APP_SELECT_DRAIN:
+        target->kind = TL_DRAG_DRAIN;
+        target->index = hit.index;
+        return true;
+    case APP_SELECT_FIXTURE:
+        target->kind = TL_DRAG_FIXTURE;
+        target->index = hit.index;
+        return true;
+    case APP_SELECT_PANNO:
+        target->kind = TL_DRAG_PANNO;
+        target->space = hit.space;
+        target->index = hit.index;
+        return true;
     default: return false;
     }
 }
@@ -206,6 +219,10 @@ static void double_click(AppCanvas *canvas, const AppPointer *pointer)
 {
     free_drag(&canvas->drag);
     AppSelection hit = app_hit_test(canvas->document->project, &canvas->view, pointer->screen, NULL);
+    if (hit.kind == APP_SELECT_SPACE && hit.space && canvas->open_space_listener) {
+        canvas->open_space_listener(hit.space, canvas->open_space_listener_data);
+        return;
+    }
     if (hit.kind != APP_SELECT_WALL)
         return;
     TlVec2 a = tl_outline_wall_start(hit.outline, (size_t)hit.index);

@@ -1,6 +1,7 @@
 #include "spec.h"
 #include "specs.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -517,6 +518,253 @@ void spec_web(void)
             const TlJson *layout = tl_json_get(tl_json_at(tl_json_get(scene, "spaces"), 0), "layout");
             EXPECT(tl_json_length(tl_json_get(layout, "shapes")) > 0);
             tl_json_free(scene);
+        }
+        IT("стены: облицовка и полосы комнат, развёртка с проёмами, вид и высота проёма")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            char ids[32];
+            snprintf(ids, sizeof ids, "[%d]", living);
+            EXPECT(tl_web_set_walls(ids, "{\"enabled\": true, \"room_height\": 2600, \"height\": 2000}", 1));
+            EXPECT(!tl_web_set_walls(ids, "{\"room_height\": 10}", 2));
+            EXPECT(tl_web_set_zone_fields(ids, "wall_lower", "{\"enabled\": true, \"color\": \"#405060\"}", 3));
+            TlJson *room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            const TlJson *walls = tl_json_get(room, "walls");
+            EXPECT(tl_json_bool_or(tl_json_get(walls, "enabled"), false));
+            EXPECT(fabs(tl_json_number_or(tl_json_get(walls, "room_height"), 0) - 2600) < 1e-9);
+            const TlJson *lower = tl_json_get(tl_json_get(walls, "bands"), "lower");
+            EXPECT_STR(tl_json_string_or(tl_json_get(tl_json_get(lower, "tile"), "color"), ""), "#405060");
+            EXPECT_INT(tl_json_length(tl_json_get(lower, "spans")), 2);
+            tl_json_free(room);
+            TlJson *development = tl_json_parse(tl_web_room_walls(living), NULL, 0);
+            EXPECT(tl_json_length(tl_json_get(development, "walls")) >= 4);
+            EXPECT(tl_json_length(tl_json_get(development, "holes")) >= 1); /* дверь гостиной */
+            EXPECT(tl_json_length(tl_json_get(development, "layouts")) >= 8); /* низ и стены на каждой стене */
+            EXPECT(fabs(tl_json_number_or(tl_json_get(development, "finish_top"), 0) - 2000) < 1e-9);
+            tl_json_free(development);
+            EXPECT(tl_web_set_opening(0, "window", 1400, 900, 4));
+            TlJson *object = tl_json_parse(tl_web_object("opening", 0, 0, 0), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(object, "opening_kind"), ""), "window");
+            EXPECT_STR(tl_json_string_or(tl_json_get(object, "name"), ""), "О1");
+            tl_json_free(object);
+            EXPECT(tl_web_set_opening(0, "", 1500, 800, 5));
+            object = tl_json_parse(tl_web_object("opening", 0, 0, 0), NULL, 0);
+            EXPECT(fabs(tl_json_number_or(tl_json_get(object, "sill"), 0) - 800) < 1e-9);
+            tl_json_free(object);
+            EXPECT(!tl_web_set_opening(0, "porthole", 1500, 800, 6));
+            TlJson *summary = tl_json_parse(tl_web_summary(), NULL, 0);
+            EXPECT(tl_json_number_or(tl_json_get(summary, "wall_area"), 0) > 5);
+            tl_json_free(summary);
+        }
+        IT("на развёртке: сдвиг плитки стены, швы как у пола, отверстие и линейка на стене, пол под стенами")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            char ids[32];
+            snprintf(ids, sizeof ids, "[%d]", living);
+            EXPECT(tl_web_set_walls(ids, "{\"enabled\": true}", 1));
+            EXPECT(tl_web_set_wall_offset(living, 0, 120, 0, 2));
+            EXPECT(!tl_web_set_wall_offset(living, 99, 0, 0, 3));
+            EXPECT(tl_web_wall_align_floor(living, -1, 4) >= 1);
+            EXPECT_INT(tl_web_add_wall_pipe(living, 1, 400, 1000, 40, 5), 0);
+            EXPECT(tl_web_add_wall_pipe(living, 1, 400, 1000, 1, 6) < 0); /* коронки 1 мм нет */
+            EXPECT_INT(tl_web_add_wall_ruler(living, 1, 0, 900, 1500, 900, 7), 0);
+            EXPECT(tl_web_set_wall_ruler(living, 0, 0, 900, 1000, 900, 8));
+            TlJson *development = tl_json_parse(tl_web_room_walls(living), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(development, "pipes")), 1);
+            const TlJson *ruler = tl_json_at(tl_json_get(development, "rulers"), 0);
+            EXPECT(fabs(tl_json_number_or(tl_json_get(ruler, "length"), 0) - 1000) < 1e-9);
+            const TlJson *floors = tl_json_get(development, "floors");
+            EXPECT_INT(tl_json_length(floors), tl_json_length(tl_json_get(development, "walls")));
+            EXPECT(tl_json_length(tl_json_get(tl_json_at(tl_json_at(floors, 0), 0), "tiles")) > 0);
+            tl_json_free(development);
+            const char *snapped = tl_web_walls_snap(living, 3, 2697, 10);
+            EXPECT_STR(snapped, "[0,2700]");
+            EXPECT(tl_web_delete_wall_item(living, "wall_pipe", 0, 9));
+            EXPECT(!tl_web_delete_wall_item(living, "wall_pipe", 0, 10));
+            EXPECT(tl_web_undo());
+            development = tl_json_parse(tl_web_room_walls(living), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(development, "pipes")), 1);
+            tl_json_free(development);
+        }
+        IT("панно: на стене и на полу; правка, выбор на плане, перетаскивание, удаление")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            char ids[32];
+            snprintf(ids, sizeof ids, "[%d]", living);
+            EXPECT(tl_web_set_walls(ids, "{\"enabled\": true}", 1));
+            EXPECT_INT(tl_web_add_panno(living, 1, 2), 0);
+            EXPECT_INT(tl_web_add_panno(living, -1, 3), 1);
+            EXPECT(tl_web_add_panno(living, 99, 4) < 0);
+            EXPECT(tl_web_set_panno(living, 0, "{\"columns\": 3, \"price\": 9000, \"texture\": \"samples/concrete\"}", 5));
+            EXPECT(!tl_web_set_panno(living, 0, "{\"wall\": 99}", 6));
+            TlJson *room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            const TlJson *first = tl_json_at(tl_json_get(room, "pannos"), 0);
+            EXPECT_INT((int)tl_json_number_or(tl_json_get(first, "columns"), 0), 3);
+            EXPECT_INT((int)tl_json_number_or(tl_json_get(first, "wall"), -9), 1);
+            EXPECT_INT((int)tl_json_number_or(tl_json_get(tl_json_at(tl_json_get(room, "pannos"), 1), "wall"), 0), -1);
+            tl_json_free(room);
+            TlJson *development = tl_json_parse(tl_web_room_walls(living), NULL, 0);
+            const TlJson *wall_panno = tl_json_at(tl_json_get(development, "pannos"), 0);
+            EXPECT(wall_panno != NULL);
+            EXPECT_INT(tl_json_length(tl_json_get(wall_panno, "tiles")), 3 * 2 * 6);
+            tl_json_free(development);
+            /* панно на полу: в сцене и под курсором — поверх комнаты */
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            const TlJson *found = NULL;
+            for (size_t i = 0; i < tl_json_length(tl_json_get(scene, "spaces")); i++) {
+                const TlJson *space = tl_json_at(tl_json_get(scene, "spaces"), i);
+                if ((int)tl_json_number_or(tl_json_get(space, "id"), 0) == living)
+                    found = tl_json_at(tl_json_get(space, "pannos"), 0);
+            }
+            EXPECT(found != NULL);
+            const TlJson *outline = tl_json_get(found, "outline");
+            double cx = (tl_json_number_or(tl_json_at(outline, 0), 0) + tl_json_number_or(tl_json_at(outline, 4), 0)) / 2;
+            double cy = (tl_json_number_or(tl_json_at(outline, 1), 0) + tl_json_number_or(tl_json_at(outline, 5), 0)) / 2;
+            tl_json_free(scene);
+            TlJson *hit = tl_json_parse(tl_web_pick(cx, cy, 5), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(hit, "kind"), ""), "panno");
+            EXPECT_INT((int)tl_json_number_or(tl_json_get(hit, "index"), -1), 1);
+            tl_json_free(hit);
+            EXPECT(tl_web_drag_begin("panno", 1, 0, 0, cx, cy));
+            tl_web_drag_move(cx + 200, cy, 5, 10, false, 7);
+            tl_web_drag_end();
+            room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            EXPECT(fabs(tl_json_number_or(tl_json_get(tl_json_at(tl_json_get(room, "pannos"), 1), "x"), 0) - 200) < 1e-6);
+            tl_json_free(room);
+            EXPECT(tl_web_delete_wall_item(living, "panno", 0, 8));
+            room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(room, "pannos")), 1);
+            tl_json_free(room);
+        }
+        IT("линии раздела: части пола, выбор части, участок со своей плиткой и без плитки")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            TlJson *room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(room, "regions")), 0); /* без линий — одна часть, списка нет */
+            tl_json_free(room);
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            const TlJson *living_json = NULL;
+            for (size_t i = 0; i < tl_json_length(tl_json_get(scene, "spaces")); i++)
+                if ((int)tl_json_number_or(tl_json_get(tl_json_at(tl_json_get(scene, "spaces"), i), "id"), 0) == living)
+                    living_json = tl_json_at(tl_json_get(scene, "spaces"), i);
+            const TlJson *outline = tl_json_get(living_json, "room");
+            double left = INFINITY, right = -INFINITY, top = INFINITY, bottom = -INFINITY;
+            for (size_t i = 0; i + 1 < tl_json_length(outline); i += 2) {
+                double x = tl_json_number_or(tl_json_at(outline, i), 0), y = tl_json_number_or(tl_json_at(outline, i + 1), 0);
+                left = fmin(left, x), right = fmax(right, x), top = fmin(top, y), bottom = fmax(bottom, y);
+            }
+            tl_json_free(scene);
+            double middle = (left + right) / 2;
+            EXPECT(tl_web_add_divider(middle, top - 100, middle, bottom + 100, 2, 1) >= 0);
+            room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            EXPECT(tl_json_length(tl_json_get(room, "regions")) >= 2);
+            tl_json_free(room);
+            TlJson *hit = tl_json_parse(tl_web_pick(middle - 200, (top + bottom) / 2, 5), NULL, 0);
+            int part = (int)tl_json_number_or(tl_json_get(hit, "part"), 0);
+            EXPECT(part > 0);
+            tl_json_free(hit);
+            EXPECT(tl_web_set_area(living, part - 1, "own", "", 2));
+            EXPECT(tl_web_set_area(living, part - 1, "", "Душевая", 3));
+            char ids[32], zone[32];
+            snprintf(ids, sizeof ids, "[%d]", living);
+            snprintf(zone, sizeof zone, "area:%d", part - 1);
+            EXPECT(tl_web_set_zone_fields(ids, zone, "{\"w\": 50, \"h\": 50}", 4));
+            room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            const TlJson *region = tl_json_at(tl_json_get(room, "regions"), (size_t)(part - 1));
+            EXPECT_STR(tl_json_string_or(tl_json_get(region, "covering"), ""), "own");
+            EXPECT_STR(tl_json_string_or(tl_json_get(region, "name"), ""), "Душевая");
+            EXPECT(fabs(tl_json_number_or(tl_json_get(tl_json_get(region, "tile"), "w"), 0) - 50) < 1e-9);
+            tl_json_free(room);
+            EXPECT(tl_web_set_area(living, part - 1, "none", "", 5));
+            EXPECT(!tl_web_set_area(living, part - 1, "carpet", "", 6));
+            EXPECT(tl_web_set_area(living, part - 1, "room", "", 7));
+            room = tl_json_parse(tl_web_space_tile(living), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(tl_json_at(tl_json_get(room, "regions"), (size_t)(part - 1)), "covering"), ""), "room");
+            tl_json_free(room);
+        }
+        IT("предметы: ванна у стены, выбор, правка, перетаскивание, удаление")
+        {
+            tl_web_new_demo();
+            int living = tl_web_space_at(1000, 1000);
+            EXPECT_INT(tl_web_add_fixture("bath", 1000, 1000, true, 1), 0);
+            TlJson *hit = tl_json_parse(tl_web_pick(1000, 1000, 5), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(hit, "kind"), ""), "fixture");
+            tl_json_free(hit);
+            EXPECT(tl_web_set_fixture(0, "{\"kind\": \"cabinet\"}", 2));
+            TlJson *object = tl_json_parse(tl_web_object("fixture", 0, 0, 0), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(object, "fixture_kind"), ""), "cabinet");
+            EXPECT(fabs(tl_json_number_or(tl_json_get(object, "w"), 0) - 600) < 1e-9);
+            EXPECT(tl_json_bool_or(tl_json_get(object, "under"), false));
+            tl_json_free(object);
+            EXPECT(tl_web_set_fixture(0, "{\"under\": false}", 3));
+            EXPECT(!tl_web_set_fixture(0, "{\"w\": 1}", 4));
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(scene, "fixtures")), 1);
+            tl_json_free(scene);
+            EXPECT(tl_web_drag_begin("fixture", 0, 0, 0, 1000, 1000));
+            tl_web_drag_move(1300, 1000, 5, 10, true, 5);
+            tl_web_drag_end();
+            object = tl_json_parse(tl_web_object("fixture", 0, 0, 0), NULL, 0);
+            const TlJson *handle = tl_json_at(tl_json_get(object, "handles"), 0);
+            EXPECT(fabs(tl_json_number_or(tl_json_at(tl_json_get(handle, "point"), 0), 0) - 1300) < 1e-6);
+            tl_json_free(object);
+            EXPECT(tl_web_delete("fixture", 0, 0, 0, 6));
+            scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(scene, "fixtures")), 0);
+            tl_json_free(scene);
+            (void)living;
+        }
+        IT("трапы: конверт в сцене, перепад, правка, удаление")
+        {
+            tl_web_new_demo();
+            EXPECT_INT(tl_web_add_drain("point", 1000, 1000, false, 1), 0);
+            TlJson *scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(scene, "drains")), 1);
+            EXPECT(tl_json_length(tl_json_get(scene, "slopes")) >= 16); /* 4 линии по 4 числа */
+            tl_json_free(scene);
+            TlJson *hit = tl_json_parse(tl_web_pick(1000, 1000, 5), NULL, 0);
+            EXPECT_STR(tl_json_string_or(tl_json_get(hit, "kind"), ""), "drain");
+            tl_json_free(hit);
+            TlJson *object = tl_json_parse(tl_web_object("drain", 0, 0, 0), NULL, 0);
+            EXPECT(tl_json_number_or(tl_json_get(object, "drop"), 0) > 10);
+            tl_json_free(object);
+            EXPECT(tl_web_set_drain(0, "{\"envelope\": false}", 2));
+            scene = tl_json_parse(tl_web_scene(), NULL, 0);
+            EXPECT_INT(tl_json_length(tl_json_get(scene, "slopes")), 0);
+            tl_json_free(scene);
+            EXPECT(tl_web_set_drain(0, "{\"kind\": \"linear\"}", 3));
+            EXPECT(!tl_web_set_drain(0, "{\"size\": 1}", 4));
+            EXPECT(tl_web_delete("drain", 0, 0, 0, 5));
+        }
+        IT("карта раскроя: по видам плитки — стопки с номерами на плане")
+        {
+            tl_web_new_demo();
+            TlJson *map = tl_json_parse(tl_web_cut_map(), NULL, 0);
+            EXPECT(tl_json_length(map) >= 1);
+            const TlJson *stacks = tl_json_get(tl_json_at(map, 0), "stacks");
+            EXPECT(tl_json_length(stacks) >= 1);
+            EXPECT(tl_json_length(tl_json_get(tl_json_at(stacks, 0), "numbers")) >= 1);
+            tl_json_free(map);
+        }
+        IT("сводка: крестики, гидроизоляция, профили, резы; строки сметы — материалы и работы")
+        {
+            tl_web_new_demo();
+            EXPECT(tl_web_set_rooms_tile_fields("[1, 2]", "{\"crosses\": true, \"waterproof\": true, \"threshold_profile\": "
+                                                          "true, \"price_cut\": 100, \"price_work\": 900}", 1));
+            TlJson *summary = tl_json_parse(tl_web_summary(), NULL, 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "crosses"), "total"), 0) > 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "waterproof"), "tape_m"), 0) > 0);
+            EXPECT(tl_json_number_or(tl_json_get(tl_json_get(summary, "profiles"), "thresholds_m"), 0) > 0);
+            EXPECT(tl_json_number_or(tl_json_get(summary, "cut_m"), 0) > 0);
+            const TlJson *lines = tl_json_get(tl_json_get(summary, "estimate"), "lines");
+            bool work = false;
+            for (size_t i = 0; i < tl_json_length(lines); i++)
+                work |= strcmp(tl_json_string_or(tl_json_get(tl_json_at(lines, i), "group"), ""), "work") == 0;
+            EXPECT(work);
+            tl_json_free(summary);
         }
     }
 }

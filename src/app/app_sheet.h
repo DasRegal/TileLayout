@@ -15,6 +15,10 @@ typedef struct AppSheet AppSheet;
 
 /* Лист расчёта проекта; width — ширина области печати в логических пикселях. */
 AppSheet *app_sheet_new_calculation(TlProject *project, const char *title, bool mono, double width);
+/* Смета для заказчика: материалы и работы с ценами, итог, места для подписей. */
+AppSheet *app_sheet_new_estimate(TlProject *project, const char *title, bool mono, double width);
+/* Карта раскроя: одинаковые подрезки — стопкой, пары — из одной плитки. */
+AppSheet *app_sheet_new_cut_map(TlProject *project, const char *title, bool mono, double width);
 void app_sheet_free(AppSheet *sheet);
 
 int app_sheet_page_count(AppSheet *sheet, double page_height);

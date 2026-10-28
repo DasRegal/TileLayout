@@ -46,10 +46,33 @@ export async function loadCore() {
     setRoomsTileFields: (ids, fields) =>
       withString(JSON.stringify(ids), (i) =>
         withString(JSON.stringify(fields), (f) => module._tl_web_set_rooms_tile_fields(i, f, now()))) !== 0,
-    /** Зона пола ('border' | 'carpet') у комнат ids: {enabled, width, height, dx, dy, поля плитки}. */
+    /** Зона ('border' | 'carpet' пола, 'wall_lower' | 'wall_frieze' | 'wall_main' — полосы стен) у комнат ids:
+        {enabled, width, height, dx, dy, fit, поля плитки}. */
     setZoneFields: (ids, zone, fields) =>
       withString(JSON.stringify(ids), (i) =>
         withString(zone, (z) => withString(JSON.stringify(fields), (f) => module._tl_web_set_zone_fields(i, z, f, now())))) !== 0,
+    /** Высота помещения и облицовка стен у комнат ids: {room_height, enabled, height}. */
+    setWalls: (ids, fields) =>
+      withString(JSON.stringify(ids), (i) =>
+        withString(JSON.stringify(fields), (f) => module._tl_web_set_walls(i, f, now()))) !== 0,
+    /** Развёртка стен комнаты (tl_web_walls.c) или null. */
+    roomWalls: (id) => JSON.parse(text(module._tl_web_room_walls(id))),
+    // ---- на развёртке комнаты id: wall — номер стены, точка на стене — [x от левого угла, h от пола]
+    setWallOffset: (id, wall, x, y) => module._tl_web_set_wall_offset(id, wall, x, y, now()) !== 0,
+    /** «Швы как у пола» у стены wall или у всех (−1) → у скольких совмещено. */
+    alignWallsToFloor: (id, wall) => module._tl_web_wall_align_floor(id, wall, now()),
+    addWallPipe: (id, wall, [x, h], diameter) => module._tl_web_add_wall_pipe(id, wall, x, h, diameter, now()),
+    setWallPipe: (id, index, wall, [x, h], diameter) => module._tl_web_set_wall_pipe(id, index, wall, x, h, diameter, now()) !== 0,
+    addWallRuler: (id, wall, [x0, h0], [x1, h1]) => module._tl_web_add_wall_ruler(id, wall, x0, h0, x1, h1, now()),
+    setWallRuler: (id, index, [x0, h0], [x1, h1]) => module._tl_web_set_wall_ruler(id, index, x0, h0, x1, h1, now()) !== 0,
+    /** Панно на стене wall развёртки или на полу (−1) → номер или −1; правка — поля {columns, rows, w, h, gap, x, y,
+        price, color, texture, wall}. */
+    addPanno: (id, wall) => module._tl_web_add_panno(id, wall, now()),
+    setPanno: (id, index, fields) => withString(JSON.stringify(fields), (f) => module._tl_web_set_panno(id, index, f, now())) !== 0,
+    /** kind — 'wall_pipe' | 'wall_ruler' | 'panno'. */
+    deleteWallItem: (id, kind, index) => withString(kind, (k) => module._tl_web_delete_wall_item(id, k, index, now())) !== 0,
+    /** Точка развёртки, притянутая к углам, полу, проёмам и швам → [x, y]. */
+    wallsSnap: (id, x, y, tolerance) => JSON.parse(text(module._tl_web_walls_snap(id, x, y, tolerance))),
     swapTiles: (ids) => withString(JSON.stringify(ids), (i) => module._tl_web_swap_tiles(i, now())) !== 0,
     /** Раскладка комнаты по правилу (от угла, по центру, минимум плиток) → {ok, message}. */
     alignTiles: (id, mode) => withString(mode, (m) => JSON.parse(text(module._tl_web_align_tiles(id, m, now())))),
@@ -93,8 +116,25 @@ export async function loadCore() {
     setPartitionLength: (index, value) => module._tl_web_set_partition_length(index, value, now()) !== 0,
     setPartitionAngle: (index, value) => module._tl_web_set_partition_angle(index, value, now()) !== 0,
     setOpeningWidth: (index, value) => module._tl_web_set_opening_width(index, value, now()) !== 0,
+    /** Вид проёма ('door' | 'window' | 'arch'; '' — прежний), высота и низ от пола, мм. */
+    setOpeningReveal: (index, depth) => module._tl_web_set_opening_reveal(index, depth, now()) !== 0,
+    setOpening: (index, kind, height, sill) =>
+      withString(kind, (k) => module._tl_web_set_opening(index, k, height, sill, now())) !== 0,
     addRuler: (a, b) => module._tl_web_add_ruler(a[0], a[1], b[0], b[1], now()),
     addJoint: (a, b, gap) => module._tl_web_add_joint(a[0], a[1], b[0], b[1], gap, now()),
+    /** Предмет ('bath' | 'tray' | 'installation' | 'cabinet' | 'kitchen' | 'stairs'); у стены — спинкой к ней (free — нет). */
+    addFixture: (kind, point, free) => withString(kind, (k) => module._tl_web_add_fixture(k, point[0], point[1], free ? 1 : 0, now())),
+    /** Поля предмета: {kind, w, d, h, angle, x, y, under, behind}. */
+    setFixture: (index, fields) => withString(JSON.stringify(fields), (f) => module._tl_web_set_fixture(index, f, now())) !== 0,
+    /** Трап ('point' | 'linear'); линейный у стены — вдоль неё (free — нет). */
+    addDrain: (kind, point, free) => withString(kind, (k) => module._tl_web_add_drain(k, point[0], point[1], free ? 1 : 0, now())),
+    /** Поля трапа: {kind, size, length, angle, slope, x, y, envelope}. */
+    setDrain: (index, fields) => withString(JSON.stringify(fields), (f) => module._tl_web_set_drain(index, f, now())) !== 0,
+    /** Линия раздела покрытия (шов gap мм) → номер среди швов или −1. */
+    addDivider: (a, b, gap) => module._tl_web_add_divider(a[0], a[1], b[0], b[1], gap, now()),
+    /** Часть пола region: covering 'room' | 'own' | 'none' | '' (не менять), name — название участка ('' — не менять). */
+    setArea: (id, region, covering, name = '') =>
+      withString(covering, (c) => withString(name, (n) => module._tl_web_set_area(id, region, c, n, now()))) !== 0,
     setJointGap: (index, gap) => module._tl_web_set_joint_gap(index, gap, now()) !== 0,
     /** Отверстие под трубу (диаметр коронки, мм) → номер или −1. */
     addPipe: (point, diameter) => module._tl_web_add_pipe(point[0], point[1], diameter, now()),
@@ -124,6 +164,21 @@ export async function loadCore() {
     summary: () => JSON.parse(text(module._tl_web_summary())),
     tileNumbers: () => JSON.parse(text(module._tl_web_tile_numbers())),
     cutCards: () => JSON.parse(text(module._tl_web_cut_cards())),
+    cutMap: () => JSON.parse(text(module._tl_web_cut_map())),
+    /** Подложка с содержимым: {present, revision, origin, scale, opacity, visible, image, image_w, image_h, lines}. */
+    underlay: () => JSON.parse(text(module._tl_web_underlay())),
+    setUnderlayImage: (url, width, height) =>
+      withString(url, (u) => module._tl_web_set_underlay_image(u, width, height, now())) !== 0,
+    /** DXF-план текстом; ошибка — исключение с объяснением. */
+    loadUnderlayDxf(dxf) {
+      if (!withString(dxf, (d) => module._tl_web_load_underlay_dxf(d, now()))) throw new Error(text(module._tl_web_error()));
+    },
+    setUnderlay: (fields) => withString(JSON.stringify(fields), (f) => module._tl_web_set_underlay(f, now())) !== 0,
+    calibrateUnderlay: ([ax, ay], [bx, by], distance) =>
+      module._tl_web_calibrate_underlay(ax, ay, bx, by, distance, now()) !== 0,
+    clearUnderlay: () => module._tl_web_clear_underlay(now()),
+    /** Чертёж DXF: cuts — подрезки для станка, иначе план. */
+    dxf: (cuts) => text(module._tl_web_dxf(cuts ? 1 : 0)),
     undo: () => module._tl_web_undo() !== 0,
     redo: () => module._tl_web_redo() !== 0,
     canUndo: () => module._tl_web_undo_count() > 0,

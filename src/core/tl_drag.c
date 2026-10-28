@@ -140,12 +140,43 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
         drag->original_start = target.ruler->start;
         drag->original_end = target.ruler->end;
         return true;
-    case TL_DRAG_JOINT:
+    case TL_DRAG_JOINT: /* концы других линий на этой — держатся за неё */
         drag->original_start = target.joint->start;
         drag->original_end = target.joint->end;
+        drag->follower_count = 0;
+        for (size_t i = 0; i < project->expansion_joints.count; i++) {
+            TlExpansionJoint *other = project->expansion_joints.items[i];
+            TlVec2 *ends[2] = {&other->start, &other->end};
+            for (int e = 0; other != target.joint && e < 2; e++) {
+                double along;
+                if (drag->follower_count < TL_DRAG_MAX_FOLLOWERS &&
+                    tl_point_segment_distance(*ends[e], target.joint->start, target.joint->end, &along) < 0.5) {
+                    drag->followers[drag->follower_count] = ends[e];
+                    drag->follower_at[drag->follower_count++] = along;
+                }
+            }
+        }
         return true;
     case TL_DRAG_PIPE:
         drag->original_point = target.pipe->center;
+        return true;
+    case TL_DRAG_DRAIN:
+        if (target.index < 0 || (size_t)target.index >= project->drains.count)
+            return false;
+        drag->original_point = project->drains.items[target.index].center;
+        drag->original_corner_offset = project->drains.items[target.index].angle;
+        return true;
+    case TL_DRAG_FIXTURE:
+        if (target.index < 0 || (size_t)target.index >= project->fixtures.count)
+            return false;
+        drag->original_point = project->fixtures.items[target.index].center;
+        drag->original_corner_offset = project->fixtures.items[target.index].angle;
+        return true;
+    case TL_DRAG_PANNO:
+        if (!target.space || target.index < 0 || (size_t)target.index >= target.space->pannos.count ||
+            target.space->pannos.items[target.index].wall != TL_PANNO_FLOOR)
+            return false;
+        drag->original_point = target.space->pannos.items[target.index].at;
         return true;
     default:
         return false;
@@ -400,11 +431,49 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
         drag_segment(drag, project, &drag->target.ruler->start, &drag->target.ruler->end, TL_SNAP_TO_ALL, delta, snap,
                      free, guides);
         return;
-    case TL_DRAG_JOINT:
-        drag_segment(drag, project, &drag->target.joint->start, &drag->target.joint->end, TL_SNAP_TO_WALL_SURFACES,
-                     delta, snap, free, guides);
+    case TL_DRAG_JOINT: {
+        TlExpansionJoint *joint = drag->target.joint;
+        tl_measure_snap_skip_line(joint);
+        drag_segment(drag, project, &joint->start, &joint->end, TL_SNAP_TO_WALL_SURFACES | TL_SNAP_TO_LINES, delta,
+                     snap, free, guides);
+        tl_measure_snap_skip_line(NULL);
+        for (size_t i = 0; i < drag->follower_count; i++)
+            *drag->followers[i] = tl_vec2_lerp(joint->start, joint->end, drag->follower_at[i]);
         tl_project_update_spaces(project); /* шов режет плитку — раскладка меняется */
         return;
+    }
+    case TL_DRAG_DRAIN: { /* по сетке; линейный — у стены вдоль неё */
+        TlDrain *drain = &project->drains.items[drag->target.index];
+        drain->center = tl_vec2_add(drag->original_point, delta);
+        drain->angle = drag->original_corner_offset;
+        TlSpace *space = free || drain->kind != TL_DRAIN_LINEAR ? NULL : tl_project_space_at(project, drain->center);
+        TlPolygon walls = space ? tl_space_wall_outline(space) : (TlPolygon){0};
+        if (!space || !tl_drain_snap_to_walls(drain, &walls, fmax(snap->tolerance, 100)))
+            drain->center = free || snap->grid_step <= 0 ? drain->center : tl_snap_grid(snap->grid_step, drain->center);
+        tl_polygon_free(&walls);
+        tl_project_update_spaces(project); /* конверт — от нового места */
+        return;
+    }
+    case TL_DRAG_FIXTURE: { /* у стены — спинкой к ней, иначе — по сетке */
+        TlFixture *fixture = &project->fixtures.items[drag->target.index];
+        fixture->center = tl_vec2_add(drag->original_point, delta);
+        fixture->angle = drag->original_corner_offset;
+        TlSpace *space = free ? NULL : tl_project_space_at(project, fixture->center);
+        TlPolygon walls = space ? tl_space_wall_outline(space) : (TlPolygon){0};
+        if (!space || !tl_fixture_snap_to_walls(fixture, &walls, fmax(snap->tolerance, 100)))
+            fixture->center = free || snap->grid_step <= 0 ? fixture->center : tl_snap_grid(snap->grid_step, fixture->center);
+        tl_polygon_free(&walls);
+        tl_project_update_spaces(project); /* пол и стены под предметом */
+        return;
+    }
+    case TL_DRAG_PANNO: { /* сдвиг — в осях раскладки комнаты (в них задано панно) */
+        double radians = tl_space_effective_tile(drag->target.space)->rotation_degrees * TL_PI / 180;
+        TlVec2 local = {delta.x * cos(radians) + delta.y * sin(radians), -delta.x * sin(radians) + delta.y * cos(radians)};
+        TlVec2 at = tl_vec2_add(drag->original_point, local);
+        drag->target.space->pannos.items[drag->target.index].at =
+            free || snap->grid_step <= 0 ? at : tl_snap_grid(snap->grid_step, at);
+        return;
+    }
     case TL_DRAG_PIPE: {
         TlVec2 center = tl_vec2_add(drag->original_point, delta);
         drag->target.pipe->center = free || snap->grid_step <= 0 ? center : tl_snap_grid(snap->grid_step, center);

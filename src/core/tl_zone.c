@@ -7,6 +7,7 @@
 TlZone tl_zone_factory(TlZoneKind kind)
 {
     TlZone zone = {.enabled = false, .fit = true, .tile = tl_tile_settings_factory()};
+    zone.tile.row_shift = 0; /* прямая — без сдвига рядов */
     zone.tile.tile_width = zone.tile.tile_height = 300;
     if (kind == TL_ZONE_BORDER) {
         zone.width = 300;
@@ -29,17 +30,27 @@ double tl_zone_fit_size(double size, double tile, double gap)
     return count * pitch - gap;
 }
 
-TlZone tl_zone_effective(const TlZone *zone, TlZoneKind kind)
+bool tl_zone_fits_grid(const TlZone *zone, double *along_x, double *along_y)
 {
-    TlZone result = *zone;
     const TlTileSettings *t = &zone->tile;
     bool grid = !t->pattern[0] || strcmp(t->pattern, "straight") == 0 || strcmp(t->pattern, "checker") == 0;
     double quarter = fmod(fabs(t->rotation_degrees), 180);
     bool square_turn = fabs(quarter) < 0.01 || fabs(quarter - 90) < 0.01;
     if (!zone->fit || !grid || !square_turn)
-        return result;
+        return false;
     bool turned = fabs(quarter - 90) < 0.01;
-    double along_x = turned ? t->tile_height : t->tile_width, along_y = turned ? t->tile_width : t->tile_height;
+    *along_x = turned ? tl_tile_laid_height(t) : tl_tile_laid_width(t);
+    *along_y = turned ? tl_tile_laid_width(t) : tl_tile_laid_height(t);
+    return true;
+}
+
+TlZone tl_zone_effective(const TlZone *zone, TlZoneKind kind)
+{
+    TlZone result = *zone;
+    const TlTileSettings *t = &zone->tile;
+    double along_x, along_y;
+    if (!tl_zone_fits_grid(zone, &along_x, &along_y))
+        return result;
     if (kind == TL_ZONE_BORDER) {
         /* поперёк полосы — Y; у стены плитка отступает на wall_gap — он сверх целых рядов */
         result.width = tl_zone_fit_size(zone->width - t->wall_gap, along_y, t->joint_width) + t->wall_gap;
@@ -56,8 +67,8 @@ const char *tl_zone_name(TlZoneKind kind) { return kind == TL_ZONE_BORDER ? "Б�
 
 /* Что относится к самой плитке зоны и её укладке; остальное (клей, СВП, затирка, грунт) — от комнаты. */
 static const char *const OWN_FIELDS[] = {
-    "w", "h", "gap", "off_x", "off_y", "angle", "shift", "pattern", "color", "color2", "texture", "pattern_angle",
-    "insert", "min_cut", "reserve", "wall_gap", "price_tile", "price_work",
+    "w", "h", "real_w", "real_h", "gap", "off_x", "off_y", "angle", "shift", "pattern", "color", "color2", "texture", "pattern_angle",
+    "insert", "min_cut", "reserve", "wall_gap", "price_tile", "price_work", "price_tile_unit", "tile_pack",
 };
 
 bool tl_zone_field_is_own(const char *key)

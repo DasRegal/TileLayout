@@ -27,7 +27,7 @@
 
 #define TL_PATTERN_MAX_TILES 8  /* плиток в модуле */
 #define TL_PATTERN_MAX_POINTS 8 /* углов у плитки-многоугольника */
-#define TL_PATTERN_MAX_SPECS 4  /* видов плитки в рисунке */
+#define TL_PATTERN_MAX_SPECS 6  /* видов плитки в рисунке: у версаля на неквадратной клетке — 5 */
 
 /* Место плитки в рисунке. */
 typedef struct TlCell {

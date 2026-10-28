@@ -167,16 +167,55 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
 }
 .zoom button:hover { background: var(--ground); }
 
-.plan-area { position: relative; min-height: 0; }
+.plan-area { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.stage { position: relative; flex: 1; min-height: 0; }
 
-#plan {
+/* ---- вкладки: план и стены помещений ---- */
+
+.room-tabs { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); background: var(--surface); }
+.tab-strip { display: flex; overflow-x: auto; scrollbar-width: thin; }
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 8px 6px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tab.plan { padding-right: 14px; }
+.tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.tab:hover { background: var(--ground); }
+.tab .close { padding: 0 4px; border-radius: 4px; color: var(--muted); font-weight: 400; }
+.tab .close:hover { background: var(--line); color: var(--ink); }
+#tab-select { display: none; margin: 6px 8px; }
+
+.mode-switch {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
+}
+.mode-switch button { border: 0; border-radius: 0; background: none; padding: 5px 12px; font-weight: 600; }
+.mode-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.mode-switch button:disabled { color: var(--line); }
+
+#plan, #walls {
   display: block;
   width: 100%;
   height: 100%;
   touch-action: none;
   cursor: grab;
 }
-#plan:active { cursor: grabbing; }
+#plan:active, #walls:active { cursor: grabbing; }
 body.drawing #plan { cursor: crosshair; }
 
 .status {
@@ -406,6 +445,8 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
   .rail-divider { width: 1px; height: auto; margin: 6px 2px; }
 
   .thanks { top: 8px; left: 8px; padding: 4px 8px; font-size: 12px; }
+  .tab-strip { display: none; }
+  #tab-select { display: block; flex: 1; }
   .zoom button { width: 40px; height: 40px; }
   .status { bottom: max(62px, env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 24px); }
 
@@ -456,6 +497,8 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
   .catalog-tree { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
 }
 
+#underlay-settings { margin-top: 14px; }
+
 /* ---- меню «Вид» ---- */
 
 .view-menu { position: relative; }
@@ -487,6 +530,18 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
   box-shadow: 0 10px 30px rgba(20, 24, 32, 0.15);
 }
 .view-menu-body label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.export-menu summary { display: inline-flex; align-items: center; }
+.export-menu .view-menu-body { left: auto; right: 0; min-width: 240px; padding: 6px; }
+.export-menu .view-menu-body button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.export-menu .view-menu-body button:hover, .export-menu .view-menu-body button:focus-visible { background: var(--accent-soft); }
 
 /* ---- печать: на бумагу — только листы ---- */
 

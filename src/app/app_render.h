@@ -10,6 +10,7 @@
 
 #include "app_draw.h"
 #include "app_view.h"
+#include "tl_layout.h"
 #include "tl_project.h"
 
 typedef struct AppRenderOptions {
@@ -47,6 +48,33 @@ void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpans
 /* Отверстие под трубу: круг диаметром коронки (не меньше нескольких пикселей) с
    крестом в центре; label — подпись «Ø50». */
 void app_render_pipe(cairo_t *cr, const AppView *view, const TlPipe *pipe, AppColor color, bool label);
+
+/* Плитка раскладки (обрезана по её полу); cairo — в базовом преобразовании, состояние — на вызывающем. */
+void app_render_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
+                      const TlTileSettings *tile, TlLayout *layout);
+/* Панно index комнаты: картинка на всё панно, по плиткам; to_view — из мира (пол) или развёртки (стена)
+   в оси вида, NULL — как есть. */
+void app_render_panno(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlSpace *space,
+                      size_t index, const TlAffine *to_view);
+/* Номера плиток раскладки (tl_report_assign_numbers — заранее). */
+void app_render_layout_numbers(cairo_t *cr, const AppView *view, const AppTextStyle *style, const TlLayout *layout);
+
+/* Выделенное на развёртке: номера стены, отверстия, линейки; −1 — нет. */
+typedef struct AppWallsMarks {
+    long wall, pipe, ruler, panno;
+} AppWallsMarks;
+
+/* Развёртка стен комнаты (tl_space_walls.c): стены в ряд, плитка, проёмы, отверстия, линейки,
+   под каждой стеной — пол у неё; размеры. marks — выделенное (NULL — ничего). */
+void app_render_walls(cairo_t *cr, TlProject *project, TlSpace *space, const AppView *view,
+                      const AppRenderOptions *options, const AppWallsMarks *marks);
+/* Габарит развёртки с подписями. */
+TlRect app_render_walls_bounds(TlSpace *space);
+
+/* Трап на плане: решётка или лоток. */
+void app_render_drain(cairo_t *cr, const AppView *view, const TlDrain *drain, AppColor color);
+/* Предмет (ванна, поддон, тумба…) на плане: контур, значок вида, название и размер. */
+void app_render_fixture(cairo_t *cr, const AppView *view, const TlFixture *fixture, AppColor color, bool label);
 
 /* Габарит всего плана в мировых координатах (для «Вписать»). */
 bool app_render_plan_bounds(TlProject *project, TlRect *bounds);

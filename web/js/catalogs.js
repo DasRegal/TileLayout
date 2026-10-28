@@ -53,7 +53,7 @@ export class Catalogs {
 
   /** Обещание: загружены рисунки всех плиток сцены (для печати). */
   loadImages(scene) {
-    const references = new Set(scene.spaces.map((space) => space.tile.texture).filter(Boolean));
+    const references = new Set(scene.spaces.flatMap((space) => [space.tile.texture, ...(space.pannos || []).map((p) => p.tile.texture)]).filter(Boolean));
     return Promise.all(
       [...references].map((reference) => {
         if (this.image(reference)) return null;

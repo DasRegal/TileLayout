@@ -132,6 +132,7 @@ static const DoubleSetting DOUBLE_SETTINGS[] = {
     {"edit", "partition_thick", DOCUMENT_FIELD(preferences.partition_thickness)},
     {"edit", "opening_width", DOCUMENT_FIELD(preferences.opening_width)},
     {"edit", "expansion_joint_gap", DOCUMENT_FIELD(preferences.expansion_joint_gap)},
+    {"edit", "divider_gap", DOCUMENT_FIELD(preferences.divider_gap)},
     {"edit", "pipe_diameter", DOCUMENT_FIELD(preferences.pipe_diameter)},
     {"edit", "outline_thick", DOCUMENT_FIELD(preferences.outline_thickness)},
     {"house", "w", DOCUMENT_FIELD(preferences.house_width)},
@@ -233,6 +234,7 @@ AppPrintPreferences app_config_read_print(AppConfig *config)
         .tiles = read_bool(f, "print", "tiles", true), .clips = read_bool(f, "print", "svp", false),
         .dims = read_bool(f, "print", "dims", true), .cuts = read_bool(f, "print", "cuts", false),
         .calc = read_bool(f, "print", "calc", true), .mono = read_bool(f, "print", "mono", false),
+        .estimate = read_bool(f, "print", "estimate", false),
         .expansion_joints = read_bool(f, "print", "expansion_joints", true),
         .landscape = read_bool(f, "print", "landscape", true), .scale = read_int(f, "print", "scale", 0)};
 }
@@ -245,6 +247,7 @@ void app_config_write_print(AppConfig *config, const AppPrintPreferences *print)
     g_key_file_set_boolean(f, "print", "dims", print->dims);
     g_key_file_set_boolean(f, "print", "cuts", print->cuts);
     g_key_file_set_boolean(f, "print", "calc", print->calc);
+    g_key_file_set_boolean(f, "print", "estimate", print->estimate);
     g_key_file_set_boolean(f, "print", "mono", print->mono);
     g_key_file_set_boolean(f, "print", "expansion_joints", print->expansion_joints);
     g_key_file_set_boolean(f, "print", "landscape", print->landscape);

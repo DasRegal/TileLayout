@@ -11,6 +11,7 @@ TlProject *tl_project_new(void)
 {
     TlProject *project = TL_NEW(TlProject);
     project->next_space_id = 1;
+    project->underlay = tl_underlay_default();
     return project;
 }
 
@@ -31,10 +32,13 @@ void tl_project_clear(TlProject *project)
     for (size_t i = 0; i < project->pipes.count; i++)
         tl_pipe_free(project->pipes.items[i]);
     tl_pipe_list_clear(&project->pipes);
+    tl_fixture_list_clear(&project->fixtures);
+    tl_drain_list_clear(&project->drains);
     tl_outline_list_clear(&project->outlines);
     tl_partition_list_clear(&project->partitions);
     tl_opening_list_clear(&project->openings);
     tl_space_list_clear(&project->spaces);
+    tl_underlay_clear(&project->underlay);
     project->next_space_id = 1;
 }
 
@@ -50,6 +54,8 @@ void tl_project_free(TlProject *project)
     tl_ruler_list_free(&project->rulers);
     tl_expansion_joint_list_free(&project->expansion_joints);
     tl_pipe_list_free(&project->pipes);
+    tl_fixture_list_free(&project->fixtures);
+    tl_drain_list_free(&project->drains);
     free(project);
 }
 
@@ -76,15 +82,37 @@ static int name_number(const char *name, const char *prefix)
 
 static int larger(int a, int b) { return a > b ? a : b; }
 
+/* Буква имени проёма по виду: Д1 — дверь, О1 — окно, А1 — арка. */
+static const char *opening_prefix(TlOpeningKind kind)
+{
+    return kind == TL_OPENING_WINDOW ? "О" : kind == TL_OPENING_ARCH ? "А" : "Д";
+}
+
+static void name_opening(TlProject *project, TlOpening *opening)
+{
+    const char *prefix = opening_prefix(opening->kind);
+    int largest = 0;
+    for (size_t i = 0; i < project->openings.count; i++)
+        if (project->openings.items[i] != opening)
+            largest = larger(largest, name_number(project->openings.items[i]->name, prefix));
+    snprintf(opening->name, sizeof opening->name, "%s%d", prefix, largest + 1);
+}
+
 void tl_project_add_opening(TlProject *project, TlOpening *opening)
 {
-    if (!opening->name[0]) {
-        int largest = 0;
-        for (size_t i = 0; i < project->openings.count; i++)
-            largest = larger(largest, name_number(project->openings.items[i]->name, "Д"));
-        snprintf(opening->name, sizeof opening->name, "Д%d", largest + 1);
-    }
+    if (!opening->name[0])
+        name_opening(project, opening);
     tl_opening_list_push(&project->openings, opening);
+}
+
+void tl_project_set_opening_kind(TlProject *project, TlOpening *opening, TlOpeningKind kind)
+{
+    if (opening->kind == kind)
+        return;
+    bool automatic = name_number(opening->name, opening_prefix(opening->kind)) > 0;
+    tl_opening_set_kind(opening, kind);
+    if (automatic)
+        name_opening(project, opening);
 }
 
 void tl_project_add_ruler(TlProject *project, TlRuler *ruler)

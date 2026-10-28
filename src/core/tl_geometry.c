@@ -407,6 +407,14 @@ TlAffine tl_affine_inverted(const TlAffine *m)
     return (TlAffine){a, b, c, d, -(a * m->tx + c * m->ty), -(b * m->tx + d * m->ty)};
 }
 
+TlAffine tl_affine_multiply(const TlAffine *outer, const TlAffine *inner)
+{
+    const TlAffine *o = outer, *i = inner;
+    return (TlAffine){o->a * i->a + o->c * i->b,       o->b * i->a + o->d * i->b,
+                      o->a * i->c + o->c * i->d,       o->b * i->c + o->d * i->d,
+                      o->a * i->tx + o->c * i->ty + o->tx, o->b * i->tx + o->d * i->ty + o->ty};
+}
+
 TlVec2 tl_affine_apply(const TlAffine *m, TlVec2 p)
 {
     return tl_vec2(m->a * p.x + m->c * p.y + m->tx, m->b * p.x + m->d * p.y + m->ty);

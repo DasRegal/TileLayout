@@ -17,6 +17,8 @@ static int add_spec(TlPatternUnit *unit, double width, double height, double lai
         if (same_size && strcmp(spec->color, color) == 0 && spec->textured == textured && !spec->variant[0])
             return (int)i;
     }
+    if (unit->spec_count == TL_PATTERN_MAX_SPECS) /* не бывает: рисунки укладываются в предел */
+        return (int)unit->spec_count - 1;
     TlTileSpec *spec = &unit->specs[unit->spec_count];
     *spec = (TlTileSpec){width, height, laid_width, laid_height, "", textured, true, ""};
     snprintf(spec->color, sizeof spec->color, "%s", color);
@@ -27,6 +29,8 @@ static int add_spec(TlPatternUnit *unit, double width, double height, double lai
 static int add_variant(TlPatternUnit *unit, double width, double height, double laid_width, double laid_height,
                        const char *color, const char *variant)
 {
+    if (unit->spec_count == TL_PATTERN_MAX_SPECS)
+        return (int)unit->spec_count - 1;
     TlTileSpec *spec = &unit->specs[unit->spec_count];
     *spec = (TlTileSpec){width, height, laid_width, laid_height, "", true, true, ""};
     snprintf(spec->color, sizeof spec->color, "%s", color);
@@ -36,6 +40,8 @@ static int add_variant(TlPatternUnit *unit, double width, double height, double 
 
 static void add_tile(TlPatternUnit *unit, TlRect rect, int spec)
 {
+    if (unit->tile_count == TL_PATTERN_MAX_TILES)
+        return;
     unit->tiles[unit->tile_count++] = (TlPatternTile){.rect = rect, .spec = spec};
 }
 
@@ -251,7 +257,19 @@ bool tl_pattern_unit(const TlTileSettings *settings, TlPatternUnit *unit)
     if (!(settings->tile_width > 0 && settings->tile_height > 0) ||
         !(settings->tile_width + settings->joint_width > 0 && settings->tile_height + settings->joint_width > 0))
         return false;
-    entry_of(settings)->build(settings, unit);
+    /* кладут по фактическому размеру (калибр), продают — по номинальному */
+    TlTileSettings laid = *settings;
+    laid.tile_width = tl_tile_laid_width(settings);
+    laid.tile_height = tl_tile_laid_height(settings);
+    entry_of(settings)->build(&laid, unit);
+    if (laid.tile_width != settings->tile_width || laid.tile_height != settings->tile_height) {
+        TlPatternUnit nominal = {0};
+        entry_of(settings)->build(settings, &nominal);
+        for (size_t i = 0; nominal.spec_count == unit->spec_count && i < unit->spec_count; i++) {
+            unit->specs[i].width = nominal.specs[i].width;
+            unit->specs[i].height = nominal.specs[i].height;
+        }
+    }
     double det = unit->a.x * unit->b.y - unit->a.y * unit->b.x;
     return fabs(det) > 1e-6;
 }

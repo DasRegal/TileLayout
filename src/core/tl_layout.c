@@ -125,6 +125,50 @@ static void free_tile(TlTile *tile)
     tl_polygon_free(&tile->outline);
     tl_polygon_list_free_all(&tile->shapes);
     tl_circle_list_free(&tile->drills);
+    tl_polygon_list_free_all(&tile->miters);
+}
+
+#define MITER_MM 0.6 /* сторона куска на линии запила — не дальше */
+
+static bool on_segment(TlVec2 p, TlVec2 a, TlVec2 b)
+{
+    double t;
+    return tl_point_segment_distance(p, a, b, &t) < MITER_MM;
+}
+
+void tl_layout_mark_miters(TlLayout *layout, const TlPolygonList *lines)
+{
+    TlAffine to_local = tl_affine_inverted(&layout->local_to_world);
+    TlPolygonList local = {0};
+    for (size_t i = 0; lines && i < lines->count; i++)
+        if (lines->items[i].count == 2)
+            tl_polygon_list_push(&local, tl_affine_apply_polygon(&to_local, &lines->items[i]));
+    for (size_t t = 0; local.count && t < layout->tiles.count; t++) {
+        TlTile *tile = &layout->tiles.items[t];
+        TlPolygon whole = {0};
+        size_t shapes = tile->shapes.count ? tile->shapes.count : 1;
+        if (!tile->shapes.count) /* целая плитка — её прямоугольник от угла */
+            whole = tl_polygon_from_rect((TlRect){0, 0, tl_rect_width(tile->rect), tl_rect_height(tile->rect)});
+        TlVec2 corner = {tile->rect.left, tile->rect.top};
+        for (size_t k = 0; k < shapes; k++) { /* и вырезы: у края плитки вырез — «дыра» на её краю */
+            const TlPolygon *shape = tile->shapes.count ? &tile->shapes.items[k] : &whole;
+            for (size_t e = 0; e < shape->count; e++) {
+                TlVec2 p = tl_polygon_edge_start(shape, e), q = tl_polygon_edge_end(shape, e);
+                if (tl_distance(p, q) < 1)
+                    continue;
+                for (size_t l = 0; l < local.count; l++) {
+                    TlVec2 a = local.items[l].items[0], b = local.items[l].items[1];
+                    if (on_segment(tl_vec2_add(p, corner), a, b) && on_segment(tl_vec2_add(q, corner), a, b)) {
+                        const TlVec2 edge[2] = {p, q};
+                        tl_polygon_list_push(&tile->miters, tl_polygon_from_points(edge, 2));
+                        break;
+                    }
+                }
+            }
+        }
+        tl_polygon_free(&whole);
+    }
+    tl_polygon_list_free_all(&local);
 }
 
 static TlPolygon shape_from_tile_corner(TlPolygon clipped, TlRect rect)
@@ -327,6 +371,56 @@ static void place_clips(TlLayout *layout, const TlTileSettings *settings)
     }
 }
 
+/* ---- крестики ---------------------------------------------------------------- */
+
+static int compare_points(const void *left, const void *right)
+{
+    const TlVec2 *a = left, *b = right;
+    if (a->x != b->x)
+        return a->x < b->x ? -1 : 1;
+    return a->y < b->y ? -1 : a->y > b->y;
+}
+
+/* Пересечение швов — у каждого угла плитки на полшва наружу от обеих её сторон; у соседних
+ * плиток эти точки совпадают (сравниваются с округлением до 0,1 мм). Крестик ставится, если
+ * вокруг точки — пол со всех сторон. */
+static void place_crosses(TlLayout *layout, const TlTileSettings *settings)
+{
+    double half = settings->joint_width / 2;
+    TlPolygon points = {0};
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        TlPolygon polygon = tile_polygon(&layout->tiles.items[i]);
+        double orientation = tl_polygon_signed_area(&polygon) > 0 ? 1 : -1;
+        for (size_t v = 0; v < polygon.count; v++) {
+            size_t previous = (v + polygon.count - 1) % polygon.count;
+            TlVec2 d1 = tl_vec2_normalized(tl_vec2_sub(polygon.items[v], polygon.items[previous]));
+            TlVec2 d2 = tl_vec2_normalized(tl_vec2_sub(polygon.items[(v + 1) % polygon.count], polygon.items[v]));
+            TlVec2 n1 = tl_vec2_scale(tl_vec2(d1.y, -d1.x), orientation), n2 = tl_vec2_scale(tl_vec2(d2.y, -d2.x), orientation);
+            double denominator = 1 + tl_vec2_dot(n1, n2);
+            if (denominator < 0.2) /* острый угол (шеврон) — точка далеко, крестик там не ставят */
+                continue;
+            TlVec2 p = tl_vec2_add(polygon.items[v], tl_vec2_scale(tl_vec2_add(n1, n2), half / denominator));
+            tl_polygon_push(&points, tl_vec2(round(p.x * 10) / 10, round(p.y * 10) / 10));
+        }
+        tl_polygon_free(&polygon);
+    }
+    if (points.count)
+        qsort(points.items, points.count, sizeof(TlVec2), compare_points);
+    double probe = half + CLIP_PROBE;
+    for (size_t i = 0; i < points.count; i++) {
+        TlVec2 p = points.items[i];
+        if (i > 0 && tl_distance(p, points.items[i - 1]) < 0.3)
+            continue;
+        bool inside = floor_contains(layout, tl_vec2(p.x - probe, p.y - probe)) &&
+                      floor_contains(layout, tl_vec2(p.x + probe, p.y - probe)) &&
+                      floor_contains(layout, tl_vec2(p.x - probe, p.y + probe)) &&
+                      floor_contains(layout, tl_vec2(p.x + probe, p.y + probe));
+        if (inside)
+            tl_polygon_push(&layout->cross_points, p);
+    }
+    tl_polygon_free(&points);
+}
+
 /* ---- раскладка -------------------------------------------------------------- */
 
 static void count_tile(TlLayout *layout, TlTileKind kind)
@@ -432,8 +526,10 @@ TlLayout *tl_layout_compute_surface(const TlSurface *surface, const TlLayoutOpti
     Placing placing = {layout, &room_floor, settings, &pipes, options->fast};
     tl_pattern_cover(&layout->pattern, offset, bounds, place_tile, &placing);
     tl_circle_list_free(&pipes);
-    if (!options->fast)
+    if (!options->fast) {
         place_clips(layout, settings);
+        place_crosses(layout, settings);
+    }
     return layout;
 }
 
@@ -444,7 +540,7 @@ static TlSurface main_surface(TlSpace *space, const TlPolygonList *cutouts)
     return (TlSurface){.outline = &space->outline,
                        .holes = &space->holes,
                        .cutouts = cutouts,
-                       .joint_strips = &space->joint_strips,
+                       .joint_strips = &space->cut_strips,
                        .threshold_strips = &space->threshold_strips,
                        .pipes = &space->pipes,
                        .origin = tl_vec2(bounds.left, bounds.top),
@@ -469,6 +565,7 @@ void tl_layout_free(TlLayout *layout)
         free_tile(&layout->tiles.items[i]);
     tl_tile_list_free(&layout->tiles);
     tl_polygon_free(&layout->clip_points);
+    tl_polygon_free(&layout->cross_points);
     tl_polygon_free(&layout->floor_outline);
     tl_polygon_list_free_all(&layout->floor_holes);
     tl_polygon_list_free_all(&layout->joint_strips);
@@ -547,7 +644,7 @@ static bool cache_is_current(const struct TlLayoutCache *cache, TlSpace *space, 
     return cache && polygons_equal(&cache->outline, &space->outline) &&
            polygon_lists_equal(&cache->cutouts, cutouts) &&
            polygon_lists_equal(&cache->holes, &space->holes) &&
-           polygon_lists_equal(&cache->joint_strips, &space->joint_strips) &&
+           polygon_lists_equal(&cache->joint_strips, &space->cut_strips) &&
            circle_lists_equal(&cache->pipes, &space->pipes) &&
            polygons_equal(&cache->frame, tl_space_frame(space)) &&
            tl_tile_settings_equal(&cache->tile, tl_space_effective_tile(space));
@@ -568,7 +665,7 @@ TlLayout *tl_space_layout(TlSpace *space)
     cache->outline = tl_polygon_copy(&space->outline);
     cache->frame = tl_polygon_copy(tl_space_frame(space));
     cache->holes = tl_polygon_list_deep_copy(&space->holes);
-    cache->joint_strips = tl_polygon_list_deep_copy(&space->joint_strips);
+    cache->joint_strips = tl_polygon_list_deep_copy(&space->cut_strips);
     cache->pipes = tl_circle_list_copy(&space->pipes);
     cache->tile = *tl_space_effective_tile(space);
     space->layout_cache = cache;
@@ -623,6 +720,42 @@ double tl_layout_primer_l(const TlTileSettings *tile, const TlLayout *layout)
     return layout->floor_area / 1e6 * tile->primer_l_per_m2;
 }
 
+/* Сторона куска лежит на кромке плитки (на стороне её контура). */
+static bool on_tile_edge(const TlPolygon *tile, TlVec2 a, TlVec2 b)
+{
+    for (size_t e = 0; e < tile->count; e++) {
+        TlVec2 p = tl_polygon_edge_start(tile, e), q = tl_polygon_edge_end(tile, e);
+        if (tl_point_segment_distance(a, p, q, NULL) < 0.5 && tl_point_segment_distance(b, p, q, NULL) < 0.5)
+            return true;
+    }
+    return false;
+}
+
+double tl_layout_cut_length(const TlLayout *layout)
+{
+    double length = 0;
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        const TlTile *tile = &layout->tiles.items[i];
+        if (tile->kind == TL_TILE_WHOLE)
+            continue;
+        TlPolygon outline = tile->outline.count ? tl_polygon_copy(&tile->outline)
+                                                : tl_polygon_from_rect((TlRect){0, 0, tl_rect_width(tile->rect),
+                                                                                tl_rect_height(tile->rect)});
+        for (size_t s = 0; s < tile->shapes.count; s++) {
+            const TlPolygon *shape = &tile->shapes.items[s];
+            for (size_t e = 0; e < shape->count; e++) {
+                TlVec2 a = tl_polygon_edge_start(shape, e), b = tl_polygon_edge_end(shape, e);
+                if (!on_tile_edge(&outline, a, b))
+                    length += tl_distance(a, b);
+            }
+        }
+        tl_polygon_free(&outline);
+    }
+    return length;
+}
+
+int tl_layout_cross_count(const TlLayout *layout) { return (int)layout->cross_points.count; }
+
 /* ---- смещение сетки --------------------------------------------------------- */
 
 TlAffine tl_layout_world_to_local(TlSpace *space) { return world_to_local(space); }
@@ -641,7 +774,8 @@ void tl_layout_normalize_offsets(const TlTileSettings *tile, double *offset_x, d
 static TlRect first_tile(const TlTileSettings *tile)
 {
     TlPatternUnit unit;
-    return tl_pattern_unit(tile, &unit) ? unit.tiles[0].rect : (TlRect){0, 0, tile->tile_width, tile->tile_height};
+    return tl_pattern_unit(tile, &unit) ? unit.tiles[0].rect
+                                        : (TlRect){0, 0, tl_tile_laid_width(tile), tl_tile_laid_height(tile)};
 }
 
 static void corner_signs(TlLayoutCorner corner, double *sign_x, double *sign_y)

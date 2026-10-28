@@ -53,7 +53,7 @@ void tl_history_checkpoint(TlHistory *history, const TlProject *project, const c
         free(history->undo.items[0]);
         snapshot_stack_remove_at(&history->undo, 0);
     }
-    snapshot_stack_push(&history->undo, tl_project_to_string(project));
+    snapshot_stack_push(&history->undo, tl_project_snapshot(project));
     free_snapshots(&history->redo);
 }
 
@@ -62,10 +62,12 @@ static bool move_between(SnapshotStack *from, SnapshotStack *to, TlProject *proj
 {
     if (!from->count)
         return false;
-    snapshot_stack_push(to, tl_project_to_string(project));
+    snapshot_stack_push(to, tl_project_snapshot(project));
     char *snapshot = from->items[--from->count];
     char error[128];
+    TlUnderlay underlay = tl_underlay_take(&project->underlay); /* содержимое подложки — не в снимках */
     tl_project_from_string(project, snapshot, error, sizeof error);
+    tl_underlay_restore(&project->underlay, &underlay);
     free(snapshot);
     last_key[0] = '\0';
     return true;

@@ -34,6 +34,12 @@ TlTileSettings tl_tile_settings_factory(void)
         .grout_pack_kg = 2,
         .primer_l_per_m2 = 0.2,
         .primer_can_l = 10,
+        .crosses_per_pack = 200,
+        .waterproof_height = 200,
+        .waterproof_kg_per_m2 = 0.8,
+        .waterproof_layers = 2,
+        .waterproof_pack_kg = 15,
+        .profile_length = 2700,
     };
     return settings;
 }
@@ -66,6 +72,8 @@ static const TlTileField FIELDS[] = {
     FIELD("enabled", TL_FIELD_BOOL, enabled, false),
     FIELD("w", TL_FIELD_DOUBLE, tile_width, true),
     FIELD("h", TL_FIELD_DOUBLE, tile_height, true),
+    FIELD("real_w", TL_FIELD_DOUBLE, real_width, true),
+    FIELD("real_h", TL_FIELD_DOUBLE, real_height, true),
     FIELD("gap", TL_FIELD_DOUBLE, joint_width, true),
     FIELD("off_x", TL_FIELD_DOUBLE, offset_x, false),
     FIELD("off_y", TL_FIELD_DOUBLE, offset_y, false),
@@ -99,6 +107,24 @@ static const TlTileField FIELDS[] = {
     FIELD("price_grout", TL_FIELD_DOUBLE, price_grout_pack, true),
     FIELD("price_primer", TL_FIELD_DOUBLE, price_primer_can, true),
     FIELD("price_work", TL_FIELD_DOUBLE, price_work_m2, true),
+    FIELD("price_tile_unit", TL_FIELD_INT, price_tile_unit, true),
+    FIELD("tile_pack", TL_FIELD_INT, tile_pack, true),
+    FIELD("crosses", TL_FIELD_BOOL, use_crosses, true),
+    FIELD("crosses_pack", TL_FIELD_INT, crosses_per_pack, true),
+    FIELD("waterproof", TL_FIELD_BOOL, waterproof, false),
+    FIELD("waterproof_height", TL_FIELD_DOUBLE, waterproof_height, true),
+    FIELD("waterproof_rate", TL_FIELD_DOUBLE, waterproof_kg_per_m2, true),
+    FIELD("waterproof_layers", TL_FIELD_INT, waterproof_layers, true),
+    FIELD("waterproof_pack", TL_FIELD_DOUBLE, waterproof_pack_kg, true),
+    FIELD("threshold_profile", TL_FIELD_BOOL, threshold_profile, false),
+    FIELD("corner_height", TL_FIELD_DOUBLE, corner_profile_height, false),
+    FIELD("profile_length", TL_FIELD_DOUBLE, profile_length, true),
+    FIELD("price_cut", TL_FIELD_DOUBLE, price_cut_m, true),
+    FIELD("price_cross", TL_FIELD_DOUBLE, price_cross_pack, true),
+    FIELD("price_waterproof", TL_FIELD_DOUBLE, price_waterproof_pack, true),
+    FIELD("price_tape", TL_FIELD_DOUBLE, price_tape_m, true),
+    FIELD("price_threshold", TL_FIELD_DOUBLE, price_threshold, true),
+    FIELD("price_corner", TL_FIELD_DOUBLE, price_corner, true),
 };
 
 const TlTileField *tl_tile_settings_fields(size_t *count)
@@ -124,4 +150,11 @@ bool tl_tile_settings_equal(const TlTileSettings *a, const TlTileSettings *b)
             return false;
     }
     return true;
+}
+
+double tl_tile_laid_width(const TlTileSettings *tile) { return tile->real_width > 0 ? tile->real_width : tile->tile_width; }
+
+double tl_tile_laid_height(const TlTileSettings *tile)
+{
+    return tile->real_height > 0 ? tile->real_height : tile->tile_height;
 }

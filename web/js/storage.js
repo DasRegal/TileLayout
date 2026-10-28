@@ -24,15 +24,15 @@ export function writeDraft(text, name) {
   }
 }
 
-/** Выбор файла с компьютера → {name, text} или null. */
-export function pickFile() {
+/** Выбор файла с компьютера → {name, text} (raw — {name, file}) или null. */
+export function pickFile(accept = '.json,application/json', raw = false) {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,application/json';
+    input.accept = accept;
     input.addEventListener('change', async () => {
       const file = input.files[0];
-      resolve(file ? { name: file.name, text: await file.text() } : null);
+      resolve(file ? (raw ? { name: file.name, file } : { name: file.name, text: await file.text() }) : null);
     });
     input.addEventListener('cancel', () => resolve(null));
     input.click();
@@ -40,8 +40,8 @@ export function pickFile() {
 }
 
 /** Сохранить текст файлом name — загрузкой браузера. */
-export function downloadFile(text, name) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+export function downloadFile(text, name, type = 'application/json') {
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const link = document.createElement('a');
   link.href = url;
   link.download = name;

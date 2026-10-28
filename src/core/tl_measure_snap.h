@@ -35,8 +35,12 @@ typedef enum TlSnapTargets {
     TL_SNAP_TO_WALL_SURFACES = 1 << 0, /* углы, середины и края граней стен, перегородок, проёмов */
     TL_SNAP_TO_WALL_AXES = 1 << 1,     /* оси стен и перегородок — середина толщины */
     TL_SNAP_TO_TILE_JOINTS = 1 << 2,   /* швы плитки и их пересечения */
+    TL_SNAP_TO_LINES = 1 << 3,         /* деформационные швы и линии раздела: концы и сами линии */
     TL_SNAP_TO_ALL = TL_SNAP_TO_WALL_SURFACES | TL_SNAP_TO_WALL_AXES | TL_SNAP_TO_TILE_JOINTS
 } TlSnapTargets;
+
+/* Линия, к которой не притягивать (её же конец тянут); NULL — ко всем. */
+void tl_measure_snap_skip_line(const struct TlExpansionJoint *line);
 
 /* Ближайшая подходящая точка не дальше radius (мм); false — притягивать некуда. */
 bool tl_measure_snap(TlProject *project, TlVec2 probe, double radius, TlSnapTargets targets,

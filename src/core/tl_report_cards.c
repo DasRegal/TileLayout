@@ -31,7 +31,7 @@ static bool take_once(DoneKeyList *done, const void *owner, size_t layout, TlCel
 static TlCutPart make_part(const char *room, int number, const TlTile *tile)
 {
     TlCutPart part = {.number = number, .shapes = tl_polygon_list_deep_copy(&tile->shapes),
-                      .drills = tl_circle_list_copy(&tile->drills)};
+                      .drills = tl_circle_list_copy(&tile->drills), .miters = tl_polygon_list_deep_copy(&tile->miters)};
     if (part.shapes.count == 0) /* целая плитка — контур во всю плитку */
         tl_polygon_list_push(&part.shapes, tile->outline.count ? tl_polygon_copy(&tile->outline)
                                                                : tl_polygon_from_rect((TlRect){0, 0, tl_rect_width(tile->rect),
@@ -109,9 +109,34 @@ static TlLayoutGroup *group_of(TlLayoutGroupList *groups, const TlSpace *space, 
     return NULL;
 }
 
-/* «Кухня» или «Кухня · бордюр» — подпись части на карточке. */
+/* «Кухня», «Кухня · бордюр», «Кухня · стена 2» или «Кухня · стена 2, фриз» — подпись части на карточке. */
 static void layout_name(TlSpace *space, size_t layout, char *text, size_t size)
 {
+    size_t wall;
+    TlWallBand band;
+    int step;
+    bool tread;
+    if (tl_space_layout_wall(space, layout, &wall, &band) &&
+        tl_space_wall_layout_stairs(space, layout - tl_space_floor_layout_count(space), &step, &tread) != SIZE_MAX) {
+        snprintf(text, size, "%s · лестница, ступень %d, %s", space->name, step + 1, tread ? "проступь" : "подступенок");
+        return;
+    }
+    if (tl_space_layout_wall(space, layout, &wall, &band)) {
+        size_t reveal = tl_space_wall_layout_reveal(space, layout - tl_space_floor_layout_count(space));
+        const TlWallHole *hole = reveal == SIZE_MAX ? NULL : tl_space_wall_hole_at(space, reveal);
+        if (hole)
+            snprintf(text, size, "%s · стена %zu, откос", space->name, wall + 1);
+        else if (band == TL_WALL_MAIN)
+            snprintf(text, size, "%s · стена %zu", space->name, wall + 1);
+        else
+            snprintf(text, size, "%s · стена %zu, %s", space->name, wall + 1, tl_wall_band_name(band));
+        return;
+    }
+    size_t area = tl_space_layout_area(space, layout);
+    if (area != SIZE_MAX) {
+        snprintf(text, size, "%s · %s", space->name, space->areas.items[area].name);
+        return;
+    }
     TlZoneKind zone = tl_space_layout_zone(space, layout);
     if (zone == TL_ZONE_COUNT) {
         snprintf(text, size, "%s", space->name);
@@ -248,7 +273,8 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
     done_key_list_free(&done);
     tl_report_free_groups(&groups);
     tl_summary_free(&summary);
-    qsort(cards.items, cards.count, sizeof(TlCutCard), compare_cards);
+    if (cards.count > 1) /* без подрезок массива нет */
+        qsort(cards.items, cards.count, sizeof(TlCutCard), compare_cards);
     return cards;
 }
 
@@ -258,6 +284,7 @@ void tl_cut_card_list_free_all(TlCutCardList *cards)
         for (size_t p = 0; p < cards->items[i].parts.count; p++) {
             tl_polygon_list_free_all(&cards->items[i].parts.items[p].shapes);
             tl_circle_list_free(&cards->items[i].parts.items[p].drills);
+            tl_polygon_list_free_all(&cards->items[i].parts.items[p].miters);
         }
         tl_cut_part_list_free(&cards->items[i].parts);
         tl_polygon_free(&cards->items[i].outline);

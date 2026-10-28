@@ -141,7 +141,9 @@ static void add_tile_types(AppSheet *sheet, const TlSummary *summary, bool mono)
         char *area = g_strdup_printf("%.2f", type->area / 1e6);
         char *count = g_strdup_printf("%d", type->count);
         char *reserve = g_strdup_printf("%g%%", tile->reserve_percent);
-        char *buy = g_strdup_printf("<b>%d</b>", type->to_buy);
+        char *buy = type->packs > 0 ? g_strdup_printf("<b>%d</b>\n<small>%d уп. по %d</small>", type->to_buy, type->packs,
+                                                      tile->tile_pack)
+                                    : g_strdup_printf("<b>%d</b>", type->to_buy);
         char *buy_area = g_strdup_printf("<b>%.2f</b>", type->to_buy * tl_tile_spec_area_m2(&type->spec));
         add_row(sheet, 1, TYPE_COLUMNS, TYPE_ALIGN, 8, false,
                 cells_from(number, tile_text, rooms, area, count, reserve, buy, buy_area, NULL));
@@ -172,12 +174,23 @@ static void append_packs(GString *text, const char *title, double total, int dec
 
 static void add_materials(AppSheet *sheet, const TlSummary *summary)
 {
-    add_text(sheet, "<b>Клей, СВП, затирка, грунт</b>", 16);
+    add_text(sheet, "<b>Клей, СВП, затирка, грунт и прочее</b>", 16);
     GString *text = g_string_new(NULL);
     append_packs(text, "Клей", summary->glue_total_kg, 1, "кг", &summary->glue, "мешк. по %g кг");
     append_packs(text, "СВП", summary->clip_total, 0, "шт.", &summary->clips, "уп. по %g шт.");
     append_packs(text, "Затирка", summary->grout_total_kg, 2, "кг", &summary->grout, "уп. по %g кг");
     append_packs(text, "Грунт", summary->primer_total_l, 1, "л", &summary->primer, "кан. по %g л");
+    append_packs(text, "Крестики", summary->cross_total, 0, "шт.", &summary->crosses, "уп. по %g шт.");
+    append_packs(text, "Гидроизоляция", summary->waterproof_total_kg, 1, "кг", &summary->waterproof, "уп. по %g кг");
+    if (summary->tape_total_m > 0)
+        g_string_append_printf(text, "%sЛента гидроизоляции: <b>%.1f м</b>", text->len ? "\n" : "", summary->tape_total_m);
+    append_packs(text, "Пороги-профили", summary->threshold_total_mm / 1000, 2, "м", &summary->thresholds,
+                 "планк. по %g мм");
+    append_packs(text, "Уголки на наружные углы", summary->corner_total_mm / 1000, 2, "м", &summary->corners,
+                 "планк. по %g мм");
+    if (summary->cut_total_mm > 0)
+        g_string_append_printf(text, "%sПодрезка: <b>%.1f пог. м</b> резов", text->len ? "\n" : "",
+                               summary->cut_total_mm / 1000);
     add_text(sheet, text->str, 13);
     g_string_free(text, TRUE);
 }
@@ -294,6 +307,8 @@ AppSheet *app_sheet_new_calculation(TlProject *project, const char *title, bool 
                            date, summary.room_area / 1e6, summary.tiled_area / 1e6);
     if (summary.floor_area - summary.tiled_area > 1000)
         g_string_append_printf(intro, ", без плитки: %.2f м²", (summary.floor_area - summary.tiled_area) / 1e6);
+    if (summary.wall_area > 0)
+        g_string_append_printf(intro, "; стены: <b>%.2f м²</b>", summary.wall_area / 1e6);
     add_text(sheet, intro->str, 13);
     g_string_free(intro, TRUE);
 
@@ -304,6 +319,164 @@ AppSheet *app_sheet_new_calculation(TlProject *project, const char *title, bool 
     add_text(sheet, "<small>«Нужно» — плиток на укладку с учётом общих плиток на стыке комнат с общей раскладкой "
                     "и использования остатков подрезок. В таблице по комнатам — плитки каждой комнаты отдельно.</small>",
              12);
+    tl_summary_free(&summary);
+    return sheet;
+}
+
+/* ---- карта раскроя ---------------------------------------------------------- */
+
+static const double STACK_COLUMNS[] = {0.22, 0.12, 0.66};
+static const int STACK_ALIGN[] = {-1, 1, -1};
+static const double PAIR_COLUMNS[] = {0.34, 0.66};
+static const int PAIR_ALIGN[] = {-1, -1};
+
+/* «3, 7, 12, 15» — номера на плане. */
+static char *numbers_text(const TlIntArray *numbers)
+{
+    GString *text = g_string_new(NULL);
+    for (size_t i = 0; i < numbers->count; i++)
+        g_string_append_printf(text, "%s%d", i ? ", " : "", numbers->items[i]);
+    return g_string_free(text, FALSE);
+}
+
+AppSheet *app_sheet_new_cut_map(TlProject *project, const char *title, bool mono, double width)
+{
+    AppSheet *sheet = g_new0(AppSheet, 1);
+    sheet->blocks = g_ptr_array_new_with_free_func(free_block);
+    sheet->width = width;
+    sheet->mono = mono;
+    TlSummary summary = tl_report_summarize(project);
+    TlCutMapTypeList map = tl_report_cut_map(&summary);
+    char *heading = g_markup_printf_escaped("<b>Карта раскроя: %s</b>", title);
+    add_text(sheet, heading, 20);
+    g_free(heading);
+    add_text(sheet, "Номера — как на плане с номерами и в чертежах подрезок. Одинаковые куски режьте стопкой: "
+                    "целые плитки — одним размером за раз.", 13);
+    if (map.count == 0)
+        add_text(sheet, "Подрезок нет — вся плитка целая.", 13);
+    for (size_t t = 0; t < map.count; t++) {
+        const TlCutMapType *entry = &map.items[t];
+        char name[64];
+        tl_tile_spec_name(&entry->type->spec, name, sizeof name);
+        char *swatch_text = swatch(entry->type->spec.color, mono);
+        char *title_text = g_strdup_printf("%s <b>Плитка %s</b>", swatch_text, name);
+        add_text(sheet, title_text, 15);
+        g_free(swatch_text);
+        g_free(title_text);
+        int table = (int)t * 2 + 1;
+        if (entry->stacks.count) {
+            add_row(sheet, table, STACK_COLUMNS, STACK_ALIGN, 3, true, cells_from("<b>Кусок, мм</b>", "<b>Плиток</b>", "<b>Номера на плане</b>", NULL));
+            for (size_t k = 0; k < entry->stacks.count; k++) {
+                const TlCutStack *stack = &entry->stacks.items[k];
+                char size[48], count[16];
+                g_snprintf(size, sizeof size, "%.0f × %.0f", stack->width, stack->height);
+                g_snprintf(count, sizeof count, "%zu", stack->numbers.count);
+                char *numbers = numbers_text(&stack->numbers);
+                add_row(sheet, table, STACK_COLUMNS, STACK_ALIGN, 3, false, cells_from(size, count, numbers, NULL));
+                g_free(numbers);
+            }
+        }
+        if (entry->pairs.count) {
+            add_text(sheet, "<b>Две подрезки из одной плитки</b> (полосы — по ширине, остальное — в отход)", 13);
+            add_row(sheet, table + 1, PAIR_COLUMNS, PAIR_ALIGN, 2, true, cells_from("<b>Куски</b>", "<b>Полосы, мм</b>", NULL));
+            for (size_t k = 0; k < entry->pairs.count; k++) {
+                const TlCutMapPair *pair = &entry->pairs.items[k];
+                char pieces[48], sizes[64];
+                g_snprintf(pieces, sizeof pieces, "№%d + №%d", pair->first, pair->second);
+                g_snprintf(sizes, sizeof sizes, "%.0f + %.0f", pair->first_size, pair->second_size);
+                add_row(sheet, table + 1, PAIR_COLUMNS, PAIR_ALIGN, 2, false, cells_from(pieces, sizes, NULL));
+            }
+        }
+    }
+    tl_cut_map_free(&map);
+    tl_summary_free(&summary);
+    return sheet;
+}
+
+/* ---- смета для заказчика ------------------------------------------------------ */
+
+static const double CUSTOMER_COLUMNS[] = {0.06, 0.48, 0.16, 0.13, 0.17};
+static const int CUSTOMER_ALIGN[] = {-1, -1, 1, 1, 1};
+
+static void add_customer_section(AppSheet *sheet, const TlEstimate *estimate, TlEstimateGroup group, const char *title,
+                                 int table_id, bool mono)
+{
+    bool any = false;
+    for (size_t i = 0; i < estimate->lines.count; i++)
+        any = any || estimate->lines.items[i].group == group;
+    if (!any)
+        return;
+    add_text(sheet, title, 16);
+    add_row(sheet, table_id, CUSTOMER_COLUMNS, CUSTOMER_ALIGN, 5, true,
+            cells_from("<b>№</b>", "<b>Наименование</b>", "<b>Количество</b>", "<b>Цена, ₽</b>", "<b>Сумма</b>", NULL));
+    int number = 0;
+    char money[64];
+    for (size_t i = 0; i < estimate->lines.count; i++) {
+        const TlEstimateLine *line = &estimate->lines.items[i];
+        if (line->group != group)
+            continue;
+        char *index = g_strdup_printf("%d", ++number);
+        char *mark = line->color[0] ? swatch(line->color, mono) : g_strdup("");
+        char *name = escaped(line->name);
+        char *title_cell = g_strdup_printf("%s%s", mark, name);
+        bool whole = fabs(line->quantity - round(line->quantity)) < 1e-9;
+        char *quantity = g_strdup_printf("%.*f %s", whole ? 0 : 2, line->quantity, line->unit);
+        g_strdelimit(quantity, ".", ','); /* по-русски — запятая */
+        char *price = g_strdup_printf("%g", line->price);
+        g_strdelimit(price, ".", ',');
+        tl_format_rubles(line->cost, money, sizeof money);
+        add_row(sheet, table_id, CUSTOMER_COLUMNS, CUSTOMER_ALIGN, 5, false,
+                cells_from(index, title_cell, quantity, price, money, NULL));
+        g_free(index);
+        g_free(mark);
+        g_free(name);
+        g_free(title_cell);
+        g_free(quantity);
+        g_free(price);
+    }
+    tl_format_rubles(group == TL_ESTIMATE_WORK ? estimate->work : estimate->materials, money, sizeof money);
+    char *total = g_strdup_printf("<b>%s: %s</b>", group == TL_ESTIMATE_WORK ? "Итого работы" : "Итого материалы", money);
+    add_text(sheet, total, 13);
+    g_free(total);
+}
+
+AppSheet *app_sheet_new_estimate(TlProject *project, const char *title, bool mono, double width)
+{
+    AppSheet *sheet = g_new0(AppSheet, 1);
+    sheet->blocks = g_ptr_array_new_with_free_func(free_block);
+    sheet->width = width;
+    sheet->mono = mono;
+    TlSummary summary = tl_report_summarize(project);
+    TlEstimate estimate = tl_estimate_from_summary(&summary);
+
+    char *heading = g_markup_printf_escaped("<b>Смета: %s</b>", title);
+    add_text(sheet, heading, 20);
+    g_free(heading);
+    char date[32];
+    time_t now = time(NULL);
+    strftime(date, sizeof date, "%d.%m.%Y", localtime(&now));
+    char *intro = summary.wall_area > 0
+                      ? g_strdup_printf("Дата: %s\nУкладка плитки: пол <b>%.2f м²</b>, стены <b>%.2f м²</b> (площадь комнат %.2f м²)",
+                                        date, summary.tiled_area / 1e6, summary.wall_area / 1e6, summary.room_area / 1e6)
+                      : g_strdup_printf("Дата: %s\nУкладка плитки: <b>%.2f м²</b> (площадь комнат %.2f м²)", date,
+                                        summary.tiled_area / 1e6, summary.room_area / 1e6);
+    add_text(sheet, intro, 13);
+    g_free(intro);
+    if (estimate.lines.count == 0) {
+        add_text(sheet, "Цены не заданы: задайте их в разделе «Цены для сметы» у комнат.", 13);
+    } else {
+        add_customer_section(sheet, &estimate, TL_ESTIMATE_MATERIALS, "<b>Материалы</b>", 4, mono);
+        add_customer_section(sheet, &estimate, TL_ESTIMATE_WORK, "<b>Работы</b>", 5, mono);
+        char money[64];
+        tl_format_rubles(estimate.total, money, sizeof money);
+        char *total = g_strdup_printf("<big><b>Всего к оплате: %s</b></big>", money);
+        add_text(sheet, total, 15);
+        g_free(total);
+        add_text(sheet, "<small>Количество плитки — с запасом на бой и подрезку; материалы — целыми упаковками.</small>",
+                 12);
+    }
+    add_text(sheet, "\n\nИсполнитель: ______________________        Заказчик: ______________________", 13);
+    tl_estimate_free(&estimate);
     tl_summary_free(&summary);
     return sheet;
 }

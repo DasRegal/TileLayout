@@ -81,6 +81,23 @@ static void offer_wall_surfaces(SnapSearch *search, TlProject *project)
     }
 }
 
+static const TlExpansionJoint *skipped_line;
+
+void tl_measure_snap_skip_line(const TlExpansionJoint *line) { skipped_line = line; }
+
+/* Деформационные швы и линии раздела: концы — точки, сами линии — линии. */
+static void offer_lines(SnapSearch *search, TlProject *project)
+{
+    for (size_t i = 0; i < project->expansion_joints.count; i++) {
+        const TlExpansionJoint *line = project->expansion_joints.items[i];
+        if (line == skipped_line)
+            continue;
+        offer(search, line->start, TL_SNAP_CORNER);
+        offer(search, line->end, TL_SNAP_CORNER);
+        offer_segment(search, line->start, line->end, TL_SNAP_WALL_EDGE);
+    }
+}
+
 /* Оси наружных стен и перегородок — середина их толщины. */
 static void offer_wall_axes(SnapSearch *search, TlProject *project)
 {
@@ -143,7 +160,7 @@ static void offer_tiles(SnapSearch *search, TlProject *project)
         TlSpace *space = project->spaces.items[i];
         if (!tl_space_effective_tile(space)->enabled)
             continue;
-        for (size_t l = 0; l < tl_space_layout_count(space); l++) { /* основной пол и зоны */
+        for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) { /* основной пол и зоны */
             const TlTileSettings *tile = tl_space_layout_tile(space, l);
             TlLayout *layout = tl_space_layout_at(space, l);
             if (!layout || layout->too_many)
@@ -166,6 +183,8 @@ bool tl_measure_snap(TlProject *project, TlVec2 probe, double radius, TlSnapTarg
         offer_wall_axes(&search, project);
     if (targets & TL_SNAP_TO_TILE_JOINTS)
         offer_tiles(&search, project);
+    if (targets & TL_SNAP_TO_LINES)
+        offer_lines(&search, project);
     *result = search.best;
     return search.best.kind != TL_SNAP_NONE;
 }

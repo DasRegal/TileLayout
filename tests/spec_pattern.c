@@ -254,6 +254,52 @@ void spec_pattern(void)
             tl_summary_free(&summary);
             tl_project_free(project);
         }
+        IT("версаль на клетке 600×300 (не квадрат): пять форматов, пол и облицовка стен")
+        {
+            TlProject *project = room_project(4000, 3000);
+            TlSpace *space = only_space(project);
+            set_pattern(&space->tile, "versailles");
+            space->tile.tile_width = 600;
+            space->tile.tile_height = 300;
+            TlPatternUnit unit;
+            EXPECT(tl_pattern_unit(&space->tile, &unit));
+            EXPECT_INT(unit.spec_count, 5); /* 1800×600, 600×600, 1200×600, 1200×300, 600×300 */
+            space->walls.enabled = true;
+            for (int band = 0; band < TL_WALL_BAND_COUNT; band++) {
+                set_pattern(&space->walls.bands[band].tile, "versailles");
+                space->walls.bands[band].enabled = true;
+            }
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT(type_named(&summary, "1800×600 мм") != NULL);
+            EXPECT(summary.wall_area > 0);
+            tl_summary_free(&summary);
+            TlCutCardList cards = tl_report_cut_cards(project);
+            EXPECT(cards.count > 0);
+            tl_cut_card_list_free_all(&cards);
+            tl_project_free(project);
+        }
+        IT("калибр: кладут по фактическому 598×298 (шаг со швом 2 — ровно 600×300), покупают 600×300")
+        {
+            TlProject *project = room_project(6000, 3000);
+            TlTileSettings *tile = &only_space(project)->tile;
+            set_pattern(tile, "straight");
+            tile->tile_width = 600;
+            tile->tile_height = 300;
+            tile->joint_width = 2;
+            tile->row_shift = 0;
+            tile->offset_x = tile->offset_y = 0;
+            tile->real_width = 598;
+            tile->real_height = 298;
+            TlLayout *layout = tl_space_layout(only_space(project));
+            const TlTile *first = &layout->tiles.items[0];
+            EXPECT(fabs(tl_rect_width(first->rect) - 598) < 1e-9 && fabs(tl_rect_height(first->rect) - 298) < 1e-9);
+            EXPECT_INT(layout->whole_count, 100); /* 10 × 10 целых: 6000 / 600, 3000 / 300 */
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT_INT(summary.types.count, 1);
+            EXPECT(type_named(&summary, "600×300 мм") != NULL);
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
         IT("смещение приводится к одному модулю — раскладка та же")
         {
             TlProject *project = room_project(2500, 1800);
