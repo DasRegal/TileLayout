@@ -4,6 +4,12 @@
 версии — [семантические](https://semver.org/lang/ru/): новые возможности поднимают вторую цифру,
 исправления — третью.
 
+## [1.15.1] — 2026-10-28
+
+### Исправлено
+
+- Сайт на телефоне: пункты меню «Экспорт» (картинка, DXF, ссылка) налезали друг на друга.
+
 ## [1.15] — 2026-10-28
 
 ### Добавлено
@@ -455,6 +461,7 @@
 областей; раскладка и расчёт плитки, клея и СВП; печать и PDF с чертежами подрезок; переносная
 сборка для Windows x64.
 
+[1.15.1]: https://github.com/DasRegal/TileLayout/compare/v1.15...v1.15.1
 [1.15]: https://github.com/DasRegal/TileLayout/compare/v1.14...v1.15
 [1.14]: https://github.com/DasRegal/TileLayout/compare/v1.13...v1.14
 [1.13]: https://github.com/DasRegal/TileLayout/compare/v1.12...v1.13
