@@ -199,13 +199,20 @@ function drawFloor(ctx, space, view, px, options) {
   polygonPath(ctx, space.outline, true);
   for (const hole of space.holes) polygonPath(ctx, hole, false);
   const layout = space.layout;
-  if (!layout || !options.layers.tiles) {
+  if (!options.layers.tiles || (!layout && !space.zones.length)) {
     ctx.fillStyle = '#ffffff';
     ctx.fill('evenodd');
     ctx.restore();
     return;
   }
   ctx.clip('evenodd');
+  if (!layout) { // без плитки на полу — участки со своей плиткой
+    ctx.fillStyle = '#ffffff';
+    ctx.fill('evenodd');
+    for (const zone of space.zones) drawLayout(ctx, zone.tile, zone, view, px, options);
+    ctx.restore();
+    return;
+  }
   if (layout.too_many) {
     ctx.fillStyle = tile.color;
     ctx.fill('evenodd');
@@ -217,7 +224,7 @@ function drawFloor(ctx, space, view, px, options) {
     ctx.fill('evenodd');
   }
   drawLayout(ctx, tile, layout, view, px, options);
-  for (const zone of space.zones) if (!zone.too_many) drawLayout(ctx, zone.tile, zone, view, px, options); // бордюр, ковёр
+  for (const zone of space.zones) drawLayout(ctx, zone.tile, zone, view, px, options); // бордюр, ковёр
   for (const panno of space.pannos || []) drawPanno(ctx, panno, view, px, options);
   ctx.restore();
 }

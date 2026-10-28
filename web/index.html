@@ -42,6 +42,7 @@
           <button type="button" data-action="png">Картинка плана PNG</button>
           <button type="button" data-action="dxf-plan">План в DXF</button>
           <button type="button" data-action="dxf-cuts">Подрезки в DXF (для станка)</button>
+          <button type="button" data-action="share">Ссылка на проект…</button>
         </div>
       </details>
       <button type="button" data-action="print" data-icon="print" title="Печать и PDF (Ctrl+P)">Печать / PDF</button>
@@ -82,6 +83,7 @@
       </div>
       <button type="button" class="thanks" data-action="thanks" data-icon="heart">Сказать спасибо автору</button>
       <p id="status" class="status" role="status">Загрузка…</p>
+      <button type="button" id="restore-draft" class="restore-draft" hidden>Вернуть мой проект</button>
       <div class="zoom" aria-label="Масштаб">
         <button type="button" data-action="zoom-out" data-icon="minus" class="icon-only" title="Отдалить" aria-label="Отдалить"></button>
         <button type="button" data-action="fit" data-icon="fit" class="icon-only" title="Весь план в окне" aria-label="Весь план в окне"></button>
@@ -263,6 +265,16 @@
       <label class="row"><span class="caption">Масштаб плана</span>
         <span class="control"><select id="print-scale"></select></span></label>
       <footer><span class="spacer"></span><button value="cancel">Отмена</button><button value="ok" class="primary">Печать…</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="share-dialog" class="small-dialog share-dialog">
+    <form method="dialog">
+      <h2>Ссылка на проект</h2>
+      <p class="hint">Проект целиком — в самой ссылке, на сервер он не попадает. Отправьте её: по ней проект откроется на сайте. Фото-подложка в ссылку не входит.</p>
+      <textarea id="share-link" readonly rows="4" aria-label="Ссылка на проект"></textarea>
+      <p id="share-note" class="hint"></p>
+      <footer><span class="spacer"></span><button type="button" id="share-copy">Скопировать</button><button value="ok" class="primary">Готово</button></footer>
     </form>
   </dialog>
 

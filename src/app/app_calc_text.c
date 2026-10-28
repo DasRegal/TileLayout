@@ -133,8 +133,15 @@ static void append_walls(GString *text, TlSpace *space)
 static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
-    if (!tile->enabled)
+    if (!tile->enabled) { /* пол без плитки: облицовка стен (участки со своей плиткой — в расчёте по видам) */
+        if (!space->walls.enabled)
+            return;
+        char *name = g_markup_escape_text(space->name, -1);
+        g_string_append_printf(text, "<b>%s</b> — пол без плитки\n", name);
+        g_free(name);
+        append_walls(text, space);
         return;
+    }
     TlLayout *layout = tl_space_layout(space);
     if (layout->too_many) {
         g_string_append(text, "<b>Слишком мелкая плитка для такой комнаты</b>\n");

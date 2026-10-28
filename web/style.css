@@ -90,6 +90,16 @@ button[data-icon], summary[data-icon] { display: inline-flex; align-items: cente
 .icon { flex: none; }
 button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: center; }
 .spacer { flex: 1; }
+.share-dialog { width: min(520px, calc(100vw - 32px)); }
+.share-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  font: 12px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  word-break: break-all;
+  resize: vertical;
+}
+.restore-draft { position: absolute; left: 16px; bottom: 56px; z-index: 3; }
 
 /* ---- инструменты слева ---- */
 

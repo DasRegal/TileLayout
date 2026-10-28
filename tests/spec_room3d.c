@@ -89,6 +89,26 @@ void spec_room3d(void)
             tl_paint_list_free_all(&paints);
             tl_project_free(project);
         }
+        IT("плитка, разрезанная деформационным швом, — обоими кусками")
+        {
+            TlProject *project = room_project(4000, 3000);
+            TlSpace *space = project->spaces.items[0];
+            tl_project_add_expansion_joint(project, tl_expansion_joint_new(tl_vec2(1950, 0), tl_vec2(1950, 3000), 8));
+            tl_project_update_spaces(project);
+            TlCamera camera = tl_room3d_default_camera(project, space, 800, 600);
+            camera.pitch = 89; /* сверху — пол целиком */
+            TlPaintList paints = tl_room3d_paint(project, space, &camera, 800, 600);
+            int tiles = 0, split = 0;
+            for (size_t i = 0; i < paints.count; i++)
+                if (paints.items[i].stroke[0] && paints.items[i].stroke_width < 1) {
+                    tiles++;
+                    split += paints.items[i].contours.count == 2;
+                }
+            EXPECT_INT(tiles, tl_space_tile_total(space));
+            EXPECT(split > 0);
+            tl_paint_list_free_all(&paints);
+            tl_project_free(project);
+        }
         IT("окно: в стене дыра, видны откосы и стекло; плитку, закрытую проёмом, не рисуют")
         {
             TlProject *project = room_project(4000, 3000);

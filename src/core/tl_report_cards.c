@@ -268,7 +268,8 @@ TlCutCardList tl_report_cut_cards(TlProject *project)
     for (size_t r = 0; r < summary.rooms.count; r++) {
         const TlRoomSummary *room = &summary.rooms.items[r];
         for (size_t l = 0; room->tiled && l < tl_space_layout_count(room->space); l++)
-            add_layout_cards(&cards, &summary, &groups, &done, room->space, l);
+            if (tl_space_layout_counted(room->space, l))
+                add_layout_cards(&cards, &summary, &groups, &done, room->space, l);
     }
     done_key_list_free(&done);
     tl_report_free_groups(&groups);

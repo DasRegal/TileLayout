@@ -13,6 +13,7 @@
 #include "app_icons.h"
 #include "app_panel.h"
 #include "app_print_dialog.h"
+#include "app_share.h"
 #include "app_widgets.h"
 #include "tl_dxf.h"
 
@@ -384,6 +385,87 @@ static void export_dxf(AppWindow *self, bool cuts)
 static void on_export_dxf_plan(GtkMenuItem *item, AppWindow *self) { export_dxf(self, false); }
 static void on_export_dxf_cuts(GtkMenuItem *item, AppWindow *self) { export_dxf(self, true); }
 
+/* Ссылка на проект: в буфер обмена и в окошко (её можно выделить и скопировать). */
+static void on_share_link(GtkMenuItem *item, AppWindow *self)
+{
+    char *link = app_share_link(self->document->project);
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), link, -1);
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Ссылка на проект", GTK_WINDOW(self->window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "Готово",
+                                                    GTK_RESPONSE_OK, NULL);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 520, -1);
+    GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+    gtk_box_set_spacing(GTK_BOX(box), 8);
+    char *note = g_strdup_printf("Ссылка скопирована (%zu знаков). Проект целиком — в самой ссылке, на сервер он "
+                                 "не попадает; по ней он откроется на сайте или здесь — «Файл → Открыть ссылку». "
+                                 "Фото-подложка в ссылку не входит.", strlen(link));
+    GtkWidget *label = gtk_label_new(note);
+    g_free(note);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 60);
+    gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 0);
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_size_request(scrolled, -1, 110);
+    GtkWidget *view = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_CHAR);
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(view), FALSE);
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(view)), link, -1);
+    gtk_container_add(GTK_CONTAINER(scrolled), view);
+    gtk_box_pack_start(GTK_BOX(box), scrolled, TRUE, TRUE, 0);
+    gtk_widget_show_all(dialog);
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    app_document_status(self->document, "%s", "Ссылка на проект скопирована.");
+    g_free(link);
+}
+
+/* Открыть проект из ссылки (вставить в окошко; из буфера обмена — сразу). */
+static void on_open_link(GtkMenuItem *item, AppWindow *self)
+{
+    if (!confirm_discard(self))
+        return;
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Открыть ссылку на проект", GTK_WINDOW(self->window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "Отмена",
+                                                    GTK_RESPONSE_CANCEL, "Открыть", GTK_RESPONSE_OK, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 520, -1);
+    GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+    gtk_box_set_spacing(GTK_BOX(box), 8);
+    GtkWidget *label = gtk_label_new("Вставьте ссылку на проект (с сайта или из программы):");
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 0);
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), APP_SHARE_SITE "#p=…");
+    char *clipboard = gtk_clipboard_wait_for_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD));
+    if (clipboard && strstr(clipboard, "#p="))
+        gtk_entry_set_text(GTK_ENTRY(entry), clipboard);
+    g_free(clipboard);
+    gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+    char *link = gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_OK ? g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)))
+                                                                      : NULL;
+    gtk_widget_destroy(dialog);
+    if (!link)
+        return;
+    char *error = NULL;
+    TlProject *project = app_share_open(link, &error);
+    g_free(link);
+    if (!project) {
+        char *text = g_strdup_printf("Не удалось открыть ссылку:\n%s", error);
+        message(self, GTK_MESSAGE_ERROR, text);
+        g_free(text);
+        g_free(error);
+        return;
+    }
+    app_document_reset(self->document, project, NULL);
+    app_canvas_fit(self->canvas);
+    app_document_status(self->document, "%s", "Открыт проект по ссылке — сохраните его файлом, чтобы не потерять.");
+}
+
 static void open_print_dialog(void *data)
 {
     AppWindow *self = data;
@@ -704,6 +786,8 @@ static GtkWidget *build_menu(AppWindow *self)
     separator(file);
     menu_item(self, file, "Печать / PDF…", "<Control>p", G_CALLBACK(on_print));
     menu_item(self, file, "Экспорт в PNG…", "<Control>e", G_CALLBACK(on_export_png));
+    menu_item(self, file, "Ссылка на проект…", NULL, G_CALLBACK(on_share_link));
+    menu_item(self, file, "Открыть ссылку на проект…", NULL, G_CALLBACK(on_open_link));
     menu_item(self, file, "План в DXF…", NULL, G_CALLBACK(on_export_dxf_plan));
     menu_item(self, file, "Подрезки в DXF (для станка)…", NULL, G_CALLBACK(on_export_dxf_cuts));
     separator(file);

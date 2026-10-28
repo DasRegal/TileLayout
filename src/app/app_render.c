@@ -282,7 +282,7 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
     const TlTileSettings *tile = tl_space_effective_tile(space);
     cairo_save(cr);
     app_path_polygon_with_holes(cr, view, &space->outline, &space->holes);
-    if (!options->show_tiles || !tile->enabled) {
+    if (!options->show_tiles) {
         app_set_fill_color(cr, app_color_hex("#ffffff"));
         cairo_fill(cr);
         cairo_restore(cr);
@@ -290,26 +290,26 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
     }
     cairo_clip_preserve(cr);
     TlLayout *layout = tl_space_layout(space);
-    if (layout->too_many) {
+    if (tile->enabled && layout->too_many) {
         app_set_fill_color(cr, app_color_hex(tile->color));
         cairo_fill(cr);
         cairo_restore(cr);
         return;
     }
-    if (tile->wall_gap > 0) {
-        app_set_fill_color(cr, app_color_hex(COLOR_GAP));
+    if (!tile->enabled || tile->wall_gap > 0) { /* без плитки на полу — белый, участки со своей плиткой — поверх */
+        app_set_fill_color(cr, app_color_hex(tile->enabled ? COLOR_GAP : "#ffffff"));
         cairo_fill(cr);
     }
     cairo_new_path(cr);
     for (size_t i = 0; i < tl_space_floor_layout_count(space); i++) { /* основной пол, затем зоны */
         TlLayout *part = tl_space_layout_at(space, i);
-        if (part->too_many)
+        if (!tl_space_layout_counted(space, i))
             continue;
         cairo_save(cr);
         app_render_tiles(cr, view, options, tl_space_layout_tile(space, i), part);
         cairo_restore(cr);
     }
-    for (size_t i = 0; i < space->pannos.count; i++) /* панно на полу */
+    for (size_t i = 0; tile->enabled && i < space->pannos.count; i++) /* панно на полу */
         if (space->pannos.items[i].wall == TL_PANNO_FLOOR)
             app_render_panno(cr, view, options, space, i, NULL);
     cairo_restore(cr);
@@ -537,12 +537,10 @@ static void render_tile_numbers(cairo_t *cr, const AppView *view, const AppRende
                           app_color_rgba(255, 255, 255, options->printing ? 1.0 : 0.67)};
     for (size_t s = 0; s < project->spaces.count; s++) {
         TlSpace *space = project->spaces.items[s];
-        if (!tl_space_effective_tile(space)->enabled)
-            continue;
         for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) {
             const TlTileSettings *tile = tl_space_layout_tile(space, l);
             TlLayout *layout = tl_space_layout_at(space, l);
-            if (layout->too_many)
+            if (!tl_space_layout_counted(space, l))
                 continue;
             if (!options->printing && fmin(tile->tile_width, tile->tile_height) * view->scale < 18)
                 continue;
@@ -674,12 +672,10 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
     const char *lines[4] = {space->name, area};
     size_t count = 2;
     snprintf(area, sizeof area, "%.2f м²", tl_space_room_area(space) / 1e6);
-    const TlTileSettings *tile = tl_space_effective_tile(space);
-    if (tile->enabled) {
-        if (!tl_space_layout(space)->too_many) { /* с зонами: бордюр, ковёр */
-            snprintf(tiles, sizeof tiles, "плиток: %d", tl_space_tile_total(space));
-            lines[count++] = tiles;
-        }
+    int total = tl_space_tile_total(space); /* с зонами, участками и стенами */
+    if (total > 0) {
+        snprintf(tiles, sizeof tiles, "плиток: %d", total);
+        lines[count++] = tiles;
     }
     if (tl_space_has_shared_floor(space)) {
         snprintf(source, sizeof source, "пол как: %s", space->layout_source->name);

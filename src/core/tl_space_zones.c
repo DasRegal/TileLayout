@@ -480,8 +480,7 @@ static struct TlZoneCache *zone_cache(TlSpace *space)
         lay_border(space, cache);
     if (room_tile->enabled && zone_on(space, TL_ZONE_CARPET))
         lay_carpet(space, cache);
-    if (room_tile->enabled)
-        lay_areas(space, cache);
+    lay_areas(space, cache); /* участок со своей плиткой — и когда в остальной комнате плитки нет */
     space->zone_cache = cache;
     return cache;
 }
@@ -546,10 +545,17 @@ TlZoneKind tl_space_layout_zone(TlSpace *space, size_t index)
     return index - 1 < cache->layouts.count ? cache->kinds[index - 1] : TL_ZONE_COUNT;
 }
 
+bool tl_space_layout_counted(TlSpace *space, size_t index)
+{
+    TlLayout *layout = tl_space_layout_at(space, index);
+    return layout && !layout->too_many && tl_space_layout_tile(space, index)->enabled;
+}
+
 int tl_space_tile_total(TlSpace *space)
 {
     int total = 0;
     for (size_t i = 0; i < tl_space_layout_count(space); i++)
-        total += tl_layout_total(tl_space_layout_at(space, i));
+        if (tl_space_layout_counted(space, i))
+            total += tl_layout_total(tl_space_layout_at(space, i));
     return total;
 }

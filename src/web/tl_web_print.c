@@ -53,11 +53,9 @@ const char *tl_web_tile_numbers(void)
     TlJson *layouts = tl_json_array();
     for (size_t s = 0; s < project->spaces.count; s++) {
         TlSpace *space = project->spaces.items[s];
-        if (!tl_space_effective_tile(space)->enabled)
-            continue;
         for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) { /* основной пол и зоны */
             const TlLayout *layout = tl_space_layout_at(space, l);
-            if (!layout->too_many)
+            if (tl_space_layout_counted(space, l))
                 tl_json_array_push(layouts, layout_numbers(space, layout));
         }
     }

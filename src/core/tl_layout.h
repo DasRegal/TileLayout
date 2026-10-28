@@ -113,6 +113,9 @@ const TlTileSettings *tl_space_layout_tile(TlSpace *space, size_t index);
 size_t tl_space_layout_area(TlSpace *space, size_t index);
 /* Чья раскладка: зона или TL_ZONE_COUNT — основной пол (и участок, и стены). */
 TlZoneKind tl_space_layout_zone(TlSpace *space, size_t index);
+/* Раскладка index кладётся (её плитка включена; у основного пола — плитка комнаты) и не слишком мелкая.
+   Участок со своей плиткой и облицовка стен кладутся и без плитки на остальном полу. */
+bool tl_space_layout_counted(TlSpace *space, size_t index);
 /* Плиток на укладку в комнате — основной пол и зоны. */
 int tl_space_tile_total(TlSpace *space);
 /* Что зоны вырезают из основного пола (со швом основной плитки). */

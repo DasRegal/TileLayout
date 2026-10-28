@@ -37,10 +37,11 @@ TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptio
         TlSpace *space = project->spaces.items[i];
         if (only_source && space->layout_source != only_source)
             continue;
-        if (!tl_space_effective_tile(space)->enabled)
+        bool floor = tl_space_effective_tile(space)->enabled; /* без плитки на полу — участки и стены */
+        if (!floor && fresh)
             continue;
         TlLayout *layout = fresh ? tl_layout_compute(space, options) : tl_space_layout(space);
-        if (layout->too_many) {
+        if (!floor || layout->too_many) {
             if (fresh)
                 tl_layout_free(layout);
         } else {
@@ -49,7 +50,7 @@ TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptio
         }
         for (size_t z = 1; !fresh && z < tl_space_layout_count(space); z++) {
             TlLayout *zone = tl_space_layout_at(space, z);
-            if (!zone->too_many)
+            if (tl_space_layout_counted(space, z))
                 add_member(group_for(&groups, space, z, tl_space_layout_tile(space, z), false), space, z, zone);
         }
     }

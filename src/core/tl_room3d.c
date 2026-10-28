@@ -38,10 +38,14 @@ typedef struct Face {
 
 TL_ARRAY_DEFINE(FaceList, Face, face_list)
 
+/* Слои рисования: пол, за ним стены, потом всё, что стоит в комнате (оно всегда перед видимыми
+   стенами — ближние не рисуются); внутри слоя — дальние раньше. */
+typedef enum Layer { LAYER_FLOOR, LAYER_WALLS, LAYER_OBJECTS } Layer;
+
 /* Плоская поверхность: основа (первая грань) и плитка на ней. */
 typedef struct Group {
     TlVec3 normal, center;
-    bool floor;
+    Layer layer;
     FaceList faces;
 } Group;
 
@@ -132,14 +136,14 @@ static Face tile_face(const char *color)
     return face;
 }
 
-/* Площадь куска: внешний контур без дыр. Плитку, которую проём закрыл целиком, раскладка хранит
-   подрезкой с дырой во весь кусок — её не рисуют. */
-static double piece_area(const TlPolygonList *shapes)
+/* Контуры куска (tl_layout.h: куски, за каждым — его дыры) по «чёт-нечет»: внутри нечётного числа контуров. */
+static bool odd_inside(const bool *inside, size_t count, void *context)
 {
-    double area = tl_polygon_area(&shapes->items[0]);
-    for (size_t i = 1; i < shapes->count; i++)
-        area -= tl_polygon_area(&shapes->items[i]);
-    return area;
+    (void)context;
+    size_t n = 0;
+    for (size_t i = 0; i < count; i++)
+        n += inside[i];
+    return n % 2 == 1;
 }
 
 static void face_add_polygon(Face *face, const TlPolygon *polygon, const Mapper *mapper, const TlAffine *m,
@@ -174,7 +178,7 @@ static void face_free(Face *face)
 
 static Group group_new(TlVec3 normal, Face base)
 {
-    Group group = {.normal = normal};
+    Group group = {.normal = normal, .layer = LAYER_OBJECTS};
     TlVec3 sum = {0, 0, 0};
     size_t count = 0;
     for (size_t c = 0; c < base.contours.count && c < 1; c++)
@@ -207,13 +211,12 @@ static void add_tiles(Group *group, const TlLayout *layout, const Mapper *mapper
     for (size_t t = 0; t < layout->tiles.count; t++) {
         const TlTile *tile = &layout->tiles.items[t];
         const char *color = (size_t)tile->spec < layout->pattern.spec_count ? layout->pattern.specs[tile->spec].color : NULL;
-        if (tile->kind != TL_TILE_WHOLE && tile->shapes.count && piece_area(&tile->shapes) < 1)
-            continue;
         Face face = tile_face(color);
         TlVec2 corner = {tile->rect.left, tile->rect.top};
         if (tile->kind != TL_TILE_WHOLE && tile->shapes.count > 1) {
-            /* кусок с дырами: дыра у края (проём, панно) — вырез, иначе обводка шла бы поперёк проёма */
-            TlRegionList parts = tl_regions_difference(&tile->shapes.items[0], tile->shapes.items + 1, tile->shapes.count - 1);
+            /* куски разрезанной швом плитки и дыры (у края — вырез: иначе обводка шла бы поперёк проёма);
+               плитку, которую проём закрыл целиком, раскладка хранит с дырой во весь кусок — её нет */
+            TlRegionList parts = tl_regions_build_merged(tile->shapes.items, tile->shapes.count, odd_inside, NULL);
             for (size_t r = 0; r < parts.count; r++) {
                 face_add_polygon(&face, &parts.items[r].outline, mapper, m, corner);
                 for (size_t h = 0; h < parts.items[r].holes.count; h++)
@@ -257,11 +260,10 @@ static void build_floor(GroupList *groups, TlSpace *space)
     for (size_t i = 0; i < space->holes.count; i++)
         face_add_polygon(&base, &space->holes.items[i], &mapper, NULL, tl_vec2(0, 0));
     Group group = group_new(vec3(0, 0, 1), base);
-    group.floor = true;
-    if (tl_space_effective_tile(space)->enabled)
-        for (size_t l = 0; l < tl_space_floor_layout_count(space); l++)
-            if (tl_space_layout_tile(space, l)->enabled)
-                add_tiles(&group, tl_space_layout_at(space, l), &mapper);
+    group.layer = LAYER_FLOOR;
+    for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) /* у участка плитка своя, даже без плитки комнаты */
+        if (tl_space_layout_counted(space, l))
+            add_tiles(&group, tl_space_layout_at(space, l), &mapper);
     for (size_t p = 0; p < space->pannos.count; p++)
         if (space->pannos.items[p].wall == TL_PANNO_FLOOR)
             add_panno(&group, space, p, &mapper);
@@ -345,6 +347,7 @@ static void build_walls(GroupList *groups, TlProject *project, TlSpace *space)
                 add_jambs(&jambs, project, hole, &mapper, tl_vec2_scale(n, -1));
         }
         Group group = group_new(vec3(n.x, -n.y, 0), base);
+        group.layer = LAYER_WALLS;
         for (size_t j = 0; j < jambs.count; j++) /* откосы — раньше стены */
             face_list_push(&group.faces, jambs.items[j]);
         if (jambs.count) {
@@ -573,13 +576,16 @@ static void hex_color(char out[8], const double rgb[3], double shade)
 
 typedef struct Ordered {
     size_t group;
+    Layer layer;
     double distance;
 } Ordered;
 
 static int farther_first(const void *a, const void *b)
 {
-    double da = ((const Ordered *)a)->distance, db = ((const Ordered *)b)->distance;
-    return da < db ? 1 : da > db ? -1 : 0;
+    const Ordered *oa = a, *ob = b;
+    if (oa->layer != ob->layer)
+        return oa->layer < ob->layer ? -1 : 1;
+    return oa->distance < ob->distance ? 1 : oa->distance > ob->distance ? -1 : 0;
 }
 
 void tl_paint_list_free_all(TlPaintList *list)
@@ -609,9 +615,9 @@ TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera
     for (size_t g = 0; g < groups.count; g++) {
         const Group *group = &groups.items[g];
         TlVec3 to_eye = sub3(eye.position, group->center);
-        if (!group->floor && dot3(group->normal, to_eye) <= 0) /* к зрителю спиной — ближние стены, задние грани */
+        if (group->layer != LAYER_FLOOR && dot3(group->normal, to_eye) <= 0) /* спиной к зрителю: ближние стены, задние грани */
             continue;
-        order[count++] = (Ordered){g, group->floor ? INFINITY : sqrt(dot3(to_eye, to_eye))};
+        order[count++] = (Ordered){g, group->layer, sqrt(dot3(to_eye, to_eye))};
     }
     qsort(order, count, sizeof *order, farther_first);
     for (size_t o = 0; o < count; o++) {

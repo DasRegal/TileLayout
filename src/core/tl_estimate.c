@@ -69,7 +69,8 @@ static void add_work(TlEstimate *estimate, const TlSummary *summary)
                             tl_panno_width(panno) * tl_panno_height(panno) / 1e6);
         }
         for (size_t l = 0; l < tl_space_layout_count(room->space); l++)
-            add_work_amount(tl_space_layout_on_wall(room->space, l) ? &walls : &laying,
+            if (tl_space_layout_counted(room->space, l))
+                add_work_amount(tl_space_layout_on_wall(room->space, l) ? &walls : &laying,
                             tl_space_layout_tile(room->space, l)->price_work_m2,
                             tl_space_layout_at(room->space, l)->floor_area / 1e6);
         add_work_amount(&cutting, tl_space_effective_tile(room->space)->price_cut_m, room->cut_length / 1000);

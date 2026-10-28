@@ -267,7 +267,9 @@ static TlJson *space_json(TlSpace *space)
     tl_json_object_set(json, "tile", tl_web_tile_json(tile));
     tl_json_object_set(json, "layout", tile->enabled ? tl_web_layout_json(tl_space_layout(space)) : tl_json_null());
     TlJson *zones = tl_json_array(); /* бордюр (по раскладке на стену), ковёр — поверх основного пола */
-    for (size_t l = 1; tile->enabled && l < tl_space_floor_layout_count(space); l++) {
+    for (size_t l = 1; l < tl_space_floor_layout_count(space); l++) { /* участок со своей плиткой — и без плитки пола */
+        if (!tl_space_layout_counted(space, l))
+            continue;
         TlJson *zone = tl_web_layout_json(tl_space_layout_at(space, l));
         tl_json_object_set(zone, "tile", tl_web_tile_json(tl_space_layout_tile(space, l)));
         tl_json_array_push(zones, zone);

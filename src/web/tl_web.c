@@ -93,6 +93,14 @@ const char *tl_web_save(void)
     return web.saved;
 }
 
+const char *tl_web_share_text(void)
+{
+    static char *text;
+    free(text);
+    text = tl_project_snapshot(tl_web_project());
+    return text;
+}
+
 int tl_web_space_at(double x, double y)
 {
     TlSpace *space = tl_project_space_at(tl_web_project(), tl_vec2(x, y));

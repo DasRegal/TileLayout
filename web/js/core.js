@@ -34,6 +34,8 @@ export async function loadCore() {
       }
     },
     save: () => text(module._tl_web_save()),
+    /** Проект для ссылки: одной строкой, без содержимого подложки. */
+    shareText: () => text(module._tl_web_share_text()),
     version: () => text(module._tl_web_version()),
     scene: () => JSON.parse(text(module._tl_web_scene())),
     spaceAt: (x, y) => module._tl_web_space_at(x, y),

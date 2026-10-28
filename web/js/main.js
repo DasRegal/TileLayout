@@ -7,6 +7,7 @@ import { PRINT_SCALES, printProject } from './print.js';
 import { installIcons } from './icons.js';
 import { DEFAULT_LAYERS, drawScene } from './render.js';
 import { acceptDroppedFiles, downloadFile, pickFile, readDraft, readSettings, writeDraft, writeSettings } from './storage.js';
+import { clearLocationProject, projectFromLocation, shareLink } from './share.js';
 import { TOOL_HINTS, Tools } from './tools.js';
 import { attachViewControls, View } from './view.js';
 import { drawRoomWalls, wallsBounds } from './walls.js';
@@ -1199,6 +1200,7 @@ const commands = {
   catalog: pickTile,
   house: addHouse,
   png: exportPng,
+  share: () => shareProject(),
   'dxf-plan': () => exportDxf(false),
   'dxf-cuts': () => exportDxf(true),
   print: openPrintDialog,
@@ -1219,6 +1221,84 @@ function bindLayers() {
 }
 
 const baseName = () => state.fileName.replace(/\.tilelayout\.json$|\.json$/i, '') || 'plan';
+
+/** Ссылка на проект (share.js): показать и скопировать. */
+async function shareProject() {
+  const dialog = document.getElementById('share-dialog');
+  const field = document.getElementById('share-link');
+  const note = document.getElementById('share-note');
+  let link;
+  try {
+    link = await shareLink(state.core.shareText());
+  } catch {
+    say('Этот браузер не умеет сжимать проект для ссылки — обновите его или сохраните проект файлом.');
+    return;
+  }
+  field.value = link;
+  note.textContent = link.length > 30000
+    ? `Ссылка длинная (${Math.round(link.length / 1000)} тыс. знаков): мессенджер может её обрезать — тогда отправьте файл проекта.`
+    : `Длина ссылки — ${link.length} знаков.`;
+  dialog.showModal();
+  field.select();
+  try {
+    await navigator.clipboard.writeText(link);
+    say('Ссылка на проект скопирована.');
+  } catch {
+    say('Скопируйте ссылку из окна.');
+  }
+}
+
+/** Проект по ссылке: прошлый черновик — в запас, кнопка «Вернуть мой проект». */
+const DRAFT_BACKUP_KEY = 'tilelayout.draft-before-link';
+
+async function openFromLink() {
+  let text;
+  try {
+    text = await projectFromLocation();
+  } catch {
+    clearLocationProject();
+    say('Ссылка на проект повреждена — попросите прислать её ещё раз.');
+    return false;
+  }
+  if (!text) return false;
+  clearLocationProject();
+  const draft = readDraft();
+  try {
+    state.core.open(text);
+  } catch (error) {
+    say(`Не удалось открыть проект по ссылке: ${error.message}`);
+    return false;
+  }
+  state.fileName = 'проект-по-ссылке.tilelayout.json';
+  const backed = draft && (() => {
+    try {
+      localStorage.setItem(DRAFT_BACKUP_KEY, JSON.stringify(draft));
+      return true;
+    } catch {
+      return false; // нет места — без кнопки «Вернуть»
+    }
+  })();
+  writeDraft(state.core.save(), state.fileName); // перезагрузка страницы — тот же проект
+  document.getElementById('restore-draft').hidden = !backed;
+  return true;
+}
+
+function restoreDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_BACKUP_KEY));
+    state.core.open(draft.text);
+    state.fileName = draft.name;
+    localStorage.removeItem(DRAFT_BACKUP_KEY);
+  } catch {
+    say('Прошлый проект не нашёлся.');
+    return;
+  }
+  document.getElementById('restore-draft').hidden = true;
+  state.selection = null;
+  changed();
+  fitView();
+  say('Вернули ваш проект.');
+}
 
 /** Чертёж DXF — план или подрезки для станка (tl_dxf.h). */
 function exportDxf(cuts) {
@@ -1445,6 +1525,25 @@ function bindCommands() {
   }).observe(canvas);
   new ResizeObserver(() => requestDraw()).observe(wallsCanvas);
   bindRoom3d();
+  document.getElementById('restore-draft').addEventListener('click', restoreDraft);
+  document.getElementById('share-copy').addEventListener('click', async () => {
+    const field = document.getElementById('share-link');
+    field.select();
+    try {
+      await navigator.clipboard.writeText(field.value);
+      say('Ссылка на проект скопирована.');
+    } catch {
+      document.execCommand('copy'); // старые браузеры
+    }
+  });
+  window.addEventListener('hashchange', async () => { // ссылку открыли в уже открытой вкладке
+    if (await openFromLink()) {
+      state.selection = null;
+      changed();
+      fitView();
+      say('Открыт проект по ссылке.');
+    }
+  });
 }
 
 // ---- запуск ---------------------------------------------------------------------
@@ -1461,7 +1560,9 @@ async function start() {
   document.getElementById('version').textContent = `версия ${state.core.version()}`;
   const draft = readDraft();
   let message = 'Пример проекта. Щёлкните комнату, чтобы настроить плитку; откройте свой файл кнопкой «Открыть».';
-  if (draft) {
+  if (await openFromLink()) {
+    message = 'Открыт проект по ссылке.' + (document.getElementById('restore-draft').hidden ? '' : ' Ваш прошлый проект — кнопка «Вернуть мой проект».');
+  } else if (draft) {
     try {
       state.core.open(draft.text);
       state.fileName = draft.name;

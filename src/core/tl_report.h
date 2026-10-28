@@ -18,7 +18,8 @@
 typedef struct TlRoomSummary {
     TlSpace *space;
     TlLayout *layout;            /* основной пол; зоны — tl_space_layout_at(space, 1…) */
-    bool tiled;
+    bool tiled;                  /* в комнате есть что класть: пол, участок, стены или панно */
+    bool floor_tiled;            /* плитка на основном полу (а с ней — гидроизоляция, уголки) */
     double glue_kg;
     int clip_count;
     double grout_kg;

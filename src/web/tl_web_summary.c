@@ -68,7 +68,7 @@ static TlJson *room_json(const TlRoomSummary *room)
     TlJson *json = tl_json_object();
     tl_json_object_set(json, "id", tl_json_number(room->space->id));
     tl_json_object_set(json, "name", tl_json_string(room->space->name));
-    bool counted = room->tiled && room->layout && !room->layout->too_many;
+    bool counted = room->floor_tiled; /* основной пол; участки и стены — в расчёте по видам плитки */
     tl_json_object_set(json, "count", tl_json_number(counted ? tl_space_tile_total(room->space) : 0));
     tl_json_object_set(json, "glue_kg", rounded(room->glue_kg, 0.1));
     tl_json_object_set(json, "clips", tl_json_number(room->clip_count));

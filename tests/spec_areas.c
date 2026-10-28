@@ -81,6 +81,32 @@ void spec_areas(void)
             EXPECT(fabs(floor_layouts_area(space) - 6e6) < 3000);
             tl_project_free(project);
         }
+        IT("плитка выключена у комнаты: участок со своей плиткой и облицовка стен всё равно кладутся и считаются")
+        {
+            TlProject *project = room_project(3000, 2000);
+            TlSpace *space = only_space(project);
+            add_divider(project, tl_vec2(1000, 0), tl_vec2(1000, 2000));
+            size_t left = tl_space_region_at(space, tl_vec2(500, 1000));
+            tl_space_add_area(space, left, true);
+            space->tile.enabled = false;
+            space->walls.enabled = true;
+            tl_project_update_spaces(project);
+            EXPECT_INT(tl_space_floor_layout_count(space), 2);
+            EXPECT(!tl_space_layout_counted(space, 0));
+            EXPECT(tl_space_layout_counted(space, 1));
+            int expected = tl_layout_total(tl_space_layout_at(space, 1));
+            for (size_t i = 0; i < tl_space_wall_layout_count(space); i++)
+                expected += tl_layout_total(tl_space_wall_layout_at(space, i, NULL, NULL));
+            EXPECT_INT(tl_space_tile_total(space), expected);
+            TlSummary summary = tl_report_summarize(project);
+            EXPECT(summary.rooms.items[0].tiled && !summary.rooms.items[0].floor_tiled);
+            int bought = 0;
+            for (size_t t = 0; t < summary.types.count; t++)
+                bought += summary.types.items[t].count + summary.types.items[t].offcut_saving + summary.types.items[t].shared_saving;
+            EXPECT_INT(bought, expected); /* к покупке — без подрезок из остатков */
+            tl_summary_free(&summary);
+            tl_project_free(project);
+        }
         IT("участок без плитки: там ничего не кладётся")
         {
             TlProject *project = room_project(3000, 2000);

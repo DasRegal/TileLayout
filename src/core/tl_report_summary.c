@@ -447,12 +447,10 @@ static void add_layout_materials(TlSummary *summary, TlRoomSummary *room, const 
 /* Клей, СВП, затирка, грунт комнаты — по всем её раскладкам (основной пол, зоны, стены) и панно. */
 static void summarize_room_materials(TlSummary *summary, TlRoomSummary *room)
 {
-    for (size_t i = 0; i < tl_space_layout_count(room->space); i++) {
-        TlLayout *layout = tl_space_layout_at(room->space, i);
-        if (!layout->too_many)
-            add_layout_materials(summary, room, tl_space_layout_tile(room->space, i), layout,
+    for (size_t i = 0; i < tl_space_layout_count(room->space); i++)
+        if (tl_space_layout_counted(room->space, i))
+            add_layout_materials(summary, room, tl_space_layout_tile(room->space, i), tl_space_layout_at(room->space, i),
                                  tl_space_layout_on_wall(room->space, i));
-    }
     for (size_t i = 0; i < room->space->pannos.count; i++) {
         bool on_wall = room->space->pannos.items[i].wall != TL_PANNO_FLOOR;
         if (on_wall && !room->space->walls.enabled)
@@ -479,14 +477,17 @@ TlSummary tl_report_summarize(TlProject *project)
     for (size_t i = 0; i < project->spaces.count; i++) {
         TlSpace *space = project->spaces.items[i];
         TlLayout *layout = tl_space_layout(space);
-        TlRoomSummary room = {.space = space, .layout = layout,
-                              .tiled = tl_space_effective_tile(space)->enabled && !layout->too_many};
+        TlRoomSummary room = {.space = space, .layout = layout, .floor_tiled = tl_space_layout_counted(space, 0)};
+        for (size_t l = 0; l < tl_space_layout_count(space) && !room.tiled; l++)
+            room.tiled = tl_space_layout_counted(space, l);
+        for (size_t p = 0; p < space->pannos.count && !room.tiled; p++)
+            room.tiled = space->pannos.items[p].wall == TL_PANNO_FLOOR ? room.floor_tiled : space->walls.enabled;
         summary.floor_area += tl_space_area(space);
         summary.room_area += tl_space_room_area(space);
-        if (room.tiled) {
+        if (room.tiled)
             summarize_room_materials(&summary, &room);
+        if (room.floor_tiled)
             summarize_room_extras(&summary, project, &room);
-        }
         tl_room_summary_list_push(&summary.rooms, room);
     }
     finish_pack_lines(&summary.glue);
