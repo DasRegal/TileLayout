@@ -23,6 +23,7 @@
 
 #include "tl_layout.h"
 #include "tl_report.h"
+#include "tl_room3d.h"
 #include "tl_web.h"
 #include "tl_web_internal.h"
 
@@ -416,4 +417,52 @@ bool tl_web_set_panno(int space_id, int index, const char *fields, double now_se
     }
     tl_json_free(parsed);
     return ok;
+}
+
+/* ---- объёмный вид (tl_room3d.h) ----------------------------------------------------
+ * {"camera": {"yaw", "pitch", "distance"}, "paints": [{"c": [[x0, y0, …], …] — контуры в пикселях
+ *  (заливка «чёт-нечет»), "f": заливка, "s": обводка или "", "w": её толщина}]}
+ * distance < 0 — камера по умолчанию, 0 — те же углы, расстояние — вся комната в кадре. */
+
+const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double width, double height)
+{
+    static char *text;
+    TlProject *project = tl_web_project();
+    TlSpace *space = tl_project_space_by_id(project, space_id);
+    TlJson *json = tl_json_object(), *paints_json = tl_json_array();
+    if (space) {
+        TlCamera camera = tl_room3d_default_camera(project, space, width, height);
+        if (distance >= 0) {
+            camera.yaw = yaw;
+            camera.pitch = pitch;
+            camera.distance = distance;
+        }
+        TlPaintList paints = tl_room3d_paint(project, space, &camera, width, height);
+        for (size_t i = 0; i < paints.count; i++) {
+            const TlPaint *paint = &paints.items[i];
+            TlJson *item = tl_json_object(), *contours = tl_json_array();
+            for (size_t c = 0; c < paint->contours.count; c++) {
+                TlJson *points = tl_json_array();
+                for (size_t k = 0; k < paint->contours.items[c].count; k++) {
+                    TlVec2 p = paint->contours.items[c].items[k];
+                    tl_json_array_push(points, tl_json_number(round(p.x * 10) / 10));
+                    tl_json_array_push(points, tl_json_number(round(p.y * 10) / 10));
+                }
+                tl_json_array_push(contours, points);
+            }
+            tl_json_object_set(item, "c", contours);
+            tl_json_object_set(item, "f", tl_json_string(paint->fill));
+            tl_json_object_set(item, "s", tl_json_string(paint->stroke));
+            tl_json_object_set(item, "w", tl_json_number(paint->stroke_width));
+            tl_json_array_push(paints_json, item);
+        }
+        tl_paint_list_free_all(&paints);
+        TlJson *camera_json = tl_json_object();
+        tl_json_object_set(camera_json, "yaw", tl_json_number(camera.yaw));
+        tl_json_object_set(camera_json, "pitch", tl_json_number(camera.pitch));
+        tl_json_object_set(camera_json, "distance", tl_json_number(camera.distance));
+        tl_json_object_set(json, "camera", camera_json);
+    }
+    tl_json_object_set(json, "paints", paints_json);
+    return tl_web_keep(&text, json);
 }

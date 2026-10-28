@@ -224,6 +224,9 @@ const char *tl_web_tile_numbers(void);
 const char *tl_web_cut_cards(void);
 /* Карта раскроя (формат — в tl_web_print.c): что резать стопкой, какие две подрезки — из одной плитки. */
 const char *tl_web_cut_map(void);
+/* Объёмный вид комнаты (формат — в tl_web_walls.c): камера — углы, °, и расстояние, мм; холст в пикселях. */
+const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double width, double height);
+
 /* ---- подложка (tl_web_underlay.c) ---------------------------------------------- */
 
 /* Вся подложка с содержимым (формат — в tl_web_underlay.c); в сцене — без содержимого. */

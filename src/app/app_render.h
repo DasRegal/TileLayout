@@ -71,6 +71,11 @@ void app_render_walls(cairo_t *cr, TlProject *project, TlSpace *space, const App
 /* Габарит развёртки с подписями. */
 TlRect app_render_walls_bounds(TlSpace *space);
 
+/* Объёмный вид комнаты под камерой (tl_room3d.h; камера с distance = 0 — вся комната в кадре). */
+struct TlCamera;
+void app_render_room3d(cairo_t *cr, TlProject *project, TlSpace *space, struct TlCamera *camera, double width,
+                       double height);
+
 /* Трап на плане: решётка или лоток. */
 void app_render_drain(cairo_t *cr, const AppView *view, const TlDrain *drain, AppColor color);
 /* Предмет (ванна, поддон, тумба…) на плане: контур, значок вида, название и размер. */

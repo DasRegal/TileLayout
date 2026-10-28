@@ -165,6 +165,9 @@ export async function loadCore() {
     tileNumbers: () => JSON.parse(text(module._tl_web_tile_numbers())),
     cutCards: () => JSON.parse(text(module._tl_web_cut_cards())),
     cutMap: () => JSON.parse(text(module._tl_web_cut_map())),
+    /** Объёмный вид комнаты: камера {yaw, pitch, distance} (null — по умолчанию), холст в пикселях. */
+    room3d: (id, camera, width, height) => JSON.parse(text(module._tl_web_room_3d(id, camera?.yaw ?? 0, camera?.pitch ?? 0,
+      camera ? camera.distance : -1, width, height))),
     /** Подложка с содержимым: {present, revision, origin, scale, opacity, visible, image, image_w, image_h, lines}. */
     underlay: () => JSON.parse(text(module._tl_web_underlay())),
     setUnderlayImage: (url, width, height) =>

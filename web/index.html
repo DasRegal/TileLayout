@@ -75,9 +75,10 @@
       <div class="stage">
       <canvas id="plan"></canvas>
       <canvas id="walls" hidden></canvas>
+      <canvas id="room3d" hidden></canvas>
       <div class="mode-switch" id="mode-switch" hidden>
-        <button type="button" aria-pressed="true" title="Развёртка стен">2D</button>
-        <button type="button" aria-pressed="false" disabled title="Объёмный просмотр — в следующей версии">3D</button>
+        <button type="button" data-mode="flat" aria-pressed="true" title="Развёртка стен">2D</button>
+        <button type="button" data-mode="volume" aria-pressed="false" title="Комната в объёме: пол, стены, плитка, предметы">3D</button>
       </div>
       <button type="button" class="thanks" data-action="thanks" data-icon="heart">Сказать спасибо автору</button>
       <p id="status" class="status" role="status">Загрузка…</p>

@@ -208,14 +208,14 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
 .mode-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .mode-switch button:disabled { color: var(--line); }
 
-#plan, #walls {
+#plan, #walls, #room3d {
   display: block;
   width: 100%;
   height: 100%;
   touch-action: none;
   cursor: grab;
 }
-#plan:active, #walls:active { cursor: grabbing; }
+#plan:active, #walls:active, #room3d:active { cursor: grabbing; }
 body.drawing #plan { cursor: crosshair; }
 
 .status {

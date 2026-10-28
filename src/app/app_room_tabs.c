@@ -7,10 +7,12 @@
 #include "app_icons.h"
 #include "app_render.h"
 #include "tl_layout.h"
+#include "tl_room3d.h"
 
 #define PICK_PX 6.0   /* допуск выбора на развёртке, пиксели */
 #define SNAP_PX 10.0  /* притягивание к швам и краям */
 #define CLICK_PX 4.0  /* сдвиг меньше — щелчок, а не перетаскивание */
+#define ORBIT_DEGREES_PER_PX 0.35
 
 /* Что тянут на развёртке. */
 typedef enum Grab {
@@ -40,6 +42,14 @@ typedef struct RoomPage {
     bool ruler_started;          /* инструмент «Линейка»: первый конец поставлен */
     size_t ruler_wall;
     TlVec2 ruler_start, hover;   /* hover — курсор (притянутый), в развёртке */
+    /* 3D: камера (distance = 0 — подобрать), вращение мышью */
+    bool volume;
+    TlCamera camera;
+    bool camera_ready, orbiting;
+    TlVec2 orbit_press;
+    double orbit_yaw, orbit_pitch;
+    GtkWidget *flat_button, *volume_button;
+    bool syncing;
 } RoomPage;
 
 struct AppRoomTabs {
@@ -85,6 +95,20 @@ static AppWallsMarks marks_of(RoomPage *page, TlSpace *space)
     return marks;
 }
 
+/* 3D: комната под камерой и подсказка внизу. */
+static void draw_volume(RoomPage *page, cairo_t *cr, TlSpace *space)
+{
+    double width = page->view.width, height = page->view.height;
+    if (!page->camera_ready) {
+        page->camera = tl_room3d_default_camera(page->tabs->document->project, space, width, height);
+        page->camera_ready = true;
+    }
+    app_render_room3d(cr, page->tabs->document->project, space, &page->camera, width, height);
+    AppTextStyle style = {10, false, app_color_hex("#5d6470"), APP_TRANSPARENT};
+    app_text_centered(cr, "Тяните — повернуть, колесо — ближе или дальше, двойной щелчок — как было", &style,
+                      tl_vec2(width / 2, height - 14), 0);
+}
+
 static gboolean on_draw(GtkWidget *widget, cairo_t *cr, RoomPage *page)
 {
     TlSpace *space = space_by_id(page->tabs, page->space_id);
@@ -92,6 +116,10 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, RoomPage *page)
     page->view.height = gtk_widget_get_allocated_height(widget);
     if (!space)
         return TRUE;
+    if (page->volume) {
+        draw_volume(page, cr, space);
+        return TRUE;
+    }
     if (page->fitted || page->view.scale <= 0)
         fit(page, space);
     AppRenderOptions options = app_render_screen_options();
@@ -236,6 +264,18 @@ static gboolean on_press(GtkWidget *widget, GdkEventButton *event, RoomPage *pag
         return TRUE;
     gtk_widget_grab_focus(widget);
     TlVec2 screen = {event->x, event->y}, world = app_view_to_world(&page->view, screen);
+    if (page->volume) { /* 3D: тянут — вращают; двойной щелчок — камера как была */
+        if (event->type == GDK_2BUTTON_PRESS) {
+            page->camera_ready = false;
+        } else if (event->type == GDK_BUTTON_PRESS) {
+            page->orbiting = true;
+            page->orbit_press = screen;
+            page->orbit_yaw = page->camera.yaw;
+            page->orbit_pitch = page->camera.pitch;
+        }
+        gtk_widget_queue_draw(widget);
+        return TRUE;
+    }
     if (event->type == GDK_2BUTTON_PRESS) { /* двойной щелчок — вписать */
         page->fitted = true;
         gtk_widget_queue_draw(widget);
@@ -341,6 +381,15 @@ static gboolean on_motion(GtkWidget *widget, GdkEventMotion *event, RoomPage *pa
         return FALSE;
     TlVec2 screen = {event->x, event->y}, world = app_view_to_world(&page->view, screen);
     bool free = event->state & GDK_SHIFT_MASK;
+    if (page->volume) {
+        if (page->orbiting) {
+            page->camera.yaw = fmod(page->orbit_yaw - (screen.x - page->orbit_press.x) * ORBIT_DEGREES_PER_PX, 360);
+            page->camera.pitch = fmax(TL_CAMERA_MIN_PITCH, fmin(TL_CAMERA_MAX_PITCH,
+                                      page->orbit_pitch + (screen.y - page->orbit_press.y) * ORBIT_DEGREES_PER_PX));
+            gtk_widget_queue_draw(widget);
+        }
+        return TRUE;
+    }
     if (page->ruler_started) {
         page->hover = snapped(page, space, world, free);
         gtk_widget_queue_draw(widget);
@@ -366,6 +415,10 @@ static gboolean on_release(GtkWidget *widget, GdkEventButton *event, RoomPage *p
     TlSpace *space = space_by_id(page->tabs, page->space_id);
     Grab grab = page->grab;
     page->grab = GRAB_NONE;
+    if (page->volume) {
+        page->orbiting = false;
+        return TRUE;
+    }
     if (!space || event->button != 1)
         return TRUE;
     if (page->moved) {
@@ -392,23 +445,48 @@ static gboolean on_scroll(GtkWidget *widget, GdkEventScroll *event, RoomPage *pa
         factor = 1 / 1.15;
     else if (event->direction == GDK_SCROLL_SMOOTH)
         factor = pow(1.15, -event->delta_y);
+    if (page->volume) { /* ближе — меньше расстояние до комнаты */
+        page->camera.distance = fmax(300, fmin(200000, page->camera.distance / factor));
+        gtk_widget_queue_draw(widget);
+        return TRUE;
+    }
     app_view_zoom_at(&page->view, factor, tl_vec2(event->x, event->y));
     page->fitted = false;
     gtk_widget_queue_draw(widget);
     return TRUE;
 }
 
-/* 2D | 3D справа вверху: 3D — просмотр, его пока нет. */
-static GtkWidget *mode_switch(void)
+static void set_volume(RoomPage *page, bool volume)
+{
+    page->volume = volume;
+    page->grab = GRAB_NONE;
+    page->orbiting = false;
+    page->syncing = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(page->flat_button), !volume);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(page->volume_button), volume);
+    page->syncing = false;
+    gtk_widget_queue_draw(page->area);
+}
+
+static void on_mode_toggled(GtkToggleButton *button, RoomPage *page)
+{
+    if (!page->syncing)
+        set_volume(page, button == GTK_TOGGLE_BUTTON(page->volume_button));
+}
+
+/* 2D | 3D справа вверху: развёртка стен (работа) или объёмный вид (просмотр). */
+static GtkWidget *mode_switch(RoomPage *page)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_style_context_add_class(gtk_widget_get_style_context(box), "linked");
-    GtkWidget *flat = gtk_toggle_button_new_with_label("2D");
+    GtkWidget *flat = page->flat_button = gtk_toggle_button_new_with_label("2D");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(flat), TRUE);
     gtk_widget_set_tooltip_text(flat, "Развёртка стен");
-    GtkWidget *volume = gtk_toggle_button_new_with_label("3D");
-    gtk_widget_set_sensitive(volume, FALSE);
-    gtk_widget_set_tooltip_text(volume, "Объёмный просмотр — в следующей версии");
+    GtkWidget *volume = page->volume_button = gtk_toggle_button_new_with_label("3D");
+    gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
+    g_signal_connect(flat, "toggled", G_CALLBACK(on_mode_toggled), page);
+    g_signal_connect(volume, "toggled", G_CALLBACK(on_mode_toggled), page);
+    gtk_widget_set_can_focus(volume, FALSE);
     gtk_container_add(GTK_CONTAINER(box), flat);
     gtk_container_add(GTK_CONTAINER(box), volume);
     gtk_widget_set_can_focus(flat, FALSE);
@@ -482,12 +560,19 @@ void app_room_tabs_open(AppRoomTabs *tabs, TlSpace *space)
     g_signal_connect(page->area, "motion-notify-event", G_CALLBACK(on_motion), page);
     page->page = gtk_overlay_new();
     gtk_container_add(GTK_CONTAINER(page->page), page->area);
-    gtk_overlay_add_overlay(GTK_OVERLAY(page->page), mode_switch());
+    gtk_overlay_add_overlay(GTK_OVERLAY(page->page), mode_switch(page));
     gtk_widget_show_all(page->page);
     g_ptr_array_add(tabs->pages, page);
     int number = gtk_notebook_append_page(GTK_NOTEBOOK(tabs->notebook), page->page, tab_label(page, space->name));
     gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(tabs->notebook), page->page, TRUE);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs->notebook), number);
+}
+
+void app_room_tabs_set_volume(AppRoomTabs *tabs, bool volume)
+{
+    RoomPage *page = page_at(tabs, gtk_notebook_get_current_page(GTK_NOTEBOOK(tabs->notebook)));
+    if (page)
+        set_volume(page, volume);
 }
 
 TlSpace *app_room_tabs_current(AppRoomTabs *tabs)

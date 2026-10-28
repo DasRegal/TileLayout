@@ -60,6 +60,10 @@ const view = new View();
 const wallsCanvas = document.getElementById('walls');
 const wallsCtx = wallsCanvas.getContext('2d');
 const wallsView = new View();
+const room3dCanvas = document.getElementById('room3d');
+const room3dCtx = room3dCanvas.getContext('2d');
+/** 3D во вкладке помещения: камера каждой комнаты — {yaw, pitch, distance} (нет — по умолчанию). */
+const volume = { on: false, cameras: {}, drag: null };
 const status = document.getElementById('status');
 let frame = 0;
 
@@ -339,6 +343,10 @@ function requestDraw() {
 function draw() {
   frame = 0;
   const dpr = window.devicePixelRatio || 1;
+  if (state.tab && volume.on) {
+    drawRoom3d(dpr);
+    return;
+  }
   if (state.tab) {
     drawWallsTab(dpr);
     return;
@@ -364,6 +372,85 @@ function draw() {
       tools.draw(c);
     },
   });
+}
+
+/** Вкладка помещения в 3D: многоугольники от ядра (tl_room3d.h) — в порядке рисования. */
+function drawRoom3d(dpr) {
+  const box = room3dCanvas.getBoundingClientRect();
+  const width = Math.round(box.width * dpr);
+  const height = Math.round(box.height * dpr);
+  if (room3dCanvas.width !== width || room3dCanvas.height !== height) {
+    room3dCanvas.width = width;
+    room3dCanvas.height = height;
+  }
+  const c = room3dCtx;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const sky = c.createLinearGradient(0, 0, 0, box.height);
+  sky.addColorStop(0, '#e0e5ed');
+  sky.addColorStop(1, '#f7f7fa');
+  c.fillStyle = sky;
+  c.fillRect(0, 0, box.width, box.height);
+  if (box.width <= 0 || box.height <= 0) return;
+  const result = state.core.room3d(state.tab, volume.cameras[state.tab] ?? null, box.width, box.height);
+  if (result.camera) volume.cameras[state.tab] = result.camera;
+  c.lineJoin = 'round';
+  for (const paint of result.paints) {
+    c.beginPath();
+    for (const contour of paint.c) {
+      c.moveTo(contour[0], contour[1]);
+      for (let i = 2; i < contour.length; i += 2) c.lineTo(contour[i], contour[i + 1]);
+      c.closePath();
+    }
+    c.fillStyle = paint.f;
+    c.fill('evenodd');
+    if (paint.s) {
+      c.strokeStyle = paint.s;
+      c.lineWidth = paint.w;
+      c.stroke();
+    }
+  }
+}
+
+/** 2D | 3D во вкладке помещения. */
+function setVolume(on) {
+  volume.on = on;
+  showCanvases();
+  say(on ? 'Тяните — повернуть, колесо или кнопки — ближе и дальше, двойной щелчок — как было.' : '');
+  requestDraw();
+}
+
+/** 3D: тянут — вращают камеру, колесо — ближе и дальше, двойной щелчок — камера по умолчанию. */
+function bindRoom3d() {
+  room3dCanvas.addEventListener('pointerdown', (event) => {
+    const camera = volume.cameras[state.tab];
+    if (!camera) return;
+    room3dCanvas.setPointerCapture(event.pointerId);
+    volume.drag = { x: event.clientX, y: event.clientY, yaw: camera.yaw, pitch: camera.pitch };
+  });
+  room3dCanvas.addEventListener('pointermove', (event) => {
+    const camera = volume.cameras[state.tab];
+    if (!volume.drag || !camera) return;
+    camera.yaw = (volume.drag.yaw - (event.clientX - volume.drag.x) * 0.35) % 360;
+    camera.pitch = Math.min(89, Math.max(5, volume.drag.pitch + (event.clientY - volume.drag.y) * 0.35));
+    requestDraw();
+  });
+  const stop = () => {
+    volume.drag = null;
+  };
+  room3dCanvas.addEventListener('pointerup', stop);
+  room3dCanvas.addEventListener('pointercancel', stop);
+  room3dCanvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    zoomBy(Math.pow(1.15, -Math.sign(event.deltaY)));
+  }, { passive: false });
+  room3dCanvas.addEventListener('dblclick', () => {
+    delete volume.cameras[state.tab];
+    requestDraw();
+  });
+  for (const button of document.querySelectorAll('#mode-switch [data-mode]')) {
+    button.addEventListener('click', () => setVolume(button.dataset.mode === 'volume'));
+  }
+  new ResizeObserver(() => requestDraw()).observe(room3dCanvas);
 }
 
 /** Вкладка помещения: развёртка его стен. */
@@ -411,8 +498,12 @@ function closeRoomTab(id) {
 function showCanvases() {
   const walls = Boolean(state.tab);
   canvas.hidden = walls;
-  wallsCanvas.hidden = !walls;
+  wallsCanvas.hidden = !walls || volume.on;
+  room3dCanvas.hidden = !walls || !volume.on;
   document.getElementById('mode-switch').hidden = !walls;
+  for (const button of document.querySelectorAll('#mode-switch [data-mode]')) {
+    button.setAttribute('aria-pressed', String((button.dataset.mode === 'volume') === volume.on));
+  }
   document.querySelector('.thanks').hidden = walls;
 }
 
@@ -540,6 +631,12 @@ function drawHandles(c) {
 
 /** Масштаб кнопками — у середины плана. */
 function zoomBy(factor) {
+  const camera = volume.cameras[state.tab];
+  if (state.tab && volume.on) { // 3D: ближе — меньше расстояние
+    if (camera) camera.distance = Math.min(200000, Math.max(300, camera.distance / factor));
+    requestDraw();
+    return;
+  }
   const target = state.tab ? wallsCanvas : canvas;
   const box = target.getBoundingClientRect();
   (state.tab ? wallsView : view).zoomAt(box.width / 2, box.height / 2, factor);
@@ -548,6 +645,12 @@ function zoomBy(factor) {
 }
 
 function fitView() {
+  if (state.tab && volume.on) { // те же углы, вся комната в кадре
+    const camera = volume.cameras[state.tab];
+    if (camera) camera.distance = 0;
+    requestDraw();
+    return;
+  }
   if (state.tab) {
     state.wallsFitted = true;
     requestDraw();
@@ -682,6 +785,10 @@ function setTool(tool) {
   state.wallRuler = null;
   if (state.tab && !WALL_TOOLS.has(tool)) { // рисуют план — на план
     state.tab = 0;
+    showCanvases();
+  }
+  if (tool !== 'select' && volume.on) { // рисуют — в 3D нельзя: к развёртке
+    volume.on = false;
     showCanvases();
   }
   tools.set(tool);
@@ -1337,6 +1444,7 @@ function bindCommands() {
     requestDraw();
   }).observe(canvas);
   new ResizeObserver(() => requestDraw()).observe(wallsCanvas);
+  bindRoom3d();
 }
 
 // ---- запуск ---------------------------------------------------------------------
