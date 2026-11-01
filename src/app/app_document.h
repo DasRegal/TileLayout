@@ -88,6 +88,7 @@ typedef struct AppEditPreferences {
 /* Что показывать на плане. */
 typedef struct AppViewFlags {
     bool tiles, clips, numbers, dims, grid, expansion_joints;
+    bool dark;  /* тёмная тема */
 } AppViewFlags;
 
 typedef struct AppDocument AppDocument;

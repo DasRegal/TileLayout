@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "app_commands.h"
+#include "app_draw.h"
 #include "app_icons.h"
 #include "app_render.h"
 #include "tl_layout.h"
@@ -104,7 +105,7 @@ static void draw_volume(RoomPage *page, cairo_t *cr, TlSpace *space)
         page->camera_ready = true;
     }
     app_render_room3d(cr, page->tabs->document->project, space, &page->camera, width, height);
-    AppTextStyle style = {10, false, app_color_hex("#5d6470"), APP_TRANSPARENT};
+    AppTextStyle style = {10, false, app_color_hex(app_theme("#5d6470", "#aab3c0")), APP_TRANSPARENT};
     app_text_centered(cr, "Тяните — повернуть, колесо — ближе или дальше, двойной щелчок — как было", &style,
                       tl_vec2(width / 2, height - 14), 0);
 }

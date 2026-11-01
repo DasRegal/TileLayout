@@ -6,7 +6,9 @@
 import { drawLayout, drawPanno, drawRuler } from './render.js';
 import { drawPipe } from './tools.js';
 
-const COLOR = {
+const LIGHT = {
+  text: '#2c3038', // подписи стен
+  muted: '#5d6470',
   background: '#f4f5f7',
   face: '#fbfaf6',
   edge: '#2c3038',
@@ -18,6 +20,11 @@ const COLOR = {
   floorStrip: '#f0ede6',
   selection: '#2563eb',
 };
+
+/* Тёмная тема: фон и подписи — тёмный и светлые; стены, плитка, проёмы — как есть. */
+const DARK = { ...LIGHT, text: '#e6e9ed', muted: '#aab3c0', background: '#15181c', dim: '#8fb4ff', finish: '#e2b35a', selection: '#64a0ff' };
+
+let COLOR = LIGHT; // палитра текущей отрисовки
 
 const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 const LABEL_SPACE = 500; // мм над стенами и под полосой пола — подписи и размеры
@@ -39,6 +46,7 @@ export function drawRoomWalls(ctx, data, view, options) {
   const world = () => ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.panX, dpr * view.panY);
   const screen = () => ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const px = (pixels) => pixels / view.scale;
+  COLOR = options.dark && !options.printing ? DARK : LIGHT;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = options.printing ? '#ffffff' : COLOR.background;
   ctx.fillRect(0, 0, width, height);
@@ -131,7 +139,7 @@ export function drawRoomWalls(ctx, data, view, options) {
     const [left, top, right] = stairs.rect;
     const [x, y] = view.toScreen((left + right) / 2, top);
     ctx.font = `bold 10px ${FONT}`;
-    ctx.fillStyle = '#5d6470';
+    ctx.fillStyle = COLOR.muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText('Лестница', x, y - 6);
@@ -267,7 +275,7 @@ function drawLabels(ctx, data, view) {
   data.walls.forEach((wall, i) => {
     const [x, top] = view.toScreen(wall.x + wall.length / 2, 0);
     ctx.font = `600 12px ${FONT}`;
-    ctx.fillStyle = COLOR.edge;
+    ctx.fillStyle = COLOR.text;
     ctx.fillText(`Стена ${i + 1}`, x, top - 14);
     const [, floor] = view.toScreen(0, data.height + data.floor_depth);
     ctx.font = `11.3px ${FONT}`;

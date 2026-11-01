@@ -388,6 +388,21 @@ static void draw_heart(cairo_t *cr)
     cairo_stroke(cr);
 }
 
+/* Тёмная тема: месяц. */
+static void draw_theme(cairo_t *cr)
+{
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, 16, 16, 10, 0, 2 * G_PI);
+    cairo_new_sub_path(cr);
+    cairo_arc_negative(cr, 21, 11, 8.5, 2 * G_PI, 0);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    fill_hex(cr, "#e2b35a");
+    cairo_fill_preserve(cr);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_WINDING);
+    ink(cr, "#5d6470", 1.5);
+    cairo_stroke(cr);
+}
+
 static void draw_magic(cairo_t *cr)
 {
     ink(cr, "#37474f", 2.8);
@@ -490,7 +505,7 @@ static const IconEntry ICONS[] = {
     {"lock", draw_lock_closed}, {"unlock", draw_lock_open}, {"house", draw_house},
     {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print}, {"heart", draw_heart},
     {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint}, {"pipe", draw_pipe},
-    {"walls", draw_walls}, {"divider", draw_divider}, {"fixture", draw_fixture}, {"drain", draw_drain},
+    {"walls", draw_walls}, {"divider", draw_divider}, {"fixture", draw_fixture}, {"drain", draw_drain}, {"theme", draw_theme},
 };
 
 void app_icon_draw(cairo_t *cr, const char *name, double x, double y, double size)

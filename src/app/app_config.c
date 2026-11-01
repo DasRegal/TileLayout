@@ -125,6 +125,7 @@ static const BoolSetting BOOL_SETTINGS[] = {
     {"view", "show_dims", DOCUMENT_FIELD(view.dims)},
     {"view", "show_grid", DOCUMENT_FIELD(view.grid)},
     {"view", "show_expansion_joints", DOCUMENT_FIELD(view.expansion_joints)},
+    {"view", "dark_theme", DOCUMENT_FIELD(view.dark)},
 };
 
 static const DoubleSetting DOUBLE_SETTINGS[] = {

@@ -4,7 +4,7 @@ import { Catalogs, chooseTile } from './catalogs.js';
 import { loadCore } from './core.js';
 import { Panel, showSummary, zoneData } from './panel.js';
 import { PRINT_SCALES, printProject } from './print.js';
-import { installIcons } from './icons.js';
+import { icon, installIcons } from './icons.js';
 import { DEFAULT_LAYERS, drawScene } from './render.js';
 import { acceptDroppedFiles, downloadFile, pickFile, readDraft, readSettings, writeDraft, writeSettings } from './storage.js';
 import { clearLocationProject, projectFromLocation, shareLink } from './share.js';
@@ -361,6 +361,7 @@ function draw() {
   }
   drawScene(ctx, state.scene, view, {
     selected: state.selection?.kind === 'panno' ? [] : selectedSpaces(), // у панно — его рамка
+    dark: isDark(),
     highlight: highlightOf(state.object),
     image: (ref) => catalogs.image(ref),
     dpr,
@@ -387,8 +388,8 @@ function drawRoom3d(dpr) {
   const c = room3dCtx;
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const sky = c.createLinearGradient(0, 0, 0, box.height);
-  sky.addColorStop(0, '#e0e5ed');
-  sky.addColorStop(1, '#f7f7fa');
+  sky.addColorStop(0, isDark() ? '#1a1d22' : '#e0e5ed');
+  sky.addColorStop(1, isDark() ? '#2a2f36' : '#f7f7fa');
   c.fillStyle = sky;
   c.fillRect(0, 0, box.width, box.height);
   if (box.width <= 0 || box.height <= 0) return;
@@ -472,6 +473,7 @@ function drawWallsTab(dpr) {
   const ruler = state.wallRuler;
   drawRoomWalls(wallsCtx, state.walls, wallsView, {
     dpr,
+    dark: isDark(),
     image: (ref) => catalogs.image(ref),
     layers: state.settings.layers,
     marks,
@@ -1205,6 +1207,11 @@ const commands = {
   'dxf-cuts': () => exportDxf(true),
   print: openPrintDialog,
   thanks: () => document.getElementById('thanks-dialog').showModal(),
+  theme: () => {
+    state.settings.theme = isDark() ? 'light' : 'dark';
+    writeSettings(state.settings);
+    applyTheme();
+  },
 };
 
 // ---- вид, PNG, печать ------------------------------------------------------------
@@ -1298,6 +1305,25 @@ function restoreDraft() {
   changed();
   fitView();
   say('Вернули ваш проект.');
+}
+
+/** Тёмная тема: выбрана кнопкой, а пока не выбирали — как в системе. */
+const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
+
+function isDark() {
+  return state.settings.theme ? state.settings.theme === 'dark' : Boolean(systemDark?.matches);
+}
+
+function applyTheme() {
+  const dark = isDark();
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#1c1f24' : '#1f5f6b');
+  const button = document.getElementById('theme-toggle');
+  const title = dark ? 'Светлая тема' : 'Тёмная тема';
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.innerHTML = icon(dark ? 'sun' : 'moon');
+  requestDraw();
 }
 
 /** Чертёж DXF — план или подрезки для станка (tl_dxf.h). */
@@ -1550,6 +1576,10 @@ function bindCommands() {
 
 async function start() {
   bindCommands();
+  applyTheme();
+  systemDark?.addEventListener?.('change', () => {
+    if (!state.settings.theme) applyTheme();
+  });
   try {
     [state.core] = await Promise.all([loadCore(), catalogs.load()]);
   } catch (error) {

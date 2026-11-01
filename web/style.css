@@ -10,8 +10,26 @@
   --accent: #1f4e9c;
   --accent-soft: #e3ebf8;
   --wall: #6f7681;
+  --overlay: var(--overlay); /* плашки поверх плана: масштаб, подсказка, 2D | 3D */
+  --on-accent: #ffffff;
   --font: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --bar-height: 52px;
+}
+
+/* Тёмная тема (кнопка в верхней строке): тёмный интерфейс, план — на тёмном фоне, но плитка своих
+   цветов, подписи комнат и цифры — на своих плашках, всё читается. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e4e7eb;
+  --muted: #9ba4b1;
+  --line: #363c46;
+  --surface: #1c1f24;
+  --ground: #121418;
+  --accent: #8db3ff;
+  --accent-soft: #233451;
+  --wall: #8a929e;
+  --overlay: rgba(28, 31, 36, 0.95);
+  --on-accent: #0f1622;
 }
 
 * { box-sizing: border-box; }
@@ -40,7 +58,7 @@ button {
 }
 button:hover:not(:disabled) { border-color: #aab2bf; background: #f7f8fa; }
 button:disabled { opacity: 0.45; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover:not(:disabled) { background: #1a4387; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -205,7 +223,7 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--overlay);
   box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
 }
 .zoom button { border: 0; background: none; }
@@ -217,7 +235,7 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
   padding: 5px 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--overlay);
   color: var(--muted);
   font-size: 13px;
   box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
@@ -275,7 +293,7 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
   border: 1px solid var(--line);
   border-radius: 9px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--overlay);
   box-shadow: 0 2px 8px rgba(20, 24, 32, 0.08);
 }
 .mode-switch button { border: 0; border-radius: 0; background: none; padding: 5px 12px; font-weight: 600; }
@@ -300,7 +318,7 @@ body.drawing #plan { cursor: crosshair; }
   max-width: calc(100% - 160px); /* справа — кнопки масштаба */
   padding: 4px 10px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--overlay);
   color: var(--muted);
   font-size: 13px;
   pointer-events: none;
@@ -447,7 +465,7 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
   text-align: left;
 }
 .tree-row .count { color: var(--muted); font-variant-numeric: tabular-nums; }
-.tree-row.active { background: var(--accent); color: #fff; }
+.tree-row.active { background: var(--accent); color: var(--on-accent); }
 .tree-row.active .count { color: rgba(255, 255, 255, 0.8); }
 .catalog-grid {
   overflow: auto;

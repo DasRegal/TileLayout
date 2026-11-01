@@ -29,6 +29,8 @@ const ICONS = {
   divider: '<rect x="3.5" y="4.5" width="17" height="15" rx="1"/><path d="M11 3v18" stroke-width="2.2"/><path d="M5.5 7.5h3M5.5 10.5h3M5.5 13.5h3M5.5 16.5h3" stroke-width="1.2"/>',
   fixture: '<rect x="2.5" y="7" width="19" height="11" rx="2"/><rect x="5" y="9.5" width="14" height="6" rx="2"/><circle cx="7.5" cy="12.5" r="0.8" fill="currentColor"/>',
   drain: '<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M3.5 3.5l17 17M20.5 3.5l-17 17" stroke-dasharray="2 2"/><rect x="9.5" y="9.5" width="5" height="5" fill="currentColor"/>',
+  moon: '<path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
   trash: '<path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 13h9l1-13"/>',
 };
 

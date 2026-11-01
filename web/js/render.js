@@ -22,6 +22,27 @@ const COLOR = {
   ruler: '#5f6b7a',
   joint: '#37414d',
   jointGap: '#fbfaf6',
+  dimBox: 'rgba(255, 255, 255, 0.84)', // плашка под цифрой размера
+  labelBox: 'rgba(255, 255, 255, 0.9)', // подпись комнаты
+  labelEdge: 'rgba(44, 48, 56, 0.35)',
+  labelText: '#1f2328',
+};
+
+/* Тёмная тема: фон, размеры и линейки светлые на тёмном; плитка, стены и предметы — как есть. */
+const DARK = {
+  ...COLOR,
+  background: '#15181c',
+  innerDim: '#8fb4ff',
+  outerDim: '#e2b35a',
+  openingDim: '#c7a4f3',
+  threshold: '#d08a5c',
+  selection: '#64a0ff',
+  ruler: '#b3bdc9',
+  joint: '#c9d1db',
+  dimBox: 'rgba(21, 24, 28, 0.86)',
+  labelBox: 'rgba(30, 34, 40, 0.92)',
+  labelEdge: 'rgba(200, 208, 218, 0.35)',
+  labelText: '#e6e9ed',
 };
 
 /* Ч/б печать: без заливок цветом, линии — чёрные. */
@@ -71,7 +92,7 @@ export function drawScene(ctx, scene, view, options) {
   const world = () => ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.panX, dpr * view.panY);
   const screen = () => ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const px = (pixels) => pixels / view.scale; // пиксели экрана — в мм
-  C = options.mono ? MONO : COLOR;
+  C = options.mono ? MONO : options.dark && !options.printing ? DARK : COLOR; // печать и PNG — всегда светлые
   const image = options.mono ? () => null : options.image;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -642,7 +663,7 @@ function textAlong(ctx, text, a, b, normal, offset, color, bold = false) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const width = ctx.measureText(text).width;
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.84)';
+  ctx.fillStyle = C.dimBox;
   roundRect(ctx, -width / 2 - 3, -8, width + 6, 16, 3);
   ctx.fill();
   ctx.fillStyle = color;
@@ -735,12 +756,12 @@ function drawRoomLabel(ctx, space, view) {
   const w = Math.max(...widths) + 16;
   const h = lines.length * lineHeight + 8;
   roundRect(ctx, x - w / 2, y - h / 2, w, h, 5);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillStyle = C.labelBox;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(44, 48, 56, 0.35)';
+  ctx.strokeStyle = C.labelEdge;
   ctx.lineWidth = 1;
   ctx.stroke();
-  ctx.fillStyle = '#1f2328';
+  ctx.fillStyle = C.labelText;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   lines.forEach((text, i) => {

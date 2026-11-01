@@ -29,6 +29,14 @@ AppColor app_color_darker(AppColor color, double factor);
 /* Чёрно-белый режим печати: светлые заливки — белые, остальное — чёрное. */
 void app_draw_set_mono(bool mono);
 bool app_draw_is_mono(void);
+/* Тёмная тема на экране: фон плана, сетка, размеры, линейки и подписи — свои цвета; плитка, стены и
+   предметы — как есть. Печать и PDF рисуются в светлой (отрисовка выключает тему на время печати). */
+void app_draw_set_dark(bool dark);
+bool app_draw_is_dark(void);
+/* Цвет темы: light — в светлой, dark — в тёмной. */
+const char *app_theme(const char *light, const char *dark);
+/* Плашка под цифрой или подписью на фоне плана. */
+AppColor app_label_background(double alpha);
 void app_set_color(cairo_t *cr, AppColor color);
 void app_set_fill_color(cairo_t *cr, AppColor color);  /* «светлая» заливка */
 

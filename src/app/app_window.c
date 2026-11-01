@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app_canvas.h"
+#include "app_draw.h"
 #include "app_room_tabs.h"
 #include "app_catalog_dialog.h"
 #include "app_catalogs.h"
@@ -119,6 +120,7 @@ static const ViewToggle VIEW_TOGGLES[] = {
     {"expansion_joint", "Швы", "<Control>4", offsetof(AppViewFlags, expansion_joints), true},
     {NULL, "Размеры", NULL, offsetof(AppViewFlags, dims), false},
     {NULL, "Сетка", NULL, offsetof(AppViewFlags, grid), false},
+    {"theme", "Тёмная тема", "<Control><Shift>d", offsetof(AppViewFlags, dark), true},
 };
 
 struct AppWindow {
@@ -568,6 +570,14 @@ static bool *view_flag(AppWindow *self, size_t index)
     return (bool *)((char *)&self->document->view + VIEW_TOGGLES[index].offset);
 }
 
+/* Тёмная тема: окна GTK (Adwaita тёмная) и план. */
+static void apply_theme(AppWindow *self)
+{
+    bool dark = self->document->view.dark;
+    g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", dark, NULL);
+    app_draw_set_dark(dark);
+}
+
 static void on_view_toggled(GtkWidget *widget, AppWindow *self)
 {
     if (self->syncing)
@@ -580,6 +590,7 @@ static void on_view_toggled(GtkWidget *widget, AppWindow *self)
     if (self->view_buttons[index])
         gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(self->view_buttons[index]), active);
     self->syncing = false;
+    apply_theme(self);
     app_document_notify(self->document, APP_CHANGED_VIEW);
 }
 
@@ -1011,6 +1022,7 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     self->config = config;
     self->document = app_document_new();
     app_config_read_document(config, self->document);
+    apply_theme(self);
     self->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     GList *icons = NULL;
     for (int size = 16; size <= 128; size *= 2)

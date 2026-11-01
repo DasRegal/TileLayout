@@ -31,6 +31,19 @@ AppColor app_color_darker(AppColor color, double factor)
 
 void app_draw_set_mono(bool mono) { mono_mode = mono; }
 
+static bool dark_mode;
+
+void app_draw_set_dark(bool dark) { dark_mode = dark; }
+
+bool app_draw_is_dark(void) { return dark_mode; }
+
+const char *app_theme(const char *light, const char *dark) { return dark_mode ? dark : light; }
+
+AppColor app_label_background(double alpha)
+{
+    return dark_mode ? app_color_rgba(21, 24, 28, fmax(alpha, 0.86)) : app_color_rgba(255, 255, 255, alpha);
+}
+
 bool app_draw_is_mono(void) { return mono_mode; }
 
 void app_set_color(cairo_t *cr, AppColor color)
@@ -199,14 +212,14 @@ void app_text_box(cairo_t *cr, const char *const *lines, size_t line_count, doub
     }
     double x = center.x - box_width / 2, y = center.y - box_height / 2;
     app_rounded_rect(cr, x, y, box_width, box_height, 4);
-    app_set_fill_color(cr, app_color_rgba(255, 255, 255, 0.88));
+    app_set_fill_color(cr, dark_mode ? app_color_rgba(30, 34, 40, 0.92) : app_color_rgba(255, 255, 255, 0.88));
     cairo_fill_preserve(cr);
-    app_set_color(cr, app_color_hex("#9aa3ad"));
+    app_set_color(cr, app_color_hex(app_theme("#9aa3ad", "#5a626e")));
     cairo_set_line_width(cr, 1);
     cairo_stroke(cr);
     double line_y = y + 3;
     for (size_t i = 0; i < line_count; i++) {
-        AppTextStyle style = {size_px, i == 0, app_color_hex("#20242a"), APP_TRANSPARENT};
+        AppTextStyle style = {size_px, i == 0, app_color_hex(app_theme("#20242a", "#e6e9ed")), APP_TRANSPARENT};
         app_text_centered(cr, lines[i], &style, tl_vec2(center.x, line_y + heights[i] / 2), 0);
         line_y += heights[i];
     }
