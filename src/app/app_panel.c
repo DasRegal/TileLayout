@@ -42,6 +42,19 @@ static const struct {
 } ROW_SHIFTS[] = {{"Без сдвига", 0.0}, {"Вразбежку 1/2", 0.5}, {"Вразбежку 1/3", 1.0 / 3.0},
                   {"Вразбежку 1/4", 0.25}};
 
+/* Окна настроек комнаты: на панели — кнопка со сводкой (как на сайте). */
+typedef enum AppSettingsWindow {
+    APP_SETTINGS_CUT,        /* калибр, отступ, подрезка, запас */
+    APP_SETTINGS_MATERIALS,  /* клей, СВП, затирка и грунт */
+    APP_SETTINGS_EXTRAS,     /* гидроизоляция, профили */
+    APP_SETTINGS_PRICES,
+    APP_SETTINGS_ZONES,      /* бордюр, ковёр */
+    APP_SETTINGS_COUNT
+} AppSettingsWindow;
+
+static const char *const SETTINGS_TITLES[APP_SETTINGS_COUNT] = {
+    "Подрезка и запас", "Клей, СВП, затирка, грунт", "Гидроизоляция и профили", "Цены для сметы", "Бордюр и ковёр"};
+
 struct AppPanel {
     AppDocument *document;
     AppCanvas *canvas;
@@ -100,7 +113,12 @@ struct AppPanel {
     GtkWidget *threshold_to_left, *threshold_middle, *threshold_to_right, *threshold_gap, *threshold_skew;
 
     AppSection tile_section, glue_section, clip_section, grout_section, price_section;
-    AppSection waterproof_section, profile_section;
+    AppSection waterproof_section, profile_section, cut_section;
+    AppSection launch_section;                         /* «Настройки комнаты»: кнопки окон */
+    GtkWidget *tools_frame;                            /* настройки инструментов рисования */
+    GtkWidget *settings_box[APP_SETTINGS_COUNT];       /* содержимое окон настроек */
+    GtkWidget *settings_window[APP_SETTINGS_COUNT];
+    GtkWidget *settings_summary[APP_SETTINGS_COUNT];
     GtkWidget *price_unit;               /* цена плитки — за м², штуку или упаковку */
     GtkWidget *shared_note, *pattern, *pattern_note, *row_shift, *color_button, *color2_button, *texture_name;
     GtkWidget *corners, *centers, *lines; /* раскладка от угла, по центру, от линии — у каждой комнаты своя */
@@ -2106,6 +2124,99 @@ static void refresh_underlay(AppPanel *panel)
     gtk_label_set_text(GTK_LABEL(panel->underlay_scale_unit), underlay->image ? "мм на пиксель" : "Масштаб, ×");
 }
 
+/* Строка секции (подпись слева и поле) — видна или нет: поле, которое к рисунку не относится, не мешает. */
+static void set_row_visible(GtkWidget *widget, bool visible)
+{
+    GtkWidget *parent = gtk_widget_get_parent(widget);
+    if (!GTK_IS_GRID(parent))
+        return;
+    int top = 0;
+    gtk_container_child_get(GTK_CONTAINER(parent), widget, "top-attach", &top, NULL);
+    GtkWidget *caption = gtk_grid_get_child_at(GTK_GRID(parent), 0, top);
+    gtk_widget_set_visible(widget, visible);
+    if (caption && caption != widget)
+        gtk_widget_set_visible(caption, visible);
+}
+
+/* ---- окна настроек комнаты --------------------------------------------------------- */
+
+/* Окно со своей прокруткой; закрытие только прячет его — поля живут, пока жива панель. */
+static void settings_window(AppPanel *panel, AppSettingsWindow which)
+{
+    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), SETTINGS_TITLES[which]);
+    gtk_window_set_default_size(GTK_WINDOW(window), 430, which == APP_SETTINGS_ZONES || which == APP_SETTINGS_PRICES ? 640 : 460);
+    gtk_window_set_type_hint(GTK_WINDOW(window), GDK_WINDOW_TYPE_HINT_DIALOG);
+    g_signal_connect(window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete), NULL);
+    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    gtk_container_add(GTK_CONTAINER(scrolled), box);
+    gtk_container_add(GTK_CONTAINER(window), scrolled);
+    gtk_widget_show_all(scrolled);
+    panel->settings_box[which] = box;
+    panel->settings_window[which] = window;
+}
+
+static void on_open_settings(GtkButton *button, AppPanel *panel)
+{
+    int which = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "settings"));
+    GtkWidget *window = panel->settings_window[which];
+    gtk_window_set_transient_for(GTK_WINDOW(window), GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(button))));
+    gtk_window_present(GTK_WINDOW(window));
+}
+
+/* «Настройки комнаты»: по кнопке на окно — название и сводка (refresh_launchers). */
+static void build_launchers(AppPanel *panel, GtkWidget *box)
+{
+    AppSection *s = &panel->launch_section;
+    *s = app_section_new(box, "Настройки комнаты");
+    for (int w = 0; w < APP_SETTINGS_COUNT; w++) {
+        GtkWidget *button = gtk_button_new();
+        GtkWidget *text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
+        GtkWidget *title = gtk_label_new(NULL);
+        char *markup = g_markup_printf_escaped("<b>%s</b>", SETTINGS_TITLES[w]);
+        gtk_label_set_markup(GTK_LABEL(title), markup);
+        g_free(markup);
+        gtk_label_set_xalign(GTK_LABEL(title), 0);
+        panel->settings_summary[w] = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(panel->settings_summary[w]), 0);
+        gtk_label_set_ellipsize(GTK_LABEL(panel->settings_summary[w]), PANGO_ELLIPSIZE_END);
+        gtk_widget_set_opacity(panel->settings_summary[w], 0.7);
+        gtk_box_pack_start(GTK_BOX(text), title, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(text), panel->settings_summary[w], FALSE, FALSE, 0);
+        GtkWidget *row = app_hbox(6);
+        gtk_box_pack_start(GTK_BOX(row), text, TRUE, TRUE, 0);
+        gtk_box_pack_end(GTK_BOX(row), gtk_label_new("›"), FALSE, FALSE, 0);
+        gtk_container_add(GTK_CONTAINER(button), row);
+        gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+        g_object_set_data(G_OBJECT(button), "settings", GINT_TO_POINTER(w));
+        app_section_wide(s, connect_button(button, G_CALLBACK(on_open_settings), panel));
+    }
+}
+
+static void refresh_launchers(AppPanel *panel, TlSpace *space)
+{
+    const TlTileSettings *t = tl_space_effective_tile(space);
+    char text[APP_SETTINGS_COUNT][160];
+    snprintf(text[APP_SETTINGS_CUT], 160, "запас %g%%, подрезка от %g мм%s", t->reserve_percent, t->min_cut_width,
+             t->real_width > 0 ? ", калибр" : "");
+    snprintf(text[APP_SETTINGS_MATERIALS], 160, "клей %g мм · %s", t->glue_layer_mm, t->use_crosses ? "крестики" : "СВП");
+    snprintf(text[APP_SETTINGS_EXTRAS], 160, "%s%s%s", t->waterproof ? "гидроизоляция " : "",
+             t->threshold_profile ? "пороги " : "", t->corner_profile_height > 0 ? "уголки" : "");
+    if (!text[APP_SETTINGS_EXTRAS][0])
+        snprintf(text[APP_SETTINGS_EXTRAS], 160, "не нужны");
+    if (t->price_tile_m2 > 0)
+        snprintf(text[APP_SETTINGS_PRICES], 160, "плитка %g ₽", t->price_tile_m2);
+    else
+        snprintf(text[APP_SETTINGS_PRICES], 160, "не заданы");
+    bool border = space->zones[TL_ZONE_BORDER].enabled, carpet = space->zones[TL_ZONE_CARPET].enabled;
+    snprintf(text[APP_SETTINGS_ZONES], 160, "%s", border && carpet ? "бордюр и ковёр" : border ? "бордюр" : carpet ? "ковёр" : "нет");
+    for (int w = 0; w < APP_SETTINGS_COUNT; w++)
+        gtk_label_set_text(GTK_LABEL(panel->settings_summary[w]), text[w]);
+}
+
 static void build_rooms(AppPanel *panel, GtkWidget *box)
 {
     AppSection section = app_section_new(box, "Комнаты");
@@ -2130,6 +2241,7 @@ static void build_rooms(AppPanel *panel, GtkWidget *box)
 static void build_tools(AppPanel *panel, GtkWidget *box)
 {
     AppSection section = app_section_new(box, "Перегородки, проёмы, швы, разделы, линейки, трубы, предметы, трапы");
+    panel->tools_frame = section.frame;
     panel->partition_thickness = app_unit_spin_new(10, 1000, 10, 0, "мм");
     g_signal_connect(panel->partition_thickness, "value-changed", G_CALLBACK(on_partition_preference), panel);
     gtk_grid_attach(GTK_GRID(section.grid), tool_button(panel, "partition", "Перегородка", APP_TOOL_PARTITION), 0, 0, 1, 1);
@@ -2571,6 +2683,8 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
 {
     AppSection *s = &panel->tile_section;
     *s = app_section_new(box, "Плитка");
+    AppSection *cut = &panel->cut_section; /* подрезка и запас — в своём окне */
+    *cut = app_section_new(panel->settings_box[APP_SETTINGS_CUT], "Подрезка и запас");
     panel->shared_note = gtk_label_new("");
     gtk_label_set_line_wrap(GTK_LABEL(panel->shared_note), TRUE);
     gtk_label_set_xalign(GTK_LABEL(panel->shared_note), 0);
@@ -2616,10 +2730,10 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     GtkWidget *real_w = tile_spin(panel, "real_w", 0, 5000, 0.5, 1, "мм");
     gtk_widget_set_tooltip_text(real_w, "Калибр: настоящий размер плитки (598 у 600). Кладут по нему, покупают — "
                                         "по номинальному. 0 — как номинальный (ректификат)");
-    app_section_row(s, "Факт. длина (калибр)", real_w);
+    app_section_row(cut, "Факт. длина (калибр)", real_w);
     GtkWidget *real_h = tile_spin(panel, "real_h", 0, 5000, 0.5, 1, "мм");
     gtk_widget_set_tooltip_text(real_h, "Калибр: настоящая ширина (298 у 300); 0 — как номинальная");
-    app_section_row(s, "Факт. ширина (калибр)", real_h);
+    app_section_row(cut, "Факт. ширина (калибр)", real_h);
     app_section_row(s, "Шов (зазор)", tile_spin(panel, "gap", 0, 50, 0.5, 1, "мм"));
     GtkWidget *chevron = tile_spin(panel, "pattern_angle", 15, 75, 5, 0, "°");
     gtk_widget_set_tooltip_text(chevron, "Угол среза торцов шеврона к длинной стороне (обычно 45°)");
@@ -2701,20 +2815,20 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     GtkWidget *gap = tile_spin(panel, "wall_gap", 0, 100, 1, 1, "мм");
     gtk_widget_set_tooltip_text(gap, "Плитка не доходит до стен и перегородок на это расстояние\n"
                                      "(компенсационный зазор; обычно закрывается плинтусом)");
-    app_section_row(s, "Отступ от стены", gap);
+    app_section_row(cut, "Отступ от стены", gap);
     GtkWidget *min_cut = tile_spin(panel, "min_cut", 0, 1000, 5, 0, "мм");
     gtk_widget_set_tooltip_text(min_cut, "Самая узкая полоска плитки, которую нормально отрезать и уложить.\n"
                                          "Подрезки уже этого — «узкие»: подсвечиваются красным, считаются в\n"
                                          "расчёте; «Без узких подрезок» подбирает раскладку без них.");
-    app_section_row(s, "Мин. ширина подрезки", min_cut);
+    app_section_row(cut, "Мин. ширина подрезки", min_cut);
     GtkWidget *reuse = gtk_check_button_new_with_label("Использовать остатки подрезок");
     gtk_widget_set_tooltip_text(reuse, "Остаток подрезанной плитки идёт в другую подрезку — в этой\n"
                                        "или любой другой комнате с той же плиткой, где тоже включено\n"
                                        "(учитывается в итоге)");
     bind_tile(panel, "reuse", reuse);
-    app_section_wide(s, reuse);
-    app_section_row(s, "Запас на рез", tile_spin(panel, "cut_allow", 0, 20, 0.5, 1, "мм"));
-    app_section_row(s, "Запас", tile_spin(panel, "reserve", 0, 100, 1, 0, "%"));
+    app_section_wide(cut, reuse);
+    app_section_row(cut, "Запас на рез", tile_spin(panel, "cut_allow", 0, 20, 0.5, 1, "мм"));
+    app_section_row(cut, "Запас", tile_spin(panel, "reserve", 0, 100, 1, 0, "%"));
     panel->color_button = gtk_color_button_new();
     g_object_set_data(G_OBJECT(panel->color_button), "key", "color");
     g_signal_connect(panel->color_button, "color-set", G_CALLBACK(on_color), panel);
@@ -2725,14 +2839,15 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     g_signal_connect(panel->color2_button, "color-set", G_CALLBACK(on_color), panel);
     app_section_row(s, "Цвет второй плитки", panel->color2_button);
 
-    panel->glue_section = app_section_new(box, "Клей");
+    GtkWidget *materials = panel->settings_box[APP_SETTINGS_MATERIALS];
+    panel->glue_section = app_section_new(materials, "Клей");
     GtkWidget *rate = tile_spin(panel, "glue_rate", 0.1, 10, 0.05, 2, "кг/м²");
     gtk_widget_set_tooltip_text(rate, "Расход клея на 1 м² при толщине слоя 1 мм (см. упаковку)");
     app_section_row(&panel->glue_section, "Расход на 1 мм", rate);
     app_section_row(&panel->glue_section, "Толщина слоя", tile_spin(panel, "glue_mm", 0.5, 50, 0.5, 1, "мм"));
     app_section_row(&panel->glue_section, "Масса мешка", tile_spin(panel, "glue_bag", 1, 100, 1, 1, "кг"));
 
-    panel->clip_section = app_section_new(box, "СВП (система выравнивания)");
+    panel->clip_section = app_section_new(materials, "СВП (система выравнивания)");
     app_section_row(&panel->clip_section, "На длинную сторону", tile_spin(panel, "svp_long", 0, 20, 1, 0, "шт."));
     app_section_row(&panel->clip_section, "На короткую сторону", tile_spin(panel, "svp_short", 0, 20, 1, 0, "шт."));
     app_section_row(&panel->clip_section, "В упаковке", tile_spin(panel, "svp_pack", 1, 10000, 50, 0, "шт."));
@@ -2743,7 +2858,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(&panel->clip_section, "Крестиков в упаковке", tile_spin(panel, "crosses_pack", 1, 100000, 50, 0, "шт."));
 
     AppSection *grout = &panel->grout_section;
-    *grout = app_section_new(box, "Затирка и грунт");
+    *grout = app_section_new(materials, "Затирка и грунт");
     GtkWidget *thickness = tile_spin(panel, "thickness", 1, 50, 0.5, 1, "мм");
     gtk_widget_set_tooltip_text(thickness, "Толщина плитки — глубина шва под затирку");
     app_section_row(grout, "Толщина плитки", thickness);
@@ -2757,7 +2872,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(grout, "Грунт в канистре", tile_spin(panel, "primer_can", 0.5, 100, 0.5, 1, "л"));
 
     AppSection *waterproof = &panel->waterproof_section;
-    *waterproof = app_section_new(box, "Гидроизоляция");
+    *waterproof = app_section_new(panel->settings_box[APP_SETTINGS_EXTRAS], "Гидроизоляция");
     GtkWidget *wet = gtk_check_button_new_with_label("Гидроизоляция пола (санузел, душ)");
     gtk_widget_set_tooltip_text(wet, "Обмазочная гидроизоляция пола с заходом на стены и лента по стыку пола и стен");
     bind_tile(panel, "waterproof", wet);
@@ -2770,7 +2885,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(waterproof, "В упаковке", tile_spin(panel, "waterproof_pack", 0.5, 100, 0.5, 1, "кг"));
 
     AppSection *profiles = &panel->profile_section;
-    *profiles = app_section_new(box, "Профили");
+    *profiles = app_section_new(panel->settings_box[APP_SETTINGS_EXTRAS], "Профили");
     GtkWidget *threshold = gtk_check_button_new_with_label("Порог-профиль в дверях");
     gtk_widget_set_tooltip_text(threshold, "Стыковочный профиль по стыку полов в каждой двери комнаты");
     bind_tile(panel, "threshold_profile", threshold);
@@ -2782,7 +2897,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(profiles, "Длина планки", tile_spin(panel, "profile_length", 500, 6000, 100, 0, "мм"));
 
     AppSection *prices = &panel->price_section;
-    *prices = app_section_new(box, "Цены для сметы");
+    *prices = app_section_new(panel->settings_box[APP_SETTINGS_PRICES], "Цены для сметы");
     GtkWidget *note = gtk_label_new("0 — позиция без цены, в смету не идёт.");
     gtk_label_set_xalign(GTK_LABEL(note), 0);
     gtk_widget_set_opacity(note, 0.7);
@@ -2809,9 +2924,9 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     app_section_row(prices, "Порог (планка)", tile_spin(panel, "price_threshold", 0, 1e6, 10, 0, "₽/шт."));
     app_section_row(prices, "Уголок (планка)", tile_spin(panel, "price_corner", 0, 1e6, 10, 0, "₽/шт."));
     app_section_row(prices, "Укладка", tile_spin(panel, "price_work", 0, 1e6, 50, 0, "₽/м²"));
-    GtkWidget *cut = tile_spin(panel, "price_cut", 0, 1e6, 10, 0, "₽/м");
-    gtk_widget_set_tooltip_text(cut, "Подрезка — за погонный метр резов (по чертежам подрезок)");
-    app_section_row(prices, "Подрезка", cut);
+    GtkWidget *cut_price = tile_spin(panel, "price_cut", 0, 1e6, 10, 0, "₽/м");
+    gtk_widget_set_tooltip_text(cut_price, "Подрезка — за погонный метр резов (по чертежам подрезок)");
+    app_section_row(prices, "Подрезка", cut_price);
 }
 
 static void build_calc(AppPanel *panel, GtkWidget *box)
@@ -3010,14 +3125,14 @@ static void refresh_tile(AppPanel *panel, TlSpace *const *rooms, size_t count)
     gtk_combo_box_set_active(GTK_COMBO_BOX(panel->pattern),
                              same_pattern ? (int)(pattern - patterns) : (int)pattern_count);
     refresh_pattern_note(panel, tile, pattern);
-    gtk_widget_set_sensitive(panel->row_shift, !same_pattern || pattern->uses_row_shift);
-    gtk_widget_set_sensitive(panel->color2_button, !same_pattern || pattern->uses_second_color);
+    set_row_visible(panel->row_shift, !same_pattern || pattern->uses_row_shift);
+    set_row_visible(panel->color2_button, !same_pattern || pattern->uses_second_color);
     for (size_t i = 0; i < panel->tile_binding_count; i++) { /* поля, нужные только своему рисунку */
         const char *key = panel->tile_bindings[i].field->key;
         if (strcmp(key, "pattern_angle") == 0)
-            gtk_widget_set_sensitive(panel->tile_bindings[i].widget, !same_pattern || strcmp(pattern->id, "chevron") == 0);
+            set_row_visible(panel->tile_bindings[i].widget, !same_pattern || strcmp(pattern->id, "chevron") == 0);
         if (strcmp(key, "insert") == 0)
-            gtk_widget_set_sensitive(panel->tile_bindings[i].widget, !same_pattern || strcmp(pattern->id, "insert") == 0);
+            set_row_visible(panel->tile_bindings[i].widget, !same_pattern || strcmp(pattern->id, "insert") == 0);
     }
     set_color_button(panel->color2_button, tile->color2);
     gtk_combo_box_set_active(GTK_COMBO_BOX(panel->price_unit), tile->price_tile_unit);
@@ -3147,12 +3262,23 @@ static void refresh(AppPanel *panel)
     set_spin(panel->pipe_diameter, document->preferences.pipe_diameter);
     set_check(panel->auto_align, document->preferences.auto_align);
     refresh_underlay(panel);
+    /* настройки рисования и подложка — когда ничего не выделено или рисуют; у выделенного — его настройки */
+    bool drawing = app_canvas_tool(panel->canvas) != APP_TOOL_SELECT;
+    bool idle = s->kind == APP_SELECT_NONE || drawing;
+    gtk_widget_set_visible(panel->tools_frame, idle);
+    gtk_widget_set_visible(panel->underlay_section.frame, idle && !drawing);
 
     gtk_widget_set_visible(panel->space_section.frame, room_count == 1);
     /* на вкладке стен комнаты — только её стены; на плане — пол и кнопка развёртки */
     bool walls_mode = space && document->walls_space == space->id;
     bool floor_mode = space && !walls_mode;
     gtk_widget_set_visible(panel->tile_section.frame, floor_mode);
+    gtk_widget_set_visible(panel->launch_section.frame, floor_mode);
+    gtk_widget_set_visible(panel->cut_section.frame, floor_mode);
+    if (floor_mode)
+        refresh_launchers(panel, space);
+    for (int w = 0; !floor_mode && w < APP_SETTINGS_COUNT; w++) /* к стенам или к плану без комнаты — окна прочь */
+        gtk_widget_hide(panel->settings_window[w]);
     gtk_widget_set_visible(panel->glue_section.frame, floor_mode);
     gtk_widget_set_visible(panel->clip_section.frame, floor_mode);
     gtk_widget_set_visible(panel->grout_section.frame, floor_mode);
@@ -3243,6 +3369,8 @@ static void on_document_changed(AppDocument *document, unsigned changes, void *d
 
 static void hide_until_needed(AppSection *section) { gtk_widget_set_no_show_all(section->frame, TRUE); }
 
+void app_panel_tool_changed(AppPanel *panel) { refresh(panel); }
+
 AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelActions actions)
 {
     AppPanel *panel = g_new0(AppPanel, 1);
@@ -3270,10 +3398,13 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_node(panel, box);
     build_vertex(panel, box);
     build_ruler(panel, box);
+    for (int w = 0; w < APP_SETTINGS_COUNT; w++)
+        settings_window(panel, (AppSettingsWindow)w);
     build_tile(panel, box);
+    build_launchers(panel, box);
     build_area(panel, box);
-    build_zone(panel, box, TL_ZONE_BORDER);
-    build_zone(panel, box, TL_ZONE_CARPET);
+    build_zone(panel, panel->settings_box[APP_SETTINGS_ZONES], TL_ZONE_BORDER);
+    build_zone(panel, panel->settings_box[APP_SETTINGS_ZONES], TL_ZONE_CARPET);
     build_wall_items(panel, box);
     build_panno(panel, box);
     build_walls(panel, box);
@@ -3283,6 +3414,7 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
                                  &panel->expansion_joint_section, &panel->pipe_section,
                                  &panel->tile_section,
                                  &panel->glue_section, &panel->clip_section, &panel->grout_section,
+                                 &panel->cut_section, &panel->launch_section,
                                  &panel->waterproof_section, &panel->profile_section,
                                  &panel->price_section, &panel->zone_sections[TL_ZONE_BORDER],
                                  &panel->zone_sections[TL_ZONE_CARPET], &panel->walls_section,

@@ -19,5 +19,7 @@ typedef struct AppPanel AppPanel;
 
 AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelActions actions);
 GtkWidget *app_panel_widget(AppPanel *panel);
+/* Сменился инструмент: настройки рисования видны, пока рисуют или ничего не выделено. */
+void app_panel_tool_changed(AppPanel *panel);
 
 #endif

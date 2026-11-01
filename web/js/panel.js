@@ -122,9 +122,6 @@ const SECTIONS = [
       { key: 'pattern', label: 'Укладка', options: PATTERNS, note: patternNote },
       { key: 'w', label: 'Длина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
       { key: 'h', label: 'Ширина плитки', min: 10, max: 5000, step: 10, unit: 'мм' },
-      { key: 'real_w', label: 'Факт. длина (калибр)', min: 0, max: 5000, step: 0.5, unit: 'мм',
-        note: () => 'Калибр: настоящий размер (598 у 600). Кладут по нему, покупают — по номинальному; 0 — как номинальный.' },
-      { key: 'real_h', label: 'Факт. ширина (калибр)', min: 0, max: 5000, step: 0.5, unit: 'мм' },
       { key: 'gap', label: 'Шов (зазор)', min: 0, max: 50, step: 0.5, unit: 'мм' },
       { key: 'pattern_angle', label: 'Угол шеврона', min: 15, max: 75, step: 5, unit: '°', when: (tile) => patternOf(tile) === 'chevron' },
       { key: 'insert', label: 'Вставка (кабошон)', min: 10, max: 500, step: 5, unit: 'мм', when: (tile) => patternOf(tile) === 'insert' },
@@ -132,17 +129,27 @@ const SECTIONS = [
       { key: 'angle', label: 'Поворот', min: -180, max: 180, step: 5, unit: '°' },
       { key: 'off_x', label: 'Смещение X', min: -100000, max: 100000, step: 5, unit: 'мм' },
       { key: 'off_y', label: 'Смещение Y', min: -100000, max: 100000, step: 5, unit: 'мм' },
-      { key: 'wall_gap', label: 'Отступ от стены', min: 0, max: 100, step: 1, unit: 'мм' },
-      { key: 'min_cut', label: 'Мин. ширина подрезки', min: 0, max: 1000, step: 5, unit: 'мм' },
-      { key: 'reuse', label: 'Использовать остатки подрезок', check: true },
-      { key: 'cut_allow', label: 'Запас на рез', min: 0, max: 20, step: 0.5, unit: 'мм' },
-      { key: 'reserve', label: 'Запас', min: 0, max: 100, step: 1, unit: '%' },
       { key: 'color', label: 'Цвет', color: true },
       { key: 'color2', label: 'Цвет второй плитки', color: true, when: (tile) => ['checker', 'insert'].includes(patternOf(tile)) },
     ],
   },
   {
+    title: 'Подрезка и запас',
+    group: 'cut',
+    fields: [
+      { key: 'real_w', label: 'Факт. длина (калибр)', min: 0, max: 5000, step: 0.5, unit: 'мм',
+        note: () => 'Калибр: настоящий размер (598 у 600). Кладут по нему, покупают — по номинальному; 0 — как номинальный.' },
+      { key: 'real_h', label: 'Факт. ширина (калибр)', min: 0, max: 5000, step: 0.5, unit: 'мм' },
+      { key: 'wall_gap', label: 'Отступ от стены', min: 0, max: 100, step: 1, unit: 'мм' },
+      { key: 'min_cut', label: 'Мин. ширина подрезки', min: 0, max: 1000, step: 5, unit: 'мм' },
+      { key: 'reuse', label: 'Использовать остатки подрезок', check: true },
+      { key: 'cut_allow', label: 'Запас на рез', min: 0, max: 20, step: 0.5, unit: 'мм' },
+      { key: 'reserve', label: 'Запас', min: 0, max: 100, step: 1, unit: '%' },
+    ],
+  },
+  {
     title: 'Клей',
+    group: 'materials',
     fields: [
       { key: 'glue_rate', label: 'Расход на 1 мм', min: 0.1, max: 10, step: 0.05, unit: 'кг/м²' },
       { key: 'glue_mm', label: 'Толщина слоя', min: 0.5, max: 50, step: 0.5, unit: 'мм' },
@@ -151,6 +158,7 @@ const SECTIONS = [
   },
   {
     title: 'СВП (система выравнивания)',
+    group: 'materials',
     fields: [
       { key: 'svp_long', label: 'На длинную сторону', min: 0, max: 20, step: 1, unit: 'шт.' },
       { key: 'svp_short', label: 'На короткую сторону', min: 0, max: 20, step: 1, unit: 'шт.' },
@@ -161,6 +169,7 @@ const SECTIONS = [
   },
   {
     title: 'Затирка и грунт',
+    group: 'materials',
     fields: [
       { key: 'thickness', label: 'Толщина плитки (глубина шва)', min: 1, max: 50, step: 0.5, unit: 'мм' },
       { key: 'grout_density', label: 'Плотность затирки', min: 0.5, max: 3, step: 0.05, unit: 'кг/дм³' },
@@ -171,6 +180,7 @@ const SECTIONS = [
   },
   {
     title: 'Гидроизоляция',
+    group: 'extras',
     fields: [
       { key: 'waterproof', label: 'Гидроизоляция пола (санузел, душ)', check: true },
       { key: 'waterproof_height', label: 'Заход на стены', min: 0, max: 3000, step: 50, unit: 'мм' },
@@ -181,6 +191,7 @@ const SECTIONS = [
   },
   {
     title: 'Профили',
+    group: 'extras',
     fields: [
       { key: 'threshold_profile', label: 'Порог-профиль в дверях', check: true },
       { key: 'corner_height', label: 'Уголки на наружные углы, высота (0 — не нужны)', min: 0, max: 5000, step: 50, unit: 'мм' },
@@ -189,6 +200,7 @@ const SECTIONS = [
   },
   {
     title: 'Цены для сметы',
+    group: 'prices',
     hint: '0 — позиция без цены, в смету не идёт.',
     fields: [
       { key: 'price_tile', label: 'Плитка', min: 0, max: 1e6, step: 50, unit: '₽' },
@@ -207,6 +219,37 @@ const SECTIONS = [
       { key: 'price_cut', label: 'Подрезка', min: 0, max: 1e6, step: 10, unit: '₽/пог. м' },
     ],
   },
+];
+
+const number = (value) => String(Math.round(value * 100) / 100).replace('.', ',');
+const tileSize = (tile) => `${number(tile.w)}×${number(tile.h)}`;
+
+/*
+ * Окна настроек комнаты: на панели — кнопка с короткой сводкой, по ней — окно с разделами (поля — те же,
+ * что были на панели). На плане — настройки пола, во вкладке стен — полосы облицовки.
+ */
+const FLOOR_DIALOGS = [
+  { key: 'cut', title: 'Подрезка и запас',
+    summary: (tile) => `запас ${number(tile.reserve)}%, подрезка от ${number(tile.min_cut)} мм${tile.real_w > 0 ? ', калибр' : ''}` },
+  { key: 'materials', title: 'Клей, СВП, затирка, грунт',
+    summary: (tile) => `клей ${number(tile.glue_mm)} мм · ${tile.crosses ? 'крестики' : `СВП ${tile.svp_long}+${tile.svp_short}`} · шов ${number(tile.gap)} мм` },
+  { key: 'extras', title: 'Гидроизоляция и профили',
+    summary: (tile) => [tile.waterproof && 'гидроизоляция', tile.threshold_profile && 'пороги', tile.corner_height > 0 && 'уголки']
+      .filter(Boolean).join(', ') || 'не нужны' },
+  { key: 'prices', title: 'Цены для сметы',
+    summary: (tile) => (tile.price_tile > 0 ? `плитка ${number(tile.price_tile)} ₽${tile.price_work > 0 ? `, укладка ${number(tile.price_work)} ₽/м²` : ''}` : 'не заданы') },
+  { key: 'zones', title: 'Бордюр, ковёр, панно',
+    summary: (tile, room) => [room.zones.border.enabled && 'бордюр', room.zones.carpet.enabled && 'ковёр',
+      room.pannos?.length && `панно: ${room.pannos.length}`].filter(Boolean).join(', ') || 'нет' },
+];
+const WALL_DIALOGS = [
+  { key: 'wall_main', title: 'Плитка стен',
+    summary: (tile, room) => (room.walls.enabled ? `${tileSize(room.walls.bands.main.tile)} мм` : 'облицовка выключена') },
+  { key: 'wall_lower', title: 'Низ стен',
+    summary: (tile, room) => (room.walls.bands.lower.enabled ? `${number(room.walls.bands.lower.width)} мм, ${tileSize(room.walls.bands.lower.tile)}` : 'нет') },
+  { key: 'wall_frieze', title: 'Фриз',
+    summary: (tile, room) => (room.walls.bands.frieze.enabled ? `${tileSize(room.walls.bands.frieze.tile)} мм` : 'нет') },
+  { key: 'wall_panno', title: 'Панно на стене', summary: () => 'на выделенную стену' },
 ];
 
 const TOOL_TITLES = {
@@ -508,6 +551,7 @@ export class Panel {
     this.floorBlocks = []; // разделы пола — на вкладке стен скрыты
     this.tileEnabledRow = this.enabled.closest('.row');
     this.texture = this.root.querySelector('.texture');
+    const groups = {}; // окно → его разделы
     for (const section of SECTIONS) {
       const block = document.createElement('fieldset');
       const legend = document.createElement('legend');
@@ -518,16 +562,85 @@ export class Panel {
         block.append(this.row(field));
         if (field.note) block.append((this.inputs.get(field.key).note = hint('')));
       }
-      fields.append(block);
-      this.floorBlocks.push(block);
+      if (section.group) {
+        (groups[section.group] ||= []).push(block);
+      } else {
+        fields.append(block);
+        this.floorBlocks.push(block);
+      }
     }
+    fields.append(this.align); // раскладка от угла, двери, линейки — под полями плитки
     this.zoneInputs = []; // {zone, field, input}
-    for (const zone of ZONES) this.floorBlocks.push(fields.appendChild(this.zoneBlock(zone)));
-    this.floorBlocks.push(fields.appendChild(this.pannoBlock('Добавить панно на пол')));
+    groups.zones = [...ZONES.map((zone) => this.zoneBlock(zone)), this.pannoBlock('Добавить панно на пол')];
+    WALL_BANDS.forEach((zone) => (groups[zone.key] = [this.zoneBlock(zone)]));
+    groups.wall_panno = [this.pannoBlock('Добавить панно на стену')];
     this.areaBlock = fields.insertBefore(this.buildAreaBlock(), fields.firstChild);
-    fields.append(this.wallsBlock());
-    this.bandBlocks = WALL_BANDS.map((zone) => fields.appendChild(this.zoneBlock(zone)));
-    this.bandBlocks.push(fields.appendChild(this.pannoBlock('Добавить панно на стену')));
+    this.floorLaunchers = this.launchers('Настройки комнаты', FLOOR_DIALOGS, groups);
+    this.wallLaunchers = this.launchers('Облицовка стен', WALL_DIALOGS, groups);
+    fields.append(this.floorLaunchers.element, this.wallsBlock(), this.wallLaunchers.element);
+    this.floorBlocks.push(this.floorLaunchers.element);
+    this.bandBlocks = [this.wallLaunchers.element];
+  }
+
+  /** Список кнопок: у каждой — окно с разделами groups[key] и сводка (обновляет updateLaunchers). */
+  launchers(title, dialogs, groups) {
+    const element = document.createElement('div');
+    element.className = 'launchers';
+    const heading = document.createElement('span');
+    heading.className = 'launchers-title';
+    heading.textContent = title;
+    element.append(heading);
+    const items = dialogs.map((entry) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'launcher';
+      button.id = `open-${entry.key}`;
+      const name = document.createElement('span');
+      name.className = 'launcher-name';
+      name.textContent = entry.title;
+      const summary = document.createElement('span');
+      summary.className = 'launcher-summary';
+      const arrow = document.createElement('span');
+      arrow.className = 'launcher-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '›';
+      button.append(name, summary, arrow);
+      const dialog = this.settingsDialog(entry.title, groups[entry.key]);
+      button.addEventListener('click', () => dialog.showModal());
+      element.append(button);
+      return { entry, summary };
+    });
+    return { element, items };
+  }
+
+  /** Окно настроек: заголовок, «Готово» и разделы; поля меняют проект сразу, окно — только чтобы не мешать. */
+  settingsDialog(title, blocks) {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'settings-dialog';
+    const header = document.createElement('header');
+    const heading = document.createElement('h2');
+    heading.textContent = title;
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'primary';
+    done.textContent = 'Готово';
+    done.addEventListener('click', () => dialog.close());
+    header.append(heading, done);
+    const body = document.createElement('div');
+    body.className = 'settings-body';
+    body.append(...blocks);
+    dialog.append(header, body);
+    dialog.addEventListener('click', (event) => { // щелчок мимо окна — закрыть
+      if (event.target === dialog) dialog.close();
+    });
+    this.root.append(dialog);
+    return dialog;
+  }
+
+  updateLaunchers(room) {
+    for (const { entry, summary } of [...this.floorLaunchers.items, ...this.wallLaunchers.items]) {
+      summary.textContent = entry.summary(room.tile, room);
+    }
   }
 
   /** Участок пола: покрытие выделенной части комнаты, название и плитка (как у зон). */
@@ -953,6 +1066,9 @@ export class Panel {
       const found = data.tile.texture && catalogs.find(data.tile.texture);
       extras.name.textContent = !data.tile.texture ? 'только цвет' : found ? found.tile.name : data.tile.texture;
       for (const button of extras.buttons) button.disabled = !zoneActive(room, zone.key);
+      const off = zone.check && !zoneActive(room, zone.key); /* выключено — без полей плитки */
+      extras.size.hidden = off || !extras.size.textContent;
+      extras.name.parentElement.hidden = off;
     }
     for (const { zone, field, input } of this.zoneInputs) {
       if (zone === 'area' && !room.regions[room.region]) continue;
@@ -961,6 +1077,8 @@ export class Panel {
       showValue(field, input, field.key === 'pattern' ? data.tile.pattern || 'straight' : value);
       const wall = zone.startsWith('wall_');
       input.disabled = field.key === 'enabled' ? wall && !room.walls.enabled : !zoneActive(room, zone);
+      const checked = [...ZONES, ...WALL_BANDS].find((z) => z.key === zone)?.check;
+      input.closest('.row').hidden = Boolean(checked) && field.key !== 'enabled' && !zoneActive(room, zone);
     }
     for (const { field, input } of this.wallInputs) {
       showValue(field, input, room.walls[field.key]);
@@ -976,11 +1094,11 @@ export class Panel {
     this.enabled.checked = tile.enabled;
     this.enabled.indeterminate = !same('enabled');
     const samePattern = rooms.every((r) => patternOf(r.tile) === patternOf(tile));
-    for (const { field, input, note } of this.inputs.values()) {
+    for (const { field, input, note, row } of this.inputs.values()) {
       const value = tile[field.key];
       const mixed = !same(field.key);
-      input.disabled = (!single && (field.key === 'off_x' || field.key === 'off_y')) ||
-        (field.when && samePattern && !field.when(tile)); // у рисунка это поле не действует
+      input.disabled = !single && (field.key === 'off_x' || field.key === 'off_y');
+      row.hidden = Boolean(field.when && samePattern && !field.when(tile)); // у этого рисунка поле не действует
       if (note) {
         note.textContent = samePattern ? field.note(rooms[0]) : '';
         note.hidden = !note.textContent;
@@ -999,6 +1117,7 @@ export class Panel {
       }
     }
     this.showZones(rooms[0], catalogs);
+    this.updateLaunchers(rooms[0]);
     const found = same('texture') && catalogs.find(tile.texture);
     this.colorOnly.hidden = rooms.every((r) => !r.tile.texture);
     this.textureImage.hidden = !found;

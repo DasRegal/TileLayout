@@ -541,6 +541,8 @@ static void sync_tool(AppToolId tool, void *data)
             gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(self->tool_items[i]), i == (int)tool);
     }
     self->syncing = false;
+    if (self->panel)
+        app_panel_tool_changed(self->panel);
     if (self->room_tabs)
         app_room_tabs_tool_changed(self->room_tabs, tool);
 }
