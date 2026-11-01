@@ -54,10 +54,15 @@ void spec_drag(void)
             tl_project_add_expansion_joint(project, joint);
             TlRuler *ruler = tl_ruler_new(tl_vec2(100, 100), tl_vec2(900, 100));
             tl_project_add_ruler(project, ruler);
+            tl_fixture_list_push(&project->fixtures, tl_fixture_default(TL_FIXTURE_CABINET, tl_vec2(500, 1500)));
+            tl_drain_list_push(&project->drains, tl_drain_default(TL_DRAIN_POINT, tl_vec2(2500, 2500)));
             EXPECT(drag(project, (TlDragTarget){.kind = TL_DRAG_HOUSE, .outline = house}, tl_vec2(1000, 1000),
                         tl_vec2(2000, 1000), false));
             EXPECT_NEAR(joint->start.x, 2000, 1e-6); /* шов режет плитку дома — едет с ним */
-            EXPECT_NEAR(ruler->start.x, 100, 1e-6);  /* линейка — измерение, остаётся */
+            EXPECT_NEAR(ruler->start.x, 1100, 1e-6); /* линейки, мебель и трапы — тоже */
+            EXPECT_NEAR(ruler->end.x, 1900, 1e-6);
+            EXPECT_NEAR(project->fixtures.items[0].center.x, 1500, 1e-6);
+            EXPECT_NEAR(project->drains.items[0].center.x, 3500, 1e-6);
             EXPECT_NEAR(house->inner.items[0].x, 1000, 1e-6);
             EXPECT_NEAR(project->partitions.items[0]->start.x, 4000, 1e-6);
             EXPECT_INT((int)project->spaces.count, 2);

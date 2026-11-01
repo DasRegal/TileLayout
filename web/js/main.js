@@ -125,6 +125,15 @@ const panel = new Panel(document.getElementById('panel'), {
       return;
     }
     const wall = selection?.kind === 'room_wall' ? selection.index : -1;
+    if (action === 'rows_all' && wall >= 0) { // у всех стен ряды — как у этой; вдоль стены — свой сдвиг
+      const height = state.walls.walls[wall].offset[1];
+      state.walls.walls.forEach((other, i) => {
+        if (i !== wall) state.core.setWallOffset(selection.space, i, other.offset[0], height);
+      });
+      changed();
+      say('Горизонтальные швы всех стен — на той же высоте, что у этой.');
+      return;
+    }
     if (action === 'reset' && wall >= 0) {
       if (state.core.setWallOffset(selection.space, wall, 0, 0)) changed();
       return;
@@ -185,6 +194,8 @@ const panel = new Panel(document.getElementById('panel'), {
       'opening.reveal': () => core.setOpeningReveal(index, value),
       'room_wall.offset_x': () => core.setWallOffset(selection.space, index, value, object.offset_y),
       'room_wall.offset_y': () => core.setWallOffset(selection.space, index, object.offset_x, value),
+      'room_wall.rows_from': () => value !== '' && core.setWallOffset(selection.space, index, object.offset_x,
+        state.walls.walls[Number(value)].offset[1]), // ряды — на высоте рядов той стены
       'panno.columns': () => core.setPanno(selection.space, index, { columns: value }),
       'panno.rows': () => core.setPanno(selection.space, index, { rows: value }),
       'panno.w': () => core.setPanno(selection.space, index, { w: value }),
@@ -494,8 +505,28 @@ function drawRoom3d(dpr) {
       for (let i = 2; i < contour.length; i += 2) c.lineTo(contour[i], contour[i + 1]);
       c.closePath();
     }
-    c.fillStyle = paint.f;
-    c.fill('evenodd');
+    const image = paint.t ? catalogs.image(paint.t) : null;
+    if (image) { // рисунок плитки — на её прямоугольник, поверх — свет
+      c.save();
+      c.clip('evenodd');
+      c.transform(...paint.m);
+      const iw = image.naturalWidth;
+      const ih = image.naturalHeight;
+      if (iw >= ih === paint.tw >= paint.th || Math.abs(paint.tw - paint.th) < 0.5) {
+        c.drawImage(image, 0, 0, 1, 1);
+      } else { // плитка поперёк картинки — рисунок повёрнут, как на плане
+        c.transform(0, 1 / iw, -1 / ih, 0, 1, 0);
+        c.drawImage(image, 0, 0);
+      }
+      c.restore();
+      if (paint.sh < 0.999) {
+        c.fillStyle = `rgba(0, 0, 0, ${(1 - paint.sh).toFixed(3)})`;
+        c.fill('evenodd');
+      }
+    } else {
+      c.fillStyle = paint.f;
+      c.fill('evenodd');
+    }
     if (paint.s) {
       c.strokeStyle = paint.s;
       c.lineWidth = paint.w;
@@ -508,27 +539,58 @@ function drawRoom3d(dpr) {
 function setVolume(on) {
   volume.on = on;
   showCanvases();
-  say(on ? 'Тяните — повернуть, колесо или кнопки — ближе и дальше, двойной щелчок — как было.' : '');
+  say(on ? 'Тяните — повернуть; двумя пальцами, колесом или кнопками — ближе и дальше; двойной щелчок — как было.' : '');
   requestDraw();
 }
 
-/** 3D: тянут — вращают камеру, колесо — ближе и дальше, двойной щелчок — камера по умолчанию. */
+/** 3D: тянут одним пальцем или мышью — вращают камеру; двумя пальцами (щипок) или колесом — ближе и
+ *  дальше; двойной щелчок — камера по умолчанию. */
 function bindRoom3d() {
+  const pointers = new Map(); // касания: id → [x, y]
+  let pinch = null; // {gap: расстояние между пальцами в начале, distance: камеры}
+  const gap = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  };
+  const startOrbit = (x, y) => {
+    const camera = volume.cameras[state.tab];
+    volume.drag = camera ? { x, y, yaw: camera.yaw, pitch: camera.pitch } : null;
+  };
   room3dCanvas.addEventListener('pointerdown', (event) => {
     const camera = volume.cameras[state.tab];
     if (!camera) return;
     room3dCanvas.setPointerCapture(event.pointerId);
-    volume.drag = { x: event.clientX, y: event.clientY, yaw: camera.yaw, pitch: camera.pitch };
+    pointers.set(event.pointerId, [event.clientX, event.clientY]);
+    if (pointers.size === 2) { // второй палец — щипок вместо вращения
+      volume.drag = null;
+      pinch = { gap: Math.max(gap(), 1), distance: camera.distance };
+    } else if (pointers.size === 1) {
+      startOrbit(event.clientX, event.clientY);
+    }
   });
   room3dCanvas.addEventListener('pointermove', (event) => {
     const camera = volume.cameras[state.tab];
-    if (!volume.drag || !camera) return;
+    if (!camera || !pointers.has(event.pointerId)) return;
+    pointers.set(event.pointerId, [event.clientX, event.clientY]);
+    if (pinch && pointers.size >= 2) { // пальцы разводят — ближе
+      camera.distance = Math.min(200000, Math.max(300, (pinch.distance * pinch.gap) / Math.max(gap(), 1)));
+      requestDraw();
+      return;
+    }
+    if (!volume.drag) return;
     camera.yaw = (volume.drag.yaw - (event.clientX - volume.drag.x) * 0.35) % 360;
     camera.pitch = Math.min(89, Math.max(5, volume.drag.pitch + (event.clientY - volume.drag.y) * 0.35));
     requestDraw();
   });
-  const stop = () => {
-    volume.drag = null;
+  const stop = (event) => {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) { // остался палец — вращение от него, без скачка
+      const [[x, y]] = [...pointers.values()];
+      startOrbit(x, y);
+    } else {
+      volume.drag = null;
+    }
   };
   room3dCanvas.addEventListener('pointerup', stop);
   room3dCanvas.addEventListener('pointercancel', stop);
@@ -875,7 +937,10 @@ function deleteSelection() {
   say('Удалено. Отменить — Ctrl+Z.');
 }
 
-const WALL_TOOLS = new Set(['select', 'ruler', 'pipe']); // работают и на развёртке
+const WALL_TOOLS = new Set(['select', 'tiles', 'ruler', 'pipe']); // работают и на развёртке
+
+/** Сдвиг сетки плитки: инструмент «Плитка» (на телефоне Ctrl нет) или Ctrl + перетаскивание. */
+const tileDrag = (event) => tools.tool === 'tiles' || event.ctrlKey || event.metaKey;
 
 function setTool(tool) {
   state.wallRuler = null;
@@ -896,7 +961,7 @@ function setTool(tool) {
     state.selection = state.tab ? { kind: 'space', space: state.tab } : null;
     state.multi = false;
   }
-  if (state.tab && tool !== 'select') say(tool === 'ruler' ? 'Линейка на стене: два щелчка на одной стене.' : 'Отверстие на стене: щёлкните, где оно.');
+  if (state.tab && tool !== 'select' && tool !== 'tiles') say(tool === 'ruler' ? 'Линейка на стене: два щелчка на одной стене.' : 'Отверстие на стене: щёлкните, где оно.');
   refresh();
 }
 
@@ -998,7 +1063,9 @@ function wallObject(selection) {
   if (!data) return null;
   if (selection.kind === 'room_wall') {
     const wall = data.walls[selection.index];
-    return wall && { kind: 'room_wall', number: selection.index + 1, length: Math.round(wall.length), offset_x: wall.offset[0], offset_y: wall.offset[1], outline: [], handles: [] };
+    const others = data.walls.map((_, i) => i).filter((i) => i !== selection.index);
+    return wall && { kind: 'room_wall', number: selection.index + 1, length: Math.round(wall.length), offset_x: wall.offset[0],
+      offset_y: wall.offset[1], rows_from: '', others, outline: [], handles: [] };
   }
   if (selection.kind === 'wall_pipe') {
     const pipe = data.pipes[selection.index];
@@ -1059,12 +1126,13 @@ function clickOnWalls(world, event) {
 
 /** Нажатие на развёртке: тянут отверстие, линейку (за конец — с притягиванием) или, с Ctrl, плитку стены. */
 function dragOnWalls(world, event) {
-  if (!state.walls || tools.tool !== 'select') return null;
+  if (!state.walls || (tools.tool !== 'select' && tools.tool !== 'tiles')) return null;
   const core = state.core;
   const id = state.tab;
-  const hit = pickOnWalls(world);
+  const hit = tools.tool === 'tiles' ? null : pickOnWalls(world); // «Плитка» — только плитка стены
   const wall = wallAt(world);
-  if (!hit && !((event.ctrlKey || event.metaKey) && wall >= 0)) return null; // сдвиг вида
+  if (tools.tool === 'tiles' && wall < 0) return null; // мимо стен — сдвиг вида
+  if (tools.tool !== 'tiles' && !hit && !((event.ctrlKey || event.metaKey) && wall >= 0)) return null; // сдвиг вида
   const start = world;
   let grab;
   if (!hit) {
@@ -1205,12 +1273,16 @@ function select(world, event) {
  *  целиком, с Ctrl — сетка плитки; иначе комната и пустое место — сдвиг вида. */
 function startDrag(world, event) {
   if (!state.core || tools.drawing) return null;
-  const handle = handleAt(world);
-  const hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  const handle = tools.tool === 'tiles' ? null : handleAt(world);
+  let hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
+  if (tools.tool === 'tiles') { /* «Плитка»: только сетка комнаты под пальцем, стены и предметы — нет */
+    const space = state.core.spaceAt(world[0], world[1]);
+    hit = space ? { kind: 'space', space } : { kind: 'none' };
+  }
   let target = DRAGGABLE.has(hit.kind) ? hit : null;
   if (hit.kind === 'space') {
     if (adding(event)) return null; // щелчок добавит комнату к выделенным
-    if (event.ctrlKey || event.metaKey) target = { kind: 'tiles' };
+    if (tileDrag(event)) target = { kind: 'tiles' };
     else if (hit.space === selectedSpace()) target = { kind: 'house' };
   }
   if (!target || !state.core.dragBegin(target, world[0], world[1])) return null;
@@ -1521,7 +1593,7 @@ function addHouse() {
   dialog.showModal();
 }
 
-const TOOL_KEYS = { v: 'select', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', h: 'pipe', l: 'ruler', d: 'divider', b: 'fixture', g: 'drain' };
+const TOOL_KEYS = { v: 'select', t: 'tiles', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', h: 'pipe', l: 'ruler', d: 'divider', b: 'fixture', g: 'drain' };
 
 function onKey(event) {
   const typing = event.target.matches('input, select, textarea');

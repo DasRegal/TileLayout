@@ -51,6 +51,8 @@ typedef struct RoomPage {
     double orbit_yaw, orbit_pitch;
     GtkWidget *flat_button, *volume_button;
     bool syncing;
+    GtkGesture *zoom;            /* 3D: щипок на сенсорном экране или тачпаде */
+    double zoom_distance;
 } RoomPage;
 
 struct AppRoomTabs {
@@ -106,7 +108,7 @@ static void draw_volume(RoomPage *page, cairo_t *cr, TlSpace *space)
     }
     app_render_room3d(cr, page->tabs->document->project, space, &page->camera, width, height);
     AppTextStyle style = {10, false, app_color_hex(app_theme("#5d6470", "#aab3c0")), APP_TRANSPARENT};
-    app_text_centered(cr, "Тяните — повернуть, колесо — ближе или дальше, двойной щелчок — как было", &style,
+    app_text_centered(cr, "Тяните — повернуть, колесо или два пальца — ближе и дальше, двойной щелчок — как было", &style,
                       tl_vec2(width / 2, height - 14), 0);
 }
 
@@ -475,6 +477,21 @@ static void on_mode_toggled(GtkToggleButton *button, RoomPage *page)
         set_volume(page, button == GTK_TOGGLE_BUTTON(page->volume_button));
 }
 
+static void on_zoom_begin(GtkGesture *gesture, GdkEventSequence *sequence, RoomPage *page)
+{
+    page->zoom_distance = page->camera.distance;
+}
+
+/* 3D: пальцы разводят — ближе (расстояние до комнаты делится на масштаб жеста). */
+static void on_zoom_scale(GtkGestureZoom *gesture, double scale, RoomPage *page)
+{
+    if (!page->volume || scale <= 0 || page->zoom_distance <= 0)
+        return;
+    page->camera.distance = fmax(300, fmin(200000, page->zoom_distance / scale));
+    page->orbiting = false;
+    gtk_widget_queue_draw(page->area);
+}
+
 /* 2D | 3D справа вверху: развёртка стен (работа) или объёмный вид (просмотр). */
 static GtkWidget *mode_switch(RoomPage *page)
 {
@@ -505,6 +522,7 @@ static void close_page(AppRoomTabs *tabs, RoomPage *page)
     g_ptr_array_remove(tabs->pages, page);
     if (number >= 0)
         gtk_notebook_remove_page(GTK_NOTEBOOK(tabs->notebook), number);
+    g_clear_object(&page->zoom);
     g_free(page);
 }
 
@@ -559,6 +577,9 @@ void app_room_tabs_open(AppRoomTabs *tabs, TlSpace *space)
     g_signal_connect(page->area, "button-press-event", G_CALLBACK(on_press), page);
     g_signal_connect(page->area, "button-release-event", G_CALLBACK(on_release), page);
     g_signal_connect(page->area, "motion-notify-event", G_CALLBACK(on_motion), page);
+    page->zoom = gtk_gesture_zoom_new(page->area);
+    g_signal_connect(page->zoom, "begin", G_CALLBACK(on_zoom_begin), page);
+    g_signal_connect(page->zoom, "scale-changed", G_CALLBACK(on_zoom_scale), page);
     page->page = gtk_overlay_new();
     gtk_container_add(GTK_CONTAINER(page->page), page->area);
     gtk_overlay_add_overlay(GTK_OVERLAY(page->page), mode_switch(page));

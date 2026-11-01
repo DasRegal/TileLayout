@@ -74,7 +74,8 @@ static char **list_folder(void *root, const char *path, size_t *count)
     g_ptr_array_sort(names, compare_names);
     *count = names->len;
     char **result = tl_malloc((names->len + 1) * sizeof *result);
-    memcpy(result, names->pdata, names->len * sizeof *result);
+    if (names->len) /* пустая папка — массива нет */
+        memcpy(result, names->pdata, names->len * sizeof *result);
     g_ptr_array_free(names, TRUE);
     return result;
 }

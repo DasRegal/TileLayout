@@ -34,6 +34,9 @@ typedef struct Face {
     double stroke_rgb[3];
     bool stroked;
     double stroke_width;
+    const char *texture;  /* рисунок плитки из каталога (настройки раскладки) или NULL */
+    TlVec3 corner[3];     /* углы плитки: левый верхний, правый верхний, левый нижний (оси раскладки) */
+    double tile_width, tile_height;
 } Face;
 
 TL_ARRAY_DEFINE(FaceList, Face, face_list)
@@ -207,7 +210,7 @@ static void groups_free(GroupList *groups)
 }
 
 /* Плитка раскладки — гранями на поверхности. */
-static void add_tiles(Group *group, const TlLayout *layout, const Mapper *mapper)
+static void add_tiles(Group *group, const TlLayout *layout, const Mapper *mapper, const TlTileSettings *settings)
 {
     if (!layout || layout->too_many)
         return;
@@ -217,6 +220,16 @@ static void add_tiles(Group *group, const TlLayout *layout, const Mapper *mapper
         const char *color = (size_t)tile->spec < layout->pattern.spec_count ? layout->pattern.specs[tile->spec].color : NULL;
         Face face = tile_face(color);
         TlVec2 corner = {tile->rect.left, tile->rect.top};
+        if (settings && settings->texture[0] && (size_t)tile->spec < layout->pattern.spec_count &&
+            layout->pattern.specs[tile->spec].textured) { /* рисунок — на прямоугольник плитки, как на плане */
+            const TlVec2 corners[3] = {{tile->rect.left, tile->rect.top}, {tile->rect.right, tile->rect.top},
+                                       {tile->rect.left, tile->rect.bottom}};
+            for (int k = 0; k < 3; k++)
+                face.corner[k] = map_point(mapper, tl_affine_apply(m, corners[k]));
+            face.texture = settings->texture;
+            face.tile_width = tl_rect_width(tile->rect);
+            face.tile_height = tl_rect_height(tile->rect);
+        }
         if (tile->kind != TL_TILE_WHOLE && tile->shapes.count > 1) {
             /* куски разрезанной швом плитки и дыры (у края — вырез: иначе обводка шла бы поперёк проёма);
                плитку, которую проём закрыл целиком, раскладка хранит с дырой во весь кусок — её нет */
@@ -250,7 +263,7 @@ static void add_tiles(Group *group, const TlLayout *layout, const Mapper *mapper
 static void add_panno(Group *group, TlSpace *space, size_t index, const Mapper *mapper)
 {
     TlLayout *layout = tl_space_panno_layout(space, index);
-    add_tiles(group, layout, mapper);
+    add_tiles(group, layout, mapper, NULL); /* панно — цветом */
     tl_layout_free(layout);
 }
 
@@ -267,7 +280,7 @@ static void build_floor(GroupList *groups, TlSpace *space)
     group.layer = LAYER_FLOOR;
     for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) /* у участка плитка своя, даже без плитки комнаты */
         if (tl_space_layout_counted(space, l))
-            add_tiles(&group, tl_space_layout_at(space, l), &mapper);
+            add_tiles(&group, tl_space_layout_at(space, l), &mapper, tl_space_layout_tile(space, l));
     for (size_t p = 0; p < space->pannos.count; p++)
         if (space->pannos.items[p].wall == TL_PANNO_FLOOR)
             add_panno(&group, space, p, &mapper);
@@ -362,10 +375,11 @@ static void build_walls(GroupList *groups, TlProject *project, TlSpace *space)
         face_list_free(&jambs);
         for (size_t i = 0; i < tl_space_wall_layout_count(space); i++) {
             size_t on_wall = SIZE_MAX;
-            TlLayout *layout = tl_space_wall_layout_at(space, i, &on_wall, NULL);
+            TlWallBand band = TL_WALL_MAIN;
+            TlLayout *layout = tl_space_wall_layout_at(space, i, &on_wall, &band);
             if (on_wall == w && tl_space_wall_layout_reveal(space, i) == SIZE_MAX &&
                 tl_space_wall_layout_stairs(space, i, NULL, NULL) == SIZE_MAX)
-                add_tiles(&group, layout, &mapper);
+                add_tiles(&group, layout, &mapper, tl_space_wall_tile(space, band));
         }
         (void)floors;
         for (size_t p = 0; space->walls.enabled && p < space->pannos.count; p++)
@@ -457,7 +471,7 @@ static void build_stairs(GroupList *groups, TlSpace *space, size_t k)
                 bool tread;
                 if (tl_space_wall_layout_stairs(space, i, &layout_step, &tread) == k && layout_step == step &&
                     tread == (part == 1))
-                    add_tiles(&group, tl_space_wall_layout_at(space, i, NULL, NULL), &mapper);
+                    add_tiles(&group, tl_space_wall_layout_at(space, i, NULL, NULL), &mapper, tl_space_effective_tile(space));
             }
             group_list_push(groups, group);
         }
@@ -738,6 +752,27 @@ TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera
             if (!paint.contours.count)
                 continue;
             hex_color(paint.fill, face->rgb, shade);
+            paint.shade = shade;
+            if (face->texture) { /* углы плитки на экране; за камерой — без рисунка, цветом */
+                TlVec2 corner[3];
+                bool in_front = true;
+                for (int k = 0; k < 3 && in_front; k++) {
+                    TlVec3 d = sub3(face->corner[k], eye.position);
+                    double z = dot3(d, eye.forward);
+                    in_front = z >= NEAR_MM;
+                    if (in_front)
+                        corner[k] = tl_vec2(eye.cx + dot3(d, eye.right) / z * eye.focal, eye.cy - dot3(d, eye.up) / z * eye.focal);
+                }
+                if (in_front) {
+                    snprintf(paint.texture, sizeof paint.texture, "%s", face->texture);
+                    const double matrix[6] = {corner[1].x - corner[0].x, corner[1].y - corner[0].y,
+                                              corner[2].x - corner[0].x, corner[2].y - corner[0].y, corner[0].x,
+                                              corner[0].y};
+                    memcpy(paint.texture_matrix, matrix, sizeof matrix);
+                    paint.tile_width = face->tile_width;
+                    paint.tile_height = face->tile_height;
+                }
+            }
             if (face->stroked)
                 hex_color(paint.stroke, face->stroke_rgb, shade);
             tl_paint_list_push(&paints, paint);

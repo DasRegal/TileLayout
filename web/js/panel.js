@@ -263,6 +263,7 @@ const TOOL_TITLES = {
   divider: 'Раздел покрытия',
   fixture: 'Предмет',
   drain: 'Трап',
+  tiles: 'Сдвиг плитки',
   underlay_calibrate: 'Калибровка подложки',
   underlay_move: 'Сдвиг подложки',
 };
@@ -372,9 +373,11 @@ const OBJECTS = {
     fields: [
       { key: 'offset_x', label: 'Сдвиг плитки →', min: -100000, max: 100000, step: 10, unit: 'мм' },
       { key: 'offset_y', label: 'Сдвиг плитки ↑', min: -100000, max: 100000, step: 10, unit: 'мм' },
+      { key: 'rows_from', label: 'Ряды как у стены', options: [],
+        choices: (o) => [['—', ''], ...o.others.map((n) => [`Стена ${n + 1}`, String(n)])] },
     ],
-    buttons: [['Швы как у пола', 'floor'], ['От левого угла', 'reset']],
-    info: (o) => `Длина ${o.length} мм. Ctrl + перетаскивание стены — сдвиг плитки мышью. Под стеной — пол у неё.`,
+    buttons: [['Швы как у пола', 'floor'], ['От левого угла', 'reset'], ['Ряды всех стен как у этой', 'rows_all']],
+    info: (o) => `Длина ${o.length} мм. Плитка каждой стены сдвигается отдельно: инструмент «Плитка» (на компьютере — Ctrl) и перетаскивание. «Ряды как у стены» — горизонтальные швы на той же высоте, что у другой стены. Под стеной — пол у неё.`,
     remove: '',
   },
   wall_pipe: {
@@ -911,6 +914,14 @@ export class Panel {
     for (const field of fields) {
       const input = this.objectFields.querySelector(`[data-key="${field.key}"]`);
       const value = object[field.key];
+      if (field.choices) { // список зависит от предмета (стены комнаты)
+        const choices = field.choices(object);
+        const signature = choices.map(([title]) => title).join('|');
+        if (input.dataset.signature !== signature) {
+          input.replaceChildren(...choices.map(([title, v]) => new Option(title, v)));
+          input.dataset.signature = signature;
+        }
+      }
       input.closest('.row').hidden = value === undefined;
       if (field.check) input.checked = Boolean(value);
       else if (field.options || field.color) input.value = value;

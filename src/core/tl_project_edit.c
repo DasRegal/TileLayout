@@ -49,6 +49,18 @@ typedef struct CarriedPipe {
     TlVec2 center;
 } CarriedPipe;
 
+/* Что ещё едет с домом: линейка (оба конца внутри), предмет или трап (центр внутри) — по номеру в
+   проекте (предметы и трапы хранятся значениями). */
+typedef struct CarriedRuler {
+    TlRuler *ruler;
+    TlVec2 start, end;
+} CarriedRuler;
+
+typedef struct CarriedPoint {
+    size_t index;
+    TlVec2 center;
+} CarriedPoint;
+
 typedef struct PartitionDirection {
     TlPartition *partition;
     TlVec2 direction;
@@ -58,6 +70,8 @@ TL_ARRAY_DEFINE(AttachmentList, Attachment, attachment_list)
 TL_ARRAY_DEFINE(OpeningAnchorList, OpeningAnchor, opening_anchor_list)
 TL_ARRAY_DEFINE(CarriedPartitionList, CarriedPartition, carried_partition_list)
 TL_ARRAY_DEFINE(CarriedJointList, CarriedJoint, carried_joint_list)
+TL_ARRAY_DEFINE(CarriedRulerList, CarriedRuler, carried_ruler_list)
+TL_ARRAY_DEFINE(CarriedPointList, CarriedPoint, carried_point_list)
 TL_ARRAY_DEFINE(CarriedPipeList, CarriedPipe, carried_pipe_list)
 TL_ARRAY_DEFINE(PartitionDirectionList, PartitionDirection, partition_direction_list)
 
@@ -68,6 +82,8 @@ struct TlEditToken {
     CarriedPartitionList carried;
     CarriedJointList carried_joints;
     CarriedPipeList carried_pipes;
+    CarriedRulerList carried_rulers;
+    CarriedPointList carried_fixtures, carried_drains;
     TlMeasureAnchors *measures;          /* концы линеек и швов на стенах — едут с ними */
     PartitionDirectionList directions;
 };
@@ -138,6 +154,18 @@ static void remember_carried(TlProject *project, TlOutline *moving_outline, TlEd
         if (tl_outline_contains_or_touches(moving_outline, pipe->center))
             carried_pipe_list_push(&token->carried_pipes, (CarriedPipe){pipe, pipe->center});
     }
+    for (size_t i = 0; i < project->rulers.count; i++) { /* линейки, предметы и трапы — тоже */
+        TlRuler *ruler = project->rulers.items[i];
+        if (tl_outline_contains_or_touches(moving_outline, ruler->start) &&
+            tl_outline_contains_or_touches(moving_outline, ruler->end))
+            carried_ruler_list_push(&token->carried_rulers, (CarriedRuler){ruler, ruler->start, ruler->end});
+    }
+    for (size_t i = 0; i < project->fixtures.count; i++)
+        if (tl_outline_contains_or_touches(moving_outline, project->fixtures.items[i].center))
+            carried_point_list_push(&token->carried_fixtures, (CarriedPoint){i, project->fixtures.items[i].center});
+    for (size_t i = 0; i < project->drains.count; i++)
+        if (tl_outline_contains_or_touches(moving_outline, project->drains.items[i].center))
+            carried_point_list_push(&token->carried_drains, (CarriedPoint){i, project->drains.items[i].center});
 }
 
 TlEditToken *tl_project_begin_edit(TlProject *project, TlOutline *moving_outline)
@@ -166,6 +194,9 @@ void tl_edit_token_free(TlEditToken *token)
     carried_partition_list_free(&token->carried);
     carried_joint_list_free(&token->carried_joints);
     carried_pipe_list_free(&token->carried_pipes);
+    carried_ruler_list_free(&token->carried_rulers);
+    carried_point_list_free(&token->carried_fixtures);
+    carried_point_list_free(&token->carried_drains);
     tl_measure_anchors_free(token->measures);
     partition_direction_list_free(&token->directions);
     free(token);
@@ -196,8 +227,23 @@ static TlVec2 original_direction(const TlEditToken *token, const TlPartition *pa
     return tl_vec2(0, 0);
 }
 
-static void carry_partitions(TlEditToken *token, TlVec2 offset)
+static void carry_partitions(TlProject *project, TlEditToken *token, TlVec2 offset)
 {
+    for (size_t i = 0; i < token->carried_rulers.count; i++) {
+        CarriedRuler *carried = &token->carried_rulers.items[i];
+        carried->ruler->start = tl_vec2_add(carried->start, offset);
+        carried->ruler->end = tl_vec2_add(carried->end, offset);
+    }
+    for (size_t i = 0; i < token->carried_fixtures.count; i++) {
+        const CarriedPoint *carried = &token->carried_fixtures.items[i];
+        if (carried->index < project->fixtures.count)
+            project->fixtures.items[carried->index].center = tl_vec2_add(carried->center, offset);
+    }
+    for (size_t i = 0; i < token->carried_drains.count; i++) {
+        const CarriedPoint *carried = &token->carried_drains.items[i];
+        if (carried->index < project->drains.count)
+            project->drains.items[carried->index].center = tl_vec2_add(carried->center, offset);
+    }
     for (size_t i = 0; i < token->carried.count; i++) {
         CarriedPartition *carried = &token->carried.items[i];
         carried->partition->start = tl_vec2_add(carried->start, offset);
@@ -326,7 +372,7 @@ void tl_project_apply_edit(TlProject *project, TlEditToken *token, const TlEditO
     if (!options)
         options = &no_options;
     if (options->has_translate)
-        carry_partitions(token, options->translate);
+        carry_partitions(project, token, options->translate);
     for (int pass = 0; pass < FOLLOW_PASSES; pass++) {
         follow_master(token, options);
         if (!options->keep_ends)

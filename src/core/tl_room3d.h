@@ -34,6 +34,14 @@ typedef struct TlPaint {
     char fill[8];             /* "#rrggbb" */
     char stroke[8];           /* "" — без обводки */
     double stroke_width;      /* пикселей */
+    /* Рисунок плитки (texture[0] — есть): картинку кладут на квадрат 0…1 и переносят на экран матрицей
+       texture_matrix (x = a·u + c·v + e, y = b·u + d·v + f) — это прямоугольник плитки; поперёк картинки
+       (одна сторона плитки длиннее, у картинки — другая) — повернуть на 90°, как на плане. Сверху —
+       затенение: чёрным с прозрачностью 1 − shade, потом обводка. */
+    char texture[TL_TEXTURE_LENGTH];
+    double texture_matrix[6];
+    double tile_width, tile_height;  /* мм — какая сторона плитки длиннее */
+    double shade;
 } TlPaint;
 
 TL_ARRAY_DEFINE(TlPaintList, TlPaint, tl_paint_list)

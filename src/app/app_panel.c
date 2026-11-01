@@ -135,6 +135,7 @@ struct AppPanel {
     GtkWidget *room_height, *walls_enabled, *walls_height;
     GtkWidget *walls_open, *walls_floor, *walls_hint; /* на плане — кнопка развёртки, на развёртке — совмещение */
     AppSection side_section, wall_pipe_section, wall_ruler_section; /* выделенное на развёртке */
+    GtkWidget *side_rows_from;  /* «Ряды как у стены»: список стен комнаты */
     GtkWidget *side_length, *side_offset_x, *side_offset_y;
     GtkWidget *wall_pipe_diameter, *wall_pipe_x, *wall_pipe_h, *wall_ruler_length;
     GtkWidget *area_info, *area_covering, *area_name;
@@ -975,6 +976,36 @@ static void on_side_offset(GtkSpinButton *spin, AppPanel *panel)
     app_document_commit(panel->document);
 }
 
+/* Ряды (горизонтальные швы) — на высоте рядов другой стены: её сдвиг вверх; вдоль стены — свой. */
+static void on_side_rows_from(GtkComboBox *combo, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    const char *id = gtk_combo_box_get_active_id(combo);
+    if (panel->updating || s->kind != APP_SELECT_ROOM_WALL || !id || !id[0])
+        return;
+    size_t other = (size_t)atoi(id);
+    TlVec2 own = tl_space_wall_offset(s->space, (size_t)s->index);
+    app_document_checkpoint(panel->document, "");
+    tl_space_set_wall_offset(s->space, (size_t)s->index, tl_vec2(own.x, tl_space_wall_offset(s->space, other).y));
+    app_document_commit(panel->document);
+    app_document_status(panel->document, "Ряды стены %d — как у стены %zu", s->index + 1, other + 1);
+}
+
+static void on_side_rows_all(GtkButton *button, AppPanel *panel)
+{
+    const AppSelection *s = &panel->document->selection;
+    if (s->kind != APP_SELECT_ROOM_WALL)
+        return;
+    double height = tl_space_wall_offset(s->space, (size_t)s->index).y;
+    app_document_checkpoint(panel->document, "");
+    for (size_t w = 0; w < tl_space_wall_count(s->space); w++) {
+        TlVec2 own = tl_space_wall_offset(s->space, w);
+        tl_space_set_wall_offset(s->space, w, tl_vec2(own.x, height));
+    }
+    app_document_commit(panel->document);
+    app_document_status(panel->document, "%s", "Горизонтальные швы всех стен — на той же высоте, что у этой");
+}
+
 static void on_side_reset(GtkButton *button, AppPanel *panel)
 {
     const AppSelection *s = &panel->document->selection;
@@ -1250,6 +1281,11 @@ static void build_wall_items(AppPanel *panel, GtkWidget *box)
     gtk_box_pack_start(GTK_BOX(row), connect_button(gtk_button_new_with_label("От левого угла"), G_CALLBACK(on_side_reset), panel),
                        TRUE, TRUE, 0);
     app_section_wide(s, row);
+    panel->side_rows_from = gtk_combo_box_text_new();
+    gtk_widget_set_tooltip_text(panel->side_rows_from, "Горизонтальные швы — на той же высоте, что у выбранной стены");
+    g_signal_connect(panel->side_rows_from, "changed", G_CALLBACK(on_side_rows_from), panel);
+    app_section_row(s, "Ряды как у стены", panel->side_rows_from);
+    app_section_wide(s, connect_button(gtk_button_new_with_label("Ряды всех стен как у этой"), G_CALLBACK(on_side_rows_all), panel));
 
     s = &panel->wall_pipe_section;
     *s = app_section_new(box, "Отверстие на стене");
@@ -1279,6 +1315,17 @@ static void refresh_wall_items(AppPanel *panel)
         TlVec2 offset = tl_space_wall_offset(s->space, (size_t)s->index);
         set_spin(panel->side_offset_x, offset.x);
         set_spin(panel->side_offset_y, offset.y);
+        gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(panel->side_rows_from)); /* стены, кроме этой */
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(panel->side_rows_from), "", "—");
+        for (size_t w = 0; w < tl_space_wall_count(s->space); w++) {
+            if ((int)w == s->index)
+                continue;
+            char id[16], name[32];
+            g_snprintf(id, sizeof id, "%zu", w);
+            g_snprintf(name, sizeof name, "Стена %zu", w + 1);
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(panel->side_rows_from), id, name);
+        }
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(panel->side_rows_from), "");
     } else if (s->kind == APP_SELECT_WALL_PIPE) {
         const TlWallPipe *pipe = &s->space->wall_pipes.items[s->index];
         set_spin(panel->wall_pipe_diameter, pipe->diameter);

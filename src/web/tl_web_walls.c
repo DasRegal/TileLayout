@@ -421,7 +421,9 @@ bool tl_web_set_panno(int space_id, int index, const char *fields, double now_se
 
 /* ---- объёмный вид (tl_room3d.h) ----------------------------------------------------
  * {"camera": {"yaw", "pitch", "distance"}, "paints": [{"c": [[x0, y0, …], …] — контуры в пикселях
- *  (заливка «чёт-нечет»), "f": заливка, "s": обводка или "", "w": её толщина}]}
+ *  (заливка «чёт-нечет»), "f": заливка, "s": обводка или "", "w": её толщина,
+ *  у плитки с рисунком — "t": рисунок из каталога, "m": [a, b, c, d, e, f] — квадрат 0…1 на экран,
+ *  "tw", "th": стороны плитки, мм, "sh": свет (затенение чёрным с прозрачностью 1 − sh)}]}
  * distance < 0 — камера по умолчанию, 0 — те же углы, расстояние — вся комната в кадре. */
 
 const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double width, double height)
@@ -454,6 +456,16 @@ const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distan
             tl_json_object_set(item, "f", tl_json_string(paint->fill));
             tl_json_object_set(item, "s", tl_json_string(paint->stroke));
             tl_json_object_set(item, "w", tl_json_number(paint->stroke_width));
+            if (paint->texture[0]) {
+                TlJson *matrix = tl_json_array();
+                for (int k = 0; k < 6; k++)
+                    tl_json_array_push(matrix, tl_json_number(round(paint->texture_matrix[k] * 100) / 100));
+                tl_json_object_set(item, "t", tl_json_string(paint->texture));
+                tl_json_object_set(item, "m", matrix);
+                tl_json_object_set(item, "tw", tl_json_number(paint->tile_width));
+                tl_json_object_set(item, "th", tl_json_number(paint->tile_height));
+                tl_json_object_set(item, "sh", tl_json_number(round(paint->shade * 1000) / 1000));
+            }
             tl_json_array_push(paints_json, item);
         }
         tl_paint_list_free_all(&paints);
