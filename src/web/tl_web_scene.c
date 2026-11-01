@@ -11,7 +11,7 @@
  *                "jambs": [[x0, y0, x1, y1], ...],       косяки (у "door")
  *                "threshold": [x0, y0, x1, y1] | null,   стык полов
  *                "width": мм, "name": "Д1", "from": [x, y], "to": [x, y]}],  подпись — вдоль from→to
- *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм}],  снаружи дома
+ *  "dimensions": [{"from": [x, y], "to": [x, y], "normal": [x, y], "length": мм, "house", "wall"}],  снаружи дома
  *  "rulers": [{"line": [x0, y0, x1, y1], "length": мм, "name": "Л1"}],
  *  "joints": [{"line": [x0, y0, x1, y1], "gap": мм, "divider"}], деформационные швы и линии раздела
  *  "underlay": подложка без содержимого (tl_web_underlay.c),
@@ -19,6 +19,8 @@
  *  "drains": [{"kind", "outline"}], "slopes": [x0, y0, x1, y1, …] — трапы и разрезы конверта
  *  "pipes": [{"center": [x, y], "diameter": мм}],              отверстия под трубы
  *  "spaces": [{"id", "name", "outline": [...], "holes": [[...]], "room": [...],      room — для длин стен
+ *              "edges": [[дом, стена] | null, …] — сторона room — вся внутренняя грань стены дома (её длину
+ *                       можно ввести, как у стены), иначе null,
  *              "label": [x, y], "area": м², "source": "имя" | null,
  *              "tile": {настройки, ключи как в файле},
  *              "layout": null | {"matrix": [a, b, c, d, tx, ty],  оси раскладки → мм плана
@@ -156,8 +158,10 @@ static TlJson *openings(TlProject *project)
     TlJson *array = tl_json_array();
     for (size_t i = 0; i < project->openings.count; i++) {
         TlJson *json = opening_json(project, project->openings.items[i]);
-        if (json)
+        if (json) {
+            tl_json_object_set(json, "index", tl_json_number((double)i)); /* номер в проекте — для ввода ширины */
             tl_json_array_push(array, json);
+        }
     }
     return array;
 }
@@ -192,6 +196,8 @@ static TlJson *dimensions(TlProject *project)
             tl_json_object_set(dimension, "to", point(b));
             tl_json_object_set(dimension, "normal", point(normal));
             tl_json_object_set(dimension, "length", tl_json_number(round(tl_distance(a, b))));
+            tl_json_object_set(dimension, "house", tl_json_number((double)o));
+            tl_json_object_set(dimension, "wall", tl_json_number((double)wall));
             tl_json_array_push(array, dimension);
         }
         tl_polygon_free(&outer);
@@ -251,7 +257,29 @@ TlJson *tl_web_layout_json(const TlLayout *layout)
     return json;
 }
 
-static TlJson *space_json(TlSpace *space)
+static TlJson *room_edges(TlProject *project, TlSpace *space)
+{
+    TlJson *edges = tl_json_array();
+    const TlPolygon *room = tl_space_room_outline(space);
+    for (size_t e = 0; e < room->count; e++) {
+        TlOutline *outline;
+        size_t wall;
+        if (!tl_project_room_edge_wall(project, space, e, &outline, &wall)) {
+            tl_json_array_push(edges, tl_json_null());
+            continue;
+        }
+        size_t house = 0;
+        while (house < project->outlines.count && project->outlines.items[house] != outline)
+            house++;
+        TlJson *pair = tl_json_array();
+        tl_json_array_push(pair, tl_json_number((double)house));
+        tl_json_array_push(pair, tl_json_number((double)wall));
+        tl_json_array_push(edges, pair);
+    }
+    return edges;
+}
+
+static TlJson *space_json(TlProject *project, TlSpace *space)
 {
     TlJson *json = tl_json_object();
     tl_json_object_set(json, "id", tl_json_number(space->id));
@@ -259,6 +287,7 @@ static TlJson *space_json(TlSpace *space)
     tl_json_object_set(json, "outline", tl_web_polygon(&space->outline));
     tl_json_object_set(json, "holes", polygons(&space->holes));
     tl_json_object_set(json, "room", tl_web_polygon(tl_space_room_outline(space)));
+    tl_json_object_set(json, "edges", room_edges(project, space));
     tl_json_object_set(json, "label", point(tl_space_label_point(space)));
     tl_json_object_set(json, "area", tl_json_number(round(tl_space_room_area(space) / 1e4) / 100));
     tl_json_object_set(json, "source", tl_space_has_shared_floor(space) ? tl_json_string(space->layout_source->name)
@@ -389,7 +418,7 @@ const char *tl_web_scene(void)
     tl_json_object_set(json, "pipes", pipes);
     TlJson *spaces = tl_json_array();
     for (size_t s = 0; s < project->spaces.count; s++)
-        tl_json_array_push(spaces, space_json(project->spaces.items[s]));
+        tl_json_array_push(spaces, space_json(project, project->spaces.items[s]));
     tl_json_object_set(json, "spaces", spaces);
     return tl_web_keep(&scene, json);
 }

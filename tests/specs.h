@@ -32,5 +32,6 @@ void spec_cutmap(void);
 void spec_dxf(void);
 void spec_underlay(void);
 void spec_room3d(void);
+void spec_dimensions(void);
 
 #endif

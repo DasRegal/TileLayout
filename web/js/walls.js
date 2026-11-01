@@ -127,7 +127,10 @@ export function drawRoomWalls(ctx, data, view, options) {
   });
   data.rulers.forEach((ruler, i) => {
     if (ruler.wall !== null) {
-      drawRuler(ctx, { line: [...ruler.a, ...ruler.b], length: ruler.length }, view, i === marks.ruler ? COLOR.selection : undefined);
+      const hit = options.hits && !options.printing // длину линейки на стене можно ввести числом
+        ? (box) => options.hits.push({ ...box, target: { kind: 'wall_ruler', index: i, value: ruler.length, start: ruler.start, end: ruler.end } })
+        : null;
+      drawRuler(ctx, { line: [...ruler.a, ...ruler.b], length: ruler.length }, view, i === marks.ruler ? COLOR.selection : undefined, hit);
     }
   });
   if (options.preview) {

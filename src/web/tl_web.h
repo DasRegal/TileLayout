@@ -177,6 +177,8 @@ bool tl_web_set_partition_thickness(int index, double thickness, double now_seco
 bool tl_web_set_partition_length(int index, double length, double now_seconds);
 bool tl_web_set_partition_angle(int index, double degrees, double now_seconds);
 bool tl_web_set_opening_width(int index, double width, double now_seconds);
+/* Длина линейки: начало на месте, конец — по той же прямой. */
+bool tl_web_set_ruler_length(int index, double length, double now_seconds);
 /* Вид проёма ("door" | "window" | "arch"; "" — не менять), высота и низ от пола (подоконник), мм. */
 bool tl_web_set_opening(int index, const char *kind, double height, double sill, double now_seconds);
 /* Откосы проёма плиткой: глубина, мм; 0 — без откосов. */

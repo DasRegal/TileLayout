@@ -163,6 +163,10 @@ bool tl_project_set_tee_point(TlProject *project, TlPartition *branch, TlPartiti
    стеной соседнего дома. */
 bool tl_project_set_wall_length(TlProject *project, TlOutline *outline, size_t wall, double inner_length,
                                 bool keep_angles, bool linked);
+/* Сторона edge комнаты (tl_space_room_outline) — вся внутренняя грань стены дома? Тогда её длину
+   меняют как внутреннюю длину этой стены (tl_project_set_wall_length). */
+bool tl_project_room_edge_wall(TlProject *project, const TlSpace *space, size_t edge, TlOutline **outline,
+                               size_t *wall);
 /* Ширина проёма (концы линеек на его краях едут с ними). */
 void tl_project_set_opening_width(TlProject *project, TlOpening *opening, double width);
 /* Сменить вид проёма; имя по умолчанию («Д2») — под новый вид («О1»). Комнаты — пересчитать. */

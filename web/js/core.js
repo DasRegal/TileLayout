@@ -117,6 +117,7 @@ export async function loadCore() {
     setPartitionThickness: (index, value) => module._tl_web_set_partition_thickness(index, value, now()) !== 0,
     setPartitionLength: (index, value) => module._tl_web_set_partition_length(index, value, now()) !== 0,
     setPartitionAngle: (index, value) => module._tl_web_set_partition_angle(index, value, now()) !== 0,
+    setRulerLength: (index, value) => module._tl_web_set_ruler_length(index, value, now()) !== 0,
     setOpeningWidth: (index, value) => module._tl_web_set_opening_width(index, value, now()) !== 0,
     /** Вид проёма ('door' | 'window' | 'arch'; '' — прежний), высота и низ от пола, мм. */
     setOpeningReveal: (index, depth) => module._tl_web_set_opening_reveal(index, depth, now()) !== 0,

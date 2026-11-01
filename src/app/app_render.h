@@ -71,6 +71,26 @@ void app_render_walls(cairo_t *cr, TlProject *project, TlSpace *space, const App
 /* Габарит развёртки с подписями. */
 TlRect app_render_walls_bounds(TlSpace *space);
 
+/* Размеры числом: подписи размеров последней отрисовки плана на экране — что меняют и где лежат. */
+typedef enum AppDimensionKind {
+    APP_DIMENSION_RULER,    /* item — TlRuler */
+    APP_DIMENSION_OPENING,  /* item — TlOpening, ширина */
+    APP_DIMENSION_WALL      /* item — TlOutline, wall; outer — снаружи, иначе внутри */
+} AppDimensionKind;
+
+typedef struct AppDimension {
+    AppDimensionKind kind;
+    void *item;
+    size_t wall;
+    bool outer;
+    double value;           /* мм, как в подписи */
+    TlVec2 center;          /* рамка подписи, px экрана */
+    double width, height, angle; /* angle — °, как у текста */
+} AppDimension;
+
+/* Подпись размера под точкой экрана (с запасом margin px). */
+bool app_render_dimension_at(TlVec2 screen, double margin, AppDimension *found);
+
 /* Объёмный вид комнаты под камерой (tl_room3d.h; камера с distance = 0 — вся комната в кадре). */
 struct TlCamera;
 void app_render_room3d(cairo_t *cr, TlProject *project, TlSpace *space, struct TlCamera *camera, double width,

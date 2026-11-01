@@ -24,6 +24,7 @@
 
 #include "app_commands.h"
 #include "app_hit.h"
+#include "app_render.h"
 
 #define DRAG_THRESHOLD_PX 3.0
 
@@ -115,6 +116,11 @@ static void press(AppCanvas *canvas, const AppPointer *pointer)
 {
     if (pointer->control) {
         app_select_begin_tiles_drag(canvas, pointer);
+        return;
+    }
+    AppDimension dimension; /* подпись размера — ввести число */
+    if (pointer->button == 1 && !pointer->shift && app_render_dimension_at(pointer->screen, 3, &dimension)) {
+        app_canvas_edit_dimension(canvas, &dimension);
         return;
     }
     AppSelection hit = app_hit_test(canvas->document->project, &canvas->view, pointer->screen,

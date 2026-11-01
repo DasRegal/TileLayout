@@ -75,3 +75,27 @@ void tl_project_set_thickness(TlProject *project, TlOutline *outline, size_t wal
         tl_outline_shift_wall(links.items[i].outline, links.items[i].wall, tl_vec2_scale(normal, delta));
     tl_wall_ref_list_free(&links);
 }
+
+bool tl_project_room_edge_wall(TlProject *project, const TlSpace *space, size_t edge, TlOutline **outline,
+                               size_t *wall)
+{
+    const TlPolygon *room = tl_space_room_outline(space);
+    if (edge >= room->count)
+        return false;
+    TlVec2 a = tl_polygon_edge_start(room, edge), b = tl_polygon_edge_end(room, edge);
+    const double tolerance = 1.0;
+    for (size_t o = 0; o < project->outlines.count; o++) {
+        TlOutline *candidate = project->outlines.items[o];
+        for (size_t w = 0; w < tl_outline_wall_count(candidate); w++) {
+            TlVec2 s = tl_outline_wall_start(candidate, w), e = tl_outline_wall_end(candidate, w);
+            bool same = (tl_distance(a, s) < tolerance && tl_distance(b, e) < tolerance) ||
+                        (tl_distance(a, e) < tolerance && tl_distance(b, s) < tolerance);
+            if (same) {
+                *outline = candidate;
+                *wall = w;
+                return true;
+            }
+        }
+    }
+    return false;
+}

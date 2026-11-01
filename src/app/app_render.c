@@ -425,6 +425,47 @@ void app_render_threshold(cairo_t *cr, const AppView *view, TlVec2 from, TlVec2 
     app_stroke_dashed(cr, color, width_px, 5);
 }
 
+/* ---- подписи размеров, которые вводят числом ---------------------------------------- */
+
+#define MAX_DIMENSIONS 2048
+
+static AppDimension dimensions[MAX_DIMENSIONS];
+static size_t dimension_count;
+static bool recording; /* план на экране (не печать) */
+
+static AppDimension dimension_of(AppDimensionKind kind, void *item, size_t wall, bool outer, double value)
+{
+    return (AppDimension){.kind = kind, .item = item, .wall = wall, .outer = outer, .value = value};
+}
+
+/* Запомнить рамку подписи text — так же, как её ставит app_text_along. */
+static void record_dimension(AppDimension dimension, const char *text, const AppTextStyle *style, TlVec2 a, TlVec2 b,
+                             TlVec2 normal, double offset_px)
+{
+    if (!recording || dimension_count >= MAX_DIMENSIONS)
+        return;
+    app_text_size(text, style, &dimension.width, &dimension.height);
+    dimension.width += 6;
+    dimension.height += 2;
+    dimension.center = tl_vec2_add(tl_vec2_midpoint(a, b), tl_vec2_scale(normal, offset_px));
+    dimension.angle = atan2(b.y - a.y, b.x - a.x) * 180.0 / G_PI;
+    dimensions[dimension_count++] = dimension;
+}
+
+bool app_render_dimension_at(TlVec2 screen, double margin, AppDimension *found)
+{
+    for (size_t i = dimension_count; i-- > 0;) { /* сверху — нарисованные позже */
+        const AppDimension *d = &dimensions[i];
+        double angle = d->angle * G_PI / 180, dx = screen.x - d->center.x, dy = screen.y - d->center.y;
+        double along = dx * cos(angle) + dy * sin(angle), across = -dx * sin(angle) + dy * cos(angle);
+        if (fabs(along) <= d->width / 2 + margin && fabs(across) <= d->height / 2 + margin) {
+            *found = *d;
+            return true;
+        }
+    }
+    return false;
+}
+
 static void render_opening_width(cairo_t *cr, const AppView *view, const TlOpening *opening, TlVec2 from, TlVec2 to)
 {
     TlVec2 a = app_view_to_screen(view, from), b = app_view_to_screen(view, to);
@@ -433,9 +474,13 @@ static void render_opening_width(cairo_t *cr, const AppView *view, const TlOpeni
     char text[64]; /* «Д1 · 800» — имя, по которому проём выбирают для раскладки от двери */
     snprintf(text, sizeof text, opening->name[0] ? "%s · %.0f" : "%s%.0f", opening->name, opening->width);
     app_render_dimension_text(cr, a, b, 0, text, COLOR_OPENING_DIM, true);
+    AppTextStyle style = {11.3, true, APP_TRANSPARENT, APP_TRANSPARENT};
+    record_dimension(dimension_of(APP_DIMENSION_OPENING, (void *)opening, 0, false, round(opening->width)), text,
+                     &style, a, b, tl_vec2(0, 0), 0);
 }
 
 /* Дверь в перегородке: под ней пол с плиткой; видны косяки и стык комнат. */
+/* (ширина проёма — подпись, её можно ввести числом: record_dimension) */
 static void render_doorway(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlProject *project,
                            const TlOpening *opening)
 {
@@ -637,6 +682,9 @@ static void render_outer_dimensions(cairo_t *cr, const AppView *view, TlProject 
         snprintf(text, sizeof text, "%.0f", tl_distance(outer.items[wall], outer.items[(wall + 1) % n]));
         AppTextStyle style = {11.3, false, app_color_hex(COLOR_OUTER_DIM), app_label_background(0.84)};
         app_text_along(cr, text, &style, da, db, tl_vec2(0, 0), 0);
+        record_dimension(dimension_of(APP_DIMENSION_WALL, outline, wall, true,
+                                        round(tl_distance(outer.items[wall], outer.items[(wall + 1) % n]))),
+                         text, &style, da, db, tl_vec2(0, 0), 0);
 
         TlVec2 to_axis = tl_vec2_scale(normal, thickness / 2);
         TlVec2 a = tl_vec2_add(tl_outline_wall_start(outline, wall), to_axis);
@@ -649,7 +697,7 @@ static void render_outer_dimensions(cairo_t *cr, const AppView *view, TlProject 
 }
 
 static void render_space_label(cairo_t *cr, const AppView *view, const AppRenderOptions *options,
-                               TlSpace *space)
+                               TlProject *project, TlSpace *space)
 {
     if (options->show_dims) {
         const TlPolygon *room = tl_space_room_outline(space); /* длины стен — без сторон дверных проёмов */
@@ -664,6 +712,12 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
             snprintf(text, sizeof text, "%.0f", tl_polygon_edge_length(room, i));
             AppTextStyle style = {11.3, false, app_color_hex(COLOR_INNER_DIM), app_label_background(0.84)};
             app_text_along(cr, text, &style, a, b, tl_vec2_scale(normal, -1), 11);
+            TlOutline *outline;
+            size_t wall;
+            if (tl_project_room_edge_wall(project, space, i, &outline, &wall)) /* вся внутренняя грань стены дома */
+                record_dimension(dimension_of(APP_DIMENSION_WALL, outline, wall, false,
+                                                round(tl_polygon_edge_length(room, i))),
+                                 text, &style, a, b, tl_vec2_scale(normal, -1), 11);
         }
     }
     if (!options->show_room_labels)
@@ -672,7 +726,10 @@ static void render_space_label(cairo_t *cr, const AppView *view, const AppRender
     const char *lines[4] = {space->name, area};
     size_t count = 2;
     snprintf(area, sizeof area, "%.2f м²", tl_space_room_area(space) / 1e6);
-    int total = tl_space_tile_total(space); /* с зонами, участками и стенами */
+    int total = 0; /* на полу: основной, зоны и участки (стены — на развёртке) */
+    for (size_t l = 0; l < tl_space_floor_layout_count(space); l++)
+        if (tl_space_layout_counted(space, l))
+            total += tl_layout_total(tl_space_layout_at(space, l));
     if (total > 0) {
         snprintf(tiles, sizeof tiles, "плиток: %d", total);
         lines[count++] = tiles;
@@ -938,8 +995,18 @@ static void render_pipes(cairo_t *cr, const AppView *view, TlProject *project)
 
 static void render_rulers(cairo_t *cr, const AppView *view, TlProject *project)
 {
-    for (size_t i = 0; i < project->rulers.count; i++)
-        app_render_ruler(cr, view, project->rulers.items[i], app_color_hex(COLOR_RULER), 1);
+    for (size_t i = 0; i < project->rulers.count; i++) {
+        TlRuler *ruler = project->rulers.items[i];
+        app_render_ruler(cr, view, ruler, app_color_hex(COLOR_RULER), 1);
+        TlVec2 a = app_view_to_screen(view, ruler->start), b = app_view_to_screen(view, ruler->end);
+        if (tl_distance(a, b) < 1)
+            continue;
+        char text[64]; /* та же подпись, что у app_render_ruler */
+        snprintf(text, sizeof text, ruler->name[0] ? "%s · %.0f" : "%s%.0f", ruler->name, tl_ruler_length(ruler));
+        AppTextStyle style = {10.5, false, APP_TRANSPARENT, APP_TRANSPARENT};
+        record_dimension(dimension_of(APP_DIMENSION_RULER, ruler, 0, false, round(tl_ruler_length(ruler))), text,
+                         &style, a, b, tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a))), RULER_LABEL_OFFSET_PX);
+    }
 }
 
 static void render_scale_bar(cairo_t *cr, const AppView *view)
@@ -977,6 +1044,9 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
     app_draw_set_mono(options->mono);
     if (options->printing) /* печать и PDF — в светлой теме */
         app_draw_set_dark(false);
+    recording = !options->printing; /* подписи размеров — для ввода числом */
+    if (recording)
+        dimension_count = 0;
     cairo_save(cr);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     if (!options->printing) {
@@ -1001,7 +1071,7 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
         for (size_t o = 0; o < project->outlines.count; o++)
             render_outer_dimensions(cr, view, project, project->outlines.items[o]);
     for (size_t s = 0; s < project->spaces.count; s++)
-        render_space_label(cr, view, options, project->spaces.items[s]);
+        render_space_label(cr, view, options, project, project->spaces.items[s]);
     if (options->show_dims)
         render_partition_thickness(cr, view, project);
     if (options->show_locks && !options->printing)
@@ -1011,5 +1081,6 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
     render_scale_bar(cr, view);
     cairo_restore(cr);
     app_draw_set_mono(previous_mono);
+    recording = false;
     app_draw_set_dark(previous_dark);
 }

@@ -78,6 +78,10 @@
       <canvas id="plan"></canvas>
       <canvas id="walls" hidden></canvas>
       <canvas id="room3d" hidden></canvas>
+      <div id="dimension-editor" class="dimension-editor" hidden>
+        <span class="dimension-title"></span>
+        <span class="dimension-field"><input type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="Размер, мм"><span class="unit">мм</span></span>
+      </div>
       <div class="mode-switch" id="mode-switch" hidden>
         <button type="button" data-mode="flat" aria-pressed="true" title="Развёртка стен">2D</button>
         <button type="button" data-mode="volume" aria-pressed="false" title="Комната в объёме: пол, стены, плитка, предметы">3D</button>
@@ -213,6 +217,7 @@
         Проект хранится только в этом браузере и в файлах, которые вы сохраняете. Файлы — те же, что у
         <a href="https://github.com/DasRegal/TileLayout/releases/latest">настольной программы</a>; свои каталоги
         плитки (папки с фото) — пока только в ней.
+        <span class="app-version" id="app-version"></span>
       </footer>
     </aside>
   </main>

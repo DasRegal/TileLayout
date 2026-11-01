@@ -933,6 +933,19 @@ bool tl_web_set_partition_angle(int index, double degrees, double now_seconds)
     return isfinite(degrees) && change_partition(index, degrees, "pangle", tl_partition_set_angle, true, now_seconds);
 }
 
+bool tl_web_set_ruler_length(int index, double length, double now_seconds)
+{
+    TlProject *project = tl_web_project();
+    if (index < 0 || (size_t)index >= project->rulers.count || !(length >= 1 && length <= 1e6))
+        return false;
+    TlRuler moved = *project->rulers.items[index];
+    if (!tl_ruler_set_length(&moved, length))
+        return false;
+    tl_web_checkpoint("", now_seconds);
+    *project->rulers.items[index] = moved;
+    return true;
+}
+
 bool tl_web_set_opening_width(int index, double width, double now_seconds)
 {
     TlOpening *opening = opening_at(index);

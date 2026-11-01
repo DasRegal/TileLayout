@@ -128,14 +128,20 @@ export function drawScene(ctx, scene, view, options) {
   }
   screen();
   if (layers.numbers && options.numbers) drawTileNumbers(ctx, scene, options.numbers, view, options.printing);
+  /* подписи размеров, которые можно ввести числом: hit(рамка подписи, что меняет) — main.js */
+  const hit = options.hits && !options.printing ? (box, target) => options.hits.push({ ...box, target }) : null;
   if (layers.dims) {
-    for (const dimension of scene.dimensions) drawOuterDimension(ctx, dimension, view);
-    for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view);
-    for (const space of scene.spaces) drawRoomLengths(ctx, space, view);
+    for (const dimension of scene.dimensions) drawOuterDimension(ctx, dimension, view, hit);
+    for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view, hit);
+    for (const space of scene.spaces) drawRoomLengths(ctx, space, view, hit);
   }
   if (layers.labels) for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
   for (const fixture of scene.fixtures || []) drawFixtureLabel(ctx, fixture, view);
-  if (layers.rulers) for (const ruler of scene.rulers) drawRuler(ctx, ruler, view);
+  if (layers.rulers) {
+    scene.rulers.forEach((ruler, index) => {
+      drawRuler(ctx, ruler, view, C.ruler, hit && ((box) => hit(box, { kind: 'ruler', index, value: ruler.length })));
+    });
+  }
   if (options.overlay) options.overlay(ctx);
 }
 
@@ -468,12 +474,13 @@ function drawOpenings(ctx, scene, view, px) {
 }
 
 /** Ширина проёма — поперёк него, посередине. */
-function drawOpeningWidth(ctx, opening, view) {
+function drawOpeningWidth(ctx, opening, view, hit) {
   const a = view.toScreen(...opening.from);
   const b = view.toScreen(...opening.to);
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 22) {
     const width = String(Math.round(opening.width));
-    textAlong(ctx, opening.name ? `${opening.name} · ${width}` : width, a, b, [0, 0], 0, C.openingDim, true);
+    const box = textAlong(ctx, opening.name ? `${opening.name} · ${width}` : width, a, b, [0, 0], 0, C.openingDim, true);
+    if (hit) hit(box, { kind: 'opening', index: opening.index, value: Math.round(opening.width) });
   }
 }
 
@@ -631,7 +638,7 @@ function drawJoint(ctx, joint, px) {
 }
 
 /** Линейка: отрезок с засечками и длиной (в пикселях экрана). */
-export function drawRuler(ctx, ruler, view, color = C.ruler) {
+export function drawRuler(ctx, ruler, view, color = C.ruler, hit = null) {
   const a = view.toScreen(ruler.line[0], ruler.line[1]);
   const b = view.toScreen(ruler.line[2], ruler.line[3]);
   const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -645,7 +652,8 @@ export function drawRuler(ctx, ruler, view, color = C.ruler) {
     ctx.lineTo(end[0] + normal[0] * 4, end[1] + normal[1] * 4);
   }
   stroke(ctx, color, 1);
-  textAlong(ctx, ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length), a, b, normal, 9, color);
+  const box = textAlong(ctx, ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length), a, b, normal, 9, color);
+  if (hit) hit(box);
 }
 
 // ---- подписи (в пикселях экрана) ---------------------------------------------------
@@ -669,6 +677,7 @@ function textAlong(ctx, text, a, b, normal, offset, color, bold = false) {
   ctx.fillStyle = color;
   ctx.fillText(text, 0, 0.5);
   ctx.restore();
+  return { x, y, angle, width: width + 6, height: 16 }; // рамка подписи, px экрана
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -682,7 +691,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /** Размер стены снаружи дома: размерная линия с засечками в 18 px от стены. */
-function drawOuterDimension(ctx, dimension, view) {
+function drawOuterDimension(ctx, dimension, view, hit) {
   const a = view.toScreen(...dimension.from);
   const b = view.toScreen(...dimension.to);
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 28) return;
@@ -705,7 +714,8 @@ function drawOuterDimension(ctx, dimension, view) {
     ctx.lineTo(end[0] + tick[0], end[1] + tick[1]);
   }
   stroke(ctx, C.outerDim, 1);
-  textAlong(ctx, String(dimension.length), da, db, [0, 0], 0, C.outerDim);
+  const box = textAlong(ctx, String(dimension.length), da, db, [0, 0], 0, C.outerDim);
+  if (hit) hit(box, { kind: 'wall', house: dimension.house, wall: dimension.wall, outer: true, value: dimension.length });
 }
 
 /** Точка внутри многоугольника (плоский массив). */
@@ -719,7 +729,7 @@ function inside(points, x, y) {
 }
 
 /** Длины стен комнаты — внутри, вдоль каждой стороны. */
-function drawRoomLengths(ctx, space, view) {
+function drawRoomLengths(ctx, space, view, hit) {
   const room = space.room;
   const n = room.length / 2;
   for (let i = 0; i < n; i++) {
@@ -734,7 +744,9 @@ function drawRoomLengths(ctx, space, view) {
     if (!inside(room, (x0 + x1) / 2 + normal[0] * probe, (y0 + y1) / 2 + normal[1] * probe)) {
       normal = [-normal[0], -normal[1]];
     }
-    textAlong(ctx, length.toFixed(0), a, b, normal, 11, C.innerDim);
+    const box = textAlong(ctx, length.toFixed(0), a, b, normal, 11, C.innerDim);
+    const edge = space.edges?.[i]; // вся внутренняя грань стены дома — длину можно ввести
+    if (hit && edge) hit(box, { kind: 'wall', house: edge[0], wall: edge[1], outer: false, value: Math.round(length) });
   }
 }
 

@@ -33,5 +33,6 @@ int main(void)
     spec_dxf();
     spec_underlay();
     spec_room3d();
+    spec_dimensions();
     return spec_report() == 0 ? 0 : 1;
 }

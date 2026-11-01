@@ -119,6 +119,10 @@ struct AppCanvas {
 
 /* ---- общее для инструментов --------------------------------------------- */
 
+/* Подпись размера на плане — поле ввода числа рядом (app_tool_dimension.c). */
+struct AppDimension;
+void app_canvas_edit_dimension(AppCanvas *canvas, const struct AppDimension *dimension);
+
 void app_canvas_redraw(AppCanvas *canvas);
 void app_canvas_set_cursor(AppCanvas *canvas, const char *name);
 TlSnapContext app_canvas_snap_context(AppCanvas *canvas);

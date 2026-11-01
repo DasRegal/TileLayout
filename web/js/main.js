@@ -337,6 +337,95 @@ async function underlayAction(action, fields) {
   }
 }
 
+// ---- размеры числом: касание подписи размера — поле ввода (на телефоне — цифровая клавиатура) ----
+
+/** Подписи размеров последней отрисовки: рамка (центр, угол, ширина, высота, px) и что меняет. */
+const dimensionHits = { plan: [], walls: [] };
+const HIT_MARGIN_PX = 6;
+
+/** Подпись размера под точкой (px холста) или null. */
+function dimensionAt(hits, x, y, touch) {
+  const margin = HIT_MARGIN_PX + (touch ? 6 : 0);
+  for (let i = hits.length - 1; i >= 0; i--) { // сверху — нарисованные позже
+    const hit = hits[i];
+    const dx = x - hit.x;
+    const dy = y - hit.y;
+    const along = dx * Math.cos(hit.angle) + dy * Math.sin(hit.angle);
+    const across = -dx * Math.sin(hit.angle) + dy * Math.cos(hit.angle);
+    if (Math.abs(along) <= hit.width / 2 + margin && Math.abs(across) <= hit.height / 2 + margin) return hit;
+  }
+  return null;
+}
+
+/** Применить введённый размер; false — не получилось (значение вне пределов или предмет заблокирован). */
+function applyDimension(target, value) {
+  const core = state.core;
+  switch (target.kind) {
+    case 'ruler': return core.setRulerLength(target.index, value);
+    case 'opening': return core.setOpeningWidth(target.index, value);
+    case 'wall': return core.setWallLength(target.house, target.wall, value, target.outer, state.settings.keepAngles);
+    case 'wall_ruler': {
+      const [x0, h0] = target.start;
+      const [x1, h1] = target.end;
+      const length = Math.hypot(x1 - x0, h1 - h0);
+      if (length < 1e-6) return false;
+      const end = [x0 + ((x1 - x0) / length) * value, h0 + ((h1 - h0) / length) * value];
+      return core.setWallRuler(state.tab, target.index, target.start, end);
+    }
+    default: return false;
+  }
+}
+
+const DIMENSION_TITLES = { ruler: 'Длина линейки', opening: 'Ширина проёма', wall_ruler: 'Длина линейки' };
+
+/** Поле ввода поверх подписи; Enter — применить, Esc — отмена, щелчок мимо — тоже применить. */
+function editDimension(hit, surface) {
+  const editor = document.getElementById('dimension-editor');
+  const input = editor.querySelector('input');
+  const box = surface.getBoundingClientRect();
+  const host = editor.parentElement.getBoundingClientRect();
+  editor.style.left = `${box.left - host.left + hit.x}px`;
+  editor.style.top = `${box.top - host.top + hit.y}px`;
+  editor.querySelector('.dimension-title').textContent = DIMENSION_TITLES[hit.target.kind]
+    || (hit.target.outer ? 'Длина стены снаружи' : 'Длина стены внутри');
+  input.value = String(hit.target.value);
+  editor.hidden = false;
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (apply) => {
+    if (done) return;
+    done = true;
+    editor.hidden = true;
+    input.onkeydown = null;
+    input.onblur = null;
+    if (!apply) return;
+    const value = Number(input.value.replace(',', '.').replace(/\s/g, ''));
+    if (!(value > 0) || value === hit.target.value) return;
+    if (applyDimension(hit.target, value)) {
+      changed();
+      say(`${editor.querySelector('.dimension-title').textContent}: ${value} мм.`);
+    } else {
+      say('Такой размер не подходит (или предмет заблокирован).');
+    }
+  };
+  input.onkeydown = (event) => {
+    if (event.key === 'Enter') finish(true);
+    if (event.key === 'Escape') finish(false);
+  };
+  input.onblur = () => finish(true);
+}
+
+/** Касание подписи размера (холст, событие) — открыть ввод; true — это была подпись. */
+function tryEditDimension(hits, surface, event) {
+  if (tools.drawing) return false;
+  const box = surface.getBoundingClientRect();
+  const hit = dimensionAt(hits, event.clientX - box.left, event.clientY - box.top, event.pointerType === 'touch');
+  if (!hit) return false;
+  editDimension(hit, surface);
+  return true;
+}
+
 function requestDraw() {
   if (!frame) frame = requestAnimationFrame(draw);
 }
@@ -359,7 +448,9 @@ function draw() {
     canvas.width = width;
     canvas.height = height;
   }
+  dimensionHits.plan = [];
   drawScene(ctx, state.scene, view, {
+    hits: dimensionHits.plan,
     selected: state.selection?.kind === 'panno' ? [] : selectedSpaces(), // у панно — его рамка
     dark: isDark(),
     highlight: highlightOf(state.object),
@@ -471,7 +562,9 @@ function drawWallsTab(dpr) {
     : selection?.kind === 'panno' && selection.space === state.tab ? { panno: selection.index }
     : {};
   const ruler = state.wallRuler;
+  dimensionHits.walls = [];
   drawRoomWalls(wallsCtx, state.walls, wallsView, {
+    hits: dimensionHits.walls,
     dpr,
     dark: isDark(),
     image: (ref) => catalogs.image(ref),
@@ -1484,6 +1577,7 @@ function bindCommands() {
     onChange: requestDraw,
     onClick: (world, event) => {
       if (!state.core) return;
+      if (tryEditDimension(dimensionHits.plan, canvas, event)) return;
       if (tools.drawing) {
         tools.click(world, event.shiftKey);
         tools.hover(world, event.shiftKey);
@@ -1526,7 +1620,8 @@ function bindCommands() {
       requestDraw();
     },
     onClick: (world, event) => {
-      if (state.core) clickOnWalls(world, event);
+      if (!state.core || tryEditDimension(dimensionHits.walls, wallsCanvas, event)) return;
+      clickOnWalls(world, event);
     },
     onHover: (world, event) => {
       if (!state.wallRuler) return;
@@ -1588,6 +1683,8 @@ async function start() {
   }
   document.body.classList.remove('loading');
   document.getElementById('version').textContent = `версия ${state.core.version()}`;
+  document.getElementById('app-version').innerHTML = `TileLayout ${state.core.version()} · ` + // и на телефоне (шапка там — значки)
+    '<a href="https://github.com/DasRegal/TileLayout/blob/main/CHANGELOG.md" target="_blank" rel="noopener">что нового</a>';
   const draft = readDraft();
   let message = 'Пример проекта. Щёлкните комнату, чтобы настроить плитку; откройте свой файл кнопкой «Открыть».';
   if (await openFromLink()) {

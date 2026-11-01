@@ -19,6 +19,8 @@ TlRuler *tl_ruler_clone(const TlRuler *ruler);
 void tl_ruler_free(TlRuler *ruler);
 
 double tl_ruler_length(const TlRuler *ruler);
+/* Длина линейки: начало на месте, конец — по той же прямой. false — длина не больше 0 или линейка — точка. */
+bool tl_ruler_set_length(TlRuler *ruler, double length);
 void tl_ruler_translate(TlRuler *ruler, TlVec2 offset);
 TlVec2 *tl_ruler_end_point(TlRuler *ruler, TlRulerEnd which);
 
