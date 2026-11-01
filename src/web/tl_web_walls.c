@@ -422,11 +422,14 @@ bool tl_web_set_panno(int space_id, int index, const char *fields, double now_se
 /* ---- объёмный вид (tl_room3d.h) ----------------------------------------------------
  * {"camera": {"yaw", "pitch", "distance"}, "paints": [{"c": [[x0, y0, …], …] — контуры в пикселях
  *  (заливка «чёт-нечет»), "f": заливка, "s": обводка или "", "w": её толщина,
- *  у плитки с рисунком — "t": рисунок из каталога, "m": [a, b, c, d, e, f] — квадрат 0…1 на экран,
+ *  у плитки с рисунком — "t": рисунок из каталога, "cells": [x0, y0, … x3, y3, a, b, c, d, e, f, …] —
+ *  по 14 чисел на клетку: четырёхугольник клетки и квадрат картинки 0…1 → экран (tl_room3d.h),
  *  "tw", "th": стороны плитки, мм, "sh": свет (затенение чёрным с прозрачностью 1 − sh)}]}
- * distance < 0 — камера по умолчанию, 0 — те же углы, расстояние — вся комната в кадре. */
+ * distance < 0 — камера по умолчанию, 0 — те же углы, расстояние — вся комната в кадре; has_target —
+ * камера смотрит в (tx, ty, tz) (комнату сдвигали), иначе в середину комнаты. В "camera" — и "target". */
 
-const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double width, double height)
+const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double tx, double ty, double tz,
+                           int has_target, double width, double height)
 {
     static char *text;
     TlProject *project = tl_web_project();
@@ -438,6 +441,8 @@ const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distan
             camera.yaw = yaw;
             camera.pitch = pitch;
             camera.distance = distance;
+            if (has_target && distance > 0)
+                camera.target = (TlVec3){tx, ty, tz};
         }
         TlPaintList paints = tl_room3d_paint(project, space, &camera, width, height);
         for (size_t i = 0; i < paints.count; i++) {
@@ -457,11 +462,18 @@ const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distan
             tl_json_object_set(item, "s", tl_json_string(paint->stroke));
             tl_json_object_set(item, "w", tl_json_number(paint->stroke_width));
             if (paint->texture[0]) {
-                TlJson *matrix = tl_json_array();
-                for (int k = 0; k < 6; k++)
-                    tl_json_array_push(matrix, tl_json_number(round(paint->texture_matrix[k] * 100) / 100));
+                TlJson *cells = tl_json_array();
+                for (size_t c = 0; c < paint->cell_count; c++) {
+                    const TlTextureCell *cell = &paint->cells[c];
+                    for (int k = 0; k < 4; k++) {
+                        tl_json_array_push(cells, tl_json_number(round(cell->quad[k].x * 10) / 10));
+                        tl_json_array_push(cells, tl_json_number(round(cell->quad[k].y * 10) / 10));
+                    }
+                    for (int k = 0; k < 6; k++)
+                        tl_json_array_push(cells, tl_json_number(round(cell->matrix[k] * 100) / 100));
+                }
                 tl_json_object_set(item, "t", tl_json_string(paint->texture));
-                tl_json_object_set(item, "m", matrix);
+                tl_json_object_set(item, "cells", cells);
                 tl_json_object_set(item, "tw", tl_json_number(paint->tile_width));
                 tl_json_object_set(item, "th", tl_json_number(paint->tile_height));
                 tl_json_object_set(item, "sh", tl_json_number(round(paint->shade * 1000) / 1000));
@@ -473,8 +485,34 @@ const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distan
         tl_json_object_set(camera_json, "yaw", tl_json_number(camera.yaw));
         tl_json_object_set(camera_json, "pitch", tl_json_number(camera.pitch));
         tl_json_object_set(camera_json, "distance", tl_json_number(camera.distance));
+        TlJson *target = tl_json_array();
+        tl_json_array_push(target, tl_json_number(camera.target.x));
+        tl_json_array_push(target, tl_json_number(camera.target.y));
+        tl_json_array_push(target, tl_json_number(camera.target.z));
+        tl_json_object_set(camera_json, "target", target);
         tl_json_object_set(json, "camera", camera_json);
     }
     tl_json_object_set(json, "paints", paints_json);
+    return tl_web_keep(&text, json);
+}
+
+const char *tl_web_room_3d_pan(const char *camera_json, double dx, double dy, double height)
+{
+    static char *text;
+    TlJson *parsed = tl_json_parse(camera_json, NULL, 0);
+    TlCamera camera = {.fov = 45};
+    const TlJson *target = tl_json_get(parsed, "target");
+    camera.yaw = tl_json_number_or(tl_json_get(parsed, "yaw"), 0);
+    camera.pitch = tl_json_number_or(tl_json_get(parsed, "pitch"), 0);
+    camera.distance = tl_json_number_or(tl_json_get(parsed, "distance"), 0);
+    camera.target = (TlVec3){tl_json_number_or(tl_json_at(target, 0), 0), tl_json_number_or(tl_json_at(target, 1), 0),
+                             tl_json_number_or(tl_json_at(target, 2), 0)};
+    tl_json_free(parsed);
+    tl_room3d_pan(&camera, dx, dy, height);
+    TlJson *json = tl_json_object(), *point = tl_json_array();
+    tl_json_array_push(point, tl_json_number(camera.target.x));
+    tl_json_array_push(point, tl_json_number(camera.target.y));
+    tl_json_array_push(point, tl_json_number(camera.target.z));
+    tl_json_object_set(json, "target", point);
     return tl_web_keep(&text, json);
 }

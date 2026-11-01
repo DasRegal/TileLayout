@@ -35,7 +35,8 @@ typedef struct Face {
     bool stroked;
     double stroke_width;
     const char *texture;  /* рисунок плитки из каталога (настройки раскладки) или NULL */
-    TlVec3 corner[3];     /* углы плитки: левый верхний, правый верхний, левый нижний (оси раскладки) */
+    TlVec3 corner[3];     /* углы плитки: левый верхний, правый верхний, левый нижний (оси раскладки);
+                             правый нижний — четвёртый угол параллелограмма */
     double tile_width, tile_height;
 } Face;
 
@@ -267,9 +268,27 @@ static void add_panno(Group *group, TlSpace *space, size_t index, const Mapper *
     tl_layout_free(layout);
 }
 
+#define PIPE_SEGMENTS 28
+#define PIPE_HOLE "#3a3e45"     /* отверстие под трубу: тёмный круг коронки */
+#define PIPE_RIM "#e8eaee"
+
+/* Отверстие под трубу — круг center диаметром diameter на поверхности (точки — в осях mapper). */
+static void add_pipe(Group *group, TlVec2 center, double diameter, const Mapper *mapper)
+{
+    TlPolygon circle = {0};
+    for (int i = 0; i < PIPE_SEGMENTS; i++) {
+        double angle = 2 * TL_PI * i / PIPE_SEGMENTS;
+        tl_polygon_push(&circle, tl_vec2(center.x + cos(angle) * diameter / 2, center.y + sin(angle) * diameter / 2));
+    }
+    Face face = face_new(PIPE_HOLE, PIPE_RIM, 1.2);
+    face_add_polygon(&face, &circle, mapper, NULL, tl_vec2(0, 0));
+    face_list_push(&group->faces, face);
+    tl_polygon_free(&circle);
+}
+
 /* ---- поверхности комнаты ----------------------------------------------------------- */
 
-static void build_floor(GroupList *groups, TlSpace *space)
+static void build_floor(GroupList *groups, TlProject *project, TlSpace *space)
 {
     Mapper mapper = {.kind = MAP_FLOOR};
     Face base = face_new(FLOOR_BASE, EDGE, EDGE_STROKE_PX);
@@ -284,6 +303,11 @@ static void build_floor(GroupList *groups, TlSpace *space)
     for (size_t p = 0; p < space->pannos.count; p++)
         if (space->pannos.items[p].wall == TL_PANNO_FLOOR)
             add_panno(&group, space, p, &mapper);
+    for (size_t i = 0; i < project->pipes.count; i++) { /* отверстия в плитке пола */
+        const TlPipe *pipe = project->pipes.items[i];
+        if (tl_polygon_contains(&space->outline, pipe->center))
+            add_pipe(&group, pipe->center, pipe->diameter, &mapper);
+    }
     group_list_push(groups, group);
 }
 
@@ -385,6 +409,11 @@ static void build_walls(GroupList *groups, TlProject *project, TlSpace *space)
         for (size_t p = 0; space->walls.enabled && p < space->pannos.count; p++)
             if (space->pannos.items[p].wall != TL_PANNO_FLOOR && tl_space_wall_of_edge(space, space->pannos.items[p].wall) == w)
                 add_panno(&group, space, p, &mapper);
+        for (size_t p = 0; p < space->wall_pipes.count; p++) { /* отверстия на стене: розетки, смесители */
+            const TlWallPipe *pipe = &space->wall_pipes.items[p];
+            if (tl_space_wall_of_edge(space, pipe->wall) == w)
+                add_pipe(&group, tl_space_wall_to_development(space, w, pipe->at), pipe->diameter, &mapper);
+        }
         group_list_push(groups, group);
     }
 }
@@ -499,7 +528,7 @@ static void build_stairs(GroupList *groups, TlSpace *space, size_t k)
 static GroupList build(TlProject *project, TlSpace *space)
 {
     GroupList groups = {0};
-    build_floor(&groups, space);
+    build_floor(&groups, project, space);
     build_walls(&groups, project, space);
     for (size_t k = 0; k < tl_space_stairs_count(space); k++)
         build_stairs(&groups, space, k);
@@ -704,11 +733,77 @@ static void paint_order(const GroupList *groups, size_t *visible, size_t count, 
     free(done);
 }
 
+void tl_room3d_pan(TlCamera *camera, double dx, double dy, double height)
+{
+    if (!(height > 0) || !(camera->distance > 0))
+        return;
+    Eye eye = eye_of(camera, height, height);
+    double mm = camera->distance / eye.focal; /* мм на пиксель у точки, куда смотрим */
+    camera->target = vec3(camera->target.x - (eye.right.x * dx - eye.up.x * dy) * mm,
+                          camera->target.y - (eye.right.y * dx - eye.up.y * dy) * mm,
+                          camera->target.z - (eye.right.z * dx - eye.up.z * dy) * mm);
+}
+
 void tl_paint_list_free_all(TlPaintList *list)
 {
-    for (size_t i = 0; i < list->count; i++)
+    for (size_t i = 0; i < list->count; i++) {
         tl_polygon_list_free_all(&list->items[i].contours);
+        free(list->items[i].cells);
+    }
     tl_paint_list_free(list);
+}
+
+#define CELL_PX 48.0  /* клетка рисунка — не больше стольких пикселей по стороне */
+#define MAX_CELLS 10  /* по каждой стороне плитки */
+
+static bool project_point(const Eye *eye, TlVec3 p, TlVec2 *out)
+{
+    TlVec3 d = sub3(p, eye->position);
+    double z = dot3(d, eye->forward);
+    if (z < NEAR_MM)
+        return false;
+    *out = tl_vec2(eye->cx + dot3(d, eye->right) / z * eye->focal, eye->cy - dot3(d, eye->up) / z * eye->focal);
+    return true;
+}
+
+/* Рисунок плитки по клеткам: точка плитки (s, t ∈ 0…1) — corner[0] + s·(corner[1] − corner[0]) +
+   t·(corner[2] − corner[0]). Клетка за камерой не рисуется (там видна заливка цветом). */
+static void texture_cells(const Eye *eye, const Face *face, TlPaint *paint)
+{
+    TlVec3 o = face->corner[0], u = sub3(face->corner[1], o), v = sub3(face->corner[2], o);
+    TlVec3 far = vec3(o.x + u.x + v.x, o.y + u.y + v.y, o.z + u.z + v.z);
+    TlVec2 p[4];
+    bool all = project_point(eye, o, &p[0]) && project_point(eye, face->corner[1], &p[1]) &&
+               project_point(eye, face->corner[2], &p[2]) && project_point(eye, far, &p[3]);
+    int ns = MAX_CELLS, nt = MAX_CELLS;
+    if (all) { /* клеток — по размеру плитки на экране */
+        double ls = fmax(tl_distance(p[0], p[1]), tl_distance(p[2], p[3]));
+        double lt = fmax(tl_distance(p[0], p[2]), tl_distance(p[1], p[3]));
+        ns = (int)fmax(1, fmin(MAX_CELLS, ceil(ls / CELL_PX)));
+        nt = (int)fmax(1, fmin(MAX_CELLS, ceil(lt / CELL_PX)));
+    }
+    paint->cells = malloc(sizeof *paint->cells * (size_t)(ns * nt));
+    for (int i = 0; i < ns; i++)
+        for (int j = 0; j < nt; j++) {
+            double s0 = (double)i / ns, s1 = (double)(i + 1) / ns, t0 = (double)j / nt, t1 = (double)(j + 1) / nt;
+            const double st[4][2] = {{s0, t0}, {s1, t0}, {s1, t1}, {s0, t1}};
+            TlTextureCell cell;
+            bool in_front = true;
+            for (int k = 0; k < 4 && in_front; k++) {
+                TlVec3 point = vec3(o.x + u.x * st[k][0] + v.x * st[k][1], o.y + u.y * st[k][0] + v.y * st[k][1],
+                                    o.z + u.z * st[k][0] + v.z * st[k][1]);
+                in_front = project_point(eye, point, &cell.quad[k]);
+            }
+            if (!in_front)
+                continue;
+            /* квадрат 0…1 → экран так, чтобы углы клетки (s0,t0), (s1,t0), (s0,t1) попали на свои места */
+            double ds = s1 - s0, dt = t1 - t0;
+            double a = (cell.quad[1].x - cell.quad[0].x) / ds, b = (cell.quad[1].y - cell.quad[0].y) / ds;
+            double c = (cell.quad[3].x - cell.quad[0].x) / dt, d = (cell.quad[3].y - cell.quad[0].y) / dt;
+            const double matrix[6] = {a, b, c, d, cell.quad[0].x - a * s0 - c * t0, cell.quad[0].y - b * s0 - d * t0};
+            memcpy(cell.matrix, matrix, sizeof matrix);
+            paint->cells[paint->cell_count++] = cell;
+        }
 }
 
 TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera, double width, double height)
@@ -753,24 +848,15 @@ TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera
                 continue;
             hex_color(paint.fill, face->rgb, shade);
             paint.shade = shade;
-            if (face->texture) { /* углы плитки на экране; за камерой — без рисунка, цветом */
-                TlVec2 corner[3];
-                bool in_front = true;
-                for (int k = 0; k < 3 && in_front; k++) {
-                    TlVec3 d = sub3(face->corner[k], eye.position);
-                    double z = dot3(d, eye.forward);
-                    in_front = z >= NEAR_MM;
-                    if (in_front)
-                        corner[k] = tl_vec2(eye.cx + dot3(d, eye.right) / z * eye.focal, eye.cy - dot3(d, eye.up) / z * eye.focal);
-                }
-                if (in_front) {
+            if (face->texture) { /* рисунок по клеткам; за камерой — цветом */
+                texture_cells(&eye, face, &paint);
+                if (paint.cell_count) {
                     snprintf(paint.texture, sizeof paint.texture, "%s", face->texture);
-                    const double matrix[6] = {corner[1].x - corner[0].x, corner[1].y - corner[0].y,
-                                              corner[2].x - corner[0].x, corner[2].y - corner[0].y, corner[0].x,
-                                              corner[0].y};
-                    memcpy(paint.texture_matrix, matrix, sizeof matrix);
                     paint.tile_width = face->tile_width;
                     paint.tile_height = face->tile_height;
+                } else {
+                    free(paint.cells);
+                    paint.cells = NULL;
                 }
             }
             if (face->stroked)

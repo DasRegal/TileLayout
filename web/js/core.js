@@ -169,8 +169,14 @@ export async function loadCore() {
     cutCards: () => JSON.parse(text(module._tl_web_cut_cards())),
     cutMap: () => JSON.parse(text(module._tl_web_cut_map())),
     /** Объёмный вид комнаты: камера {yaw, pitch, distance} (null — по умолчанию), холст в пикселях. */
-    room3d: (id, camera, width, height) => JSON.parse(text(module._tl_web_room_3d(id, camera?.yaw ?? 0, camera?.pitch ?? 0,
-      camera ? camera.distance : -1, width, height))),
+    room3d: (id, camera, width, height) => {
+      const target = camera?.target;
+      return JSON.parse(text(module._tl_web_room_3d(id, camera?.yaw ?? 0, camera?.pitch ?? 0, camera ? camera.distance : -1,
+        target?.[0] ?? 0, target?.[1] ?? 0, target?.[2] ?? 0, target ? 1 : 0, width, height)));
+    },
+    /** Сдвиг комнаты в 3D на dx, dy пикселей: новая точка, куда смотрит камера. */
+    room3dPan: (camera, dx, dy, height) =>
+      JSON.parse(withString(JSON.stringify(camera), (c) => text(module._tl_web_room_3d_pan(c, dx, dy, height)))).target,
     /** Подложка с содержимым: {present, revision, origin, scale, opacity, visible, image, image_w, image_h, lines}. */
     underlay: () => JSON.parse(text(module._tl_web_underlay())),
     setUnderlayImage: (url, width, height) =>

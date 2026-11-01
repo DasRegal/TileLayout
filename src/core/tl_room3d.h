@@ -34,21 +34,32 @@ typedef struct TlPaint {
     char fill[8];             /* "#rrggbb" */
     char stroke[8];           /* "" — без обводки */
     double stroke_width;      /* пикселей */
-    /* Рисунок плитки (texture[0] — есть): картинку кладут на квадрат 0…1 и переносят на экран матрицей
-       texture_matrix (x = a·u + c·v + e, y = b·u + d·v + f) — это прямоугольник плитки; поперёк картинки
-       (одна сторона плитки длиннее, у картинки — другая) — повернуть на 90°, как на плане. Сверху —
-       затенение: чёрным с прозрачностью 1 − shade, потом обводка. */
+    /* Рисунок плитки (texture[0] — есть). Сначала заливка fill, потом по клеткам cells: внутри контура
+       и четырёхугольника клетки картинку кладут на квадрат 0…1 и переносят на экран матрицей клетки
+       (x = a·u + c·v + e, y = b·u + d·v + f). Клеток несколько: в перспективе плитка не параллелограмм,
+       и одной матрицей рисунок искажался бы. Поперёк картинки (одна сторона плитки длиннее, у картинки —
+       другая) — повернуть на 90°, как на плане. Сверху — затенение: чёрным с прозрачностью 1 − shade,
+       потом обводка. */
     char texture[TL_TEXTURE_LENGTH];
-    double texture_matrix[6];
+    struct TlTextureCell *cells;
+    size_t cell_count;
     double tile_width, tile_height;  /* мм — какая сторона плитки длиннее */
     double shade;
 } TlPaint;
+
+typedef struct TlTextureCell {
+    TlVec2 quad[4];      /* клетка на экране */
+    double matrix[6];    /* квадрат картинки 0…1 → экран, верная внутри клетки */
+} TlTextureCell;
 
 TL_ARRAY_DEFINE(TlPaintList, TlPaint, tl_paint_list)
 void tl_paint_list_free_all(TlPaintList *list);
 
 /* Камера по умолчанию для комнаты: сверху-сбоку, комната целиком в кадре width × height. */
 TlCamera tl_room3d_default_camera(TlProject *project, TlSpace *space, double width, double height);
+/* Сдвинуть комнату на экране на dx, dy пикселей (вправо, вниз): точка, на которую смотрит камера, —
+   в обратную сторону, в плоскости экрана, на уровне этой точки. height — высота кадра, px. */
+void tl_room3d_pan(TlCamera *camera, double dx, double dy, double height);
 /* Камера с distance = 0 получает расстояние «вся комната в кадре». */
 TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera, double width, double height);
 

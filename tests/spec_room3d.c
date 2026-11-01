@@ -158,6 +158,43 @@ void spec_room3d(void)
             tl_paint_list_free_all(&paints);
             tl_project_free(project);
         }
+        IT("отверстия под трубы — на полу и на стенах; сдвиг комнаты; рисунок плитки — клетками")
+        {
+            TlProject *project = room_project(4000, 3000);
+            TlSpace *space = project->spaces.items[0];
+            space->tile.enabled = false;
+            space->walls.enabled = true;
+            tl_project_add_pipe(project, tl_pipe_new(tl_vec2(2000, 1500), 110));
+            tl_wall_pipe_list_push(&space->wall_pipes, (TlWallPipe){tl_space_wall_at(space, 0)->edge, {800, 1000}, 60});
+            tl_project_update_spaces(project);
+            TlCamera camera = tl_room3d_default_camera(project, space, 800, 600);
+            camera.yaw = 270; /* с юга: стена 1 (верх плана) — дальняя, видна */
+            TlPaintList paints = tl_room3d_paint(project, space, &camera, 800, 600);
+            int holes = 0;
+            for (size_t i = 0; i < paints.count; i++)
+                holes += strcmp(paints.items[i].fill, "#000000") != 0 && paints.items[i].contours.items[0].count == 28;
+            EXPECT(holes >= 1);
+            tl_paint_list_free_all(&paints);
+            TlVec3 before = camera.target;
+            tl_room3d_pan(&camera, 100, 0, 600); /* комнату — вправо: точка, куда смотрим, — влево */
+            EXPECT(fabs(camera.target.z - before.z) < 1e-6);
+            EXPECT(tl_distance(tl_vec2(camera.target.x, camera.target.y), tl_vec2(before.x, before.y)) > 10);
+            snprintf(space->tile.texture, sizeof space->tile.texture, "samples/kg-60x120-travertine");
+            space->tile.enabled = true;
+            space->tile.tile_width = 1200;
+            space->tile.tile_height = 600;
+            tl_project_update_spaces(project);
+            camera = tl_room3d_default_camera(project, space, 800, 600);
+            camera.distance /= 3; /* близко — плитка крупная, рисунок по нескольким клеткам */
+            paints = tl_room3d_paint(project, space, &camera, 800, 600);
+            size_t most = 0;
+            for (size_t i = 0; i < paints.count; i++)
+                if (paints.items[i].texture[0] && paints.items[i].cell_count > most)
+                    most = paints.items[i].cell_count;
+            EXPECT(most > 1);
+            tl_paint_list_free_all(&paints);
+            tl_project_free(project);
+        }
         IT("плитка, разрезанная деформационным швом, — обоими кусками")
         {
             TlProject *project = room_project(4000, 3000);

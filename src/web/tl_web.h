@@ -230,7 +230,10 @@ const char *tl_web_cut_map(void);
 const char *tl_web_share_text(void);
 
 /* Объёмный вид комнаты (формат — в tl_web_walls.c): камера — углы, °, и расстояние, мм; холст в пикселях. */
-const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double width, double height);
+const char *tl_web_room_3d(int space_id, double yaw, double pitch, double distance, double tx, double ty, double tz,
+                           int has_target, double width, double height);
+/* Сдвиг комнаты в 3D на dx, dy пикселей: камера {yaw, pitch, distance, target} — JSON, ответ — она же. */
+const char *tl_web_room_3d_pan(const char *camera, double dx, double dy, double height);
 
 /* ---- подложка (tl_web_underlay.c) ---------------------------------------------- */
 

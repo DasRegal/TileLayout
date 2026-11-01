@@ -505,27 +505,37 @@ function drawRoom3d(dpr) {
       for (let i = 2; i < contour.length; i += 2) c.lineTo(contour[i], contour[i + 1]);
       c.closePath();
     }
+    c.fillStyle = paint.f; // цвет — и под рисунком: где клетки нет (за камерой), видна плитка, а не фон
+    c.fill('evenodd');
     const image = paint.t ? catalogs.image(paint.t) : null;
-    if (image) { // рисунок плитки — на её прямоугольник, поверх — свет
-      c.save();
-      c.clip('evenodd');
-      c.transform(...paint.m);
+    if (image) { // рисунок плитки — по клеткам (перспектива), поверх — свет
       const iw = image.naturalWidth;
       const ih = image.naturalHeight;
-      if (iw >= ih === paint.tw >= paint.th || Math.abs(paint.tw - paint.th) < 0.5) {
-        c.drawImage(image, 0, 0, 1, 1);
-      } else { // плитка поперёк картинки — рисунок повёрнут, как на плане
-        c.transform(0, 1 / iw, -1 / ih, 0, 1, 0);
-        c.drawImage(image, 0, 0);
+      const turned = !(iw >= ih === paint.tw >= paint.th || Math.abs(paint.tw - paint.th) < 0.5);
+      const cells = paint.cells;
+      for (let k = 0; k < cells.length; k += 14) {
+        c.save();
+        c.clip('evenodd');
+        c.beginPath();
+        c.moveTo(cells[k], cells[k + 1]);
+        for (let q = 2; q < 8; q += 2) c.lineTo(cells[k + q], cells[k + q + 1]);
+        c.closePath();
+        c.lineWidth = 1;
+        c.clip();
+        c.transform(cells[k + 8], cells[k + 9], cells[k + 10], cells[k + 11], cells[k + 12], cells[k + 13]);
+        if (turned) { // плитка поперёк картинки — рисунок повёрнут, как на плане
+          c.transform(0, 1 / iw, -1 / ih, 0, 1, 0);
+          c.drawImage(image, 0, 0);
+        } else {
+          c.drawImage(image, 0, 0, 1, 1);
+        }
+        c.restore();
+        rebuildPath(c, paint.c); // clip сбросил путь — контур снова
       }
-      c.restore();
       if (paint.sh < 0.999) {
         c.fillStyle = `rgba(0, 0, 0, ${(1 - paint.sh).toFixed(3)})`;
         c.fill('evenodd');
       }
-    } else {
-      c.fillStyle = paint.f;
-      c.fill('evenodd');
     }
     if (paint.s) {
       c.strokeStyle = paint.s;
@@ -535,23 +545,46 @@ function drawRoom3d(dpr) {
   }
 }
 
+/** Контур закраски 3D заново (после clip клетки рисунка). */
+function rebuildPath(c, contours) {
+  c.beginPath();
+  for (const contour of contours) {
+    c.moveTo(contour[0], contour[1]);
+    for (let i = 2; i < contour.length; i += 2) c.lineTo(contour[i], contour[i + 1]);
+    c.closePath();
+  }
+}
+
 /** 2D | 3D во вкладке помещения. */
 function setVolume(on) {
   volume.on = on;
   showCanvases();
-  say(on ? 'Тяните — повернуть; двумя пальцами, колесом или кнопками — ближе и дальше; двойной щелчок — как было.' : '');
+  say(on ? 'Тяните — повернуть; правой кнопкой, Shift или двумя пальцами — сдвинуть; щипок, колесо или кнопки — ближе и дальше; двойной щелчок — как было.' : '');
   requestDraw();
 }
 
-/** 3D: тянут одним пальцем или мышью — вращают камеру; двумя пальцами (щипок) или колесом — ближе и
- *  дальше; двойной щелчок — камера по умолчанию. */
+/** 3D: тянут одним пальцем или мышью — вращают камеру; правой кнопкой, Shift + мышью или двумя
+ *  пальцами — сдвигают комнату; двумя пальцами (щипок) или колесом — ближе и дальше; двойной щелчок —
+ *  камера по умолчанию. */
 function bindRoom3d() {
   const pointers = new Map(); // касания: id → [x, y]
-  let pinch = null; // {gap: расстояние между пальцами в начале, distance: камеры}
+  let pinch = null; // {gap: расстояние между пальцами в начале, distance: камеры, middle: [x, y]}
+  let pan = null; // сдвиг мышью: последняя точка
   const gap = () => {
     const [a, b] = [...pointers.values()];
     return Math.hypot(a[0] - b[0], a[1] - b[1]);
   };
+  const middle = () => {
+    const [a, b] = [...pointers.values()];
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  };
+  const panBy = (dx, dy) => { // комната — за пальцем или мышью
+    const camera = volume.cameras[state.tab];
+    if (!camera || (!dx && !dy)) return;
+    camera.target = state.core.room3dPan(camera, dx, dy, room3dCanvas.getBoundingClientRect().height);
+    requestDraw();
+  };
+  room3dCanvas.addEventListener('contextmenu', (event) => event.preventDefault()); // правая кнопка — сдвиг
   const startOrbit = (x, y) => {
     const camera = volume.cameras[state.tab];
     volume.drag = camera ? { x, y, yaw: camera.yaw, pitch: camera.pitch } : null;
@@ -560,20 +593,33 @@ function bindRoom3d() {
     const camera = volume.cameras[state.tab];
     if (!camera) return;
     room3dCanvas.setPointerCapture(event.pointerId);
-    pointers.set(event.pointerId, [event.clientX, event.clientY]);
-    if (pointers.size === 2) { // второй палец — щипок вместо вращения
+    if (event.pointerType === 'mouse' && (event.button === 1 || event.button === 2 || event.shiftKey)) {
+      pan = [event.clientX, event.clientY]; // правая или средняя кнопка, Shift — сдвиг комнаты
       volume.drag = null;
-      pinch = { gap: Math.max(gap(), 1), distance: camera.distance };
+      return;
+    }
+    pointers.set(event.pointerId, [event.clientX, event.clientY]);
+    if (pointers.size === 2) { // второй палец — щипок и сдвиг вместо вращения
+      volume.drag = null;
+      pinch = { gap: Math.max(gap(), 1), distance: camera.distance, middle: middle() };
     } else if (pointers.size === 1) {
       startOrbit(event.clientX, event.clientY);
     }
   });
   room3dCanvas.addEventListener('pointermove', (event) => {
     const camera = volume.cameras[state.tab];
+    if (pan && camera) {
+      panBy(event.clientX - pan[0], event.clientY - pan[1]);
+      pan = [event.clientX, event.clientY];
+      return;
+    }
     if (!camera || !pointers.has(event.pointerId)) return;
     pointers.set(event.pointerId, [event.clientX, event.clientY]);
-    if (pinch && pointers.size >= 2) { // пальцы разводят — ближе
+    if (pinch && pointers.size >= 2) { // пальцы разводят — ближе, ведут вместе — комната за ними
       camera.distance = Math.min(200000, Math.max(300, (pinch.distance * pinch.gap) / Math.max(gap(), 1)));
+      const now = middle();
+      panBy(now[0] - pinch.middle[0], now[1] - pinch.middle[1]);
+      pinch.middle = now;
       requestDraw();
       return;
     }
@@ -583,6 +629,7 @@ function bindRoom3d() {
     requestDraw();
   });
   const stop = (event) => {
+    pan = null;
     pointers.delete(event.pointerId);
     if (pointers.size < 2) pinch = null;
     if (pointers.size === 1) { // остался палец — вращение от него, без скачка

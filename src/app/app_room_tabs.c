@@ -46,7 +46,7 @@ typedef struct RoomPage {
     /* 3D: камера (distance = 0 — подобрать), вращение мышью */
     bool volume;
     TlCamera camera;
-    bool camera_ready, orbiting;
+    bool camera_ready, orbiting, panning3d;  /* panning3d — комнату сдвигают (правая кнопка, Shift) */
     TlVec2 orbit_press;
     double orbit_yaw, orbit_pitch;
     GtkWidget *flat_button, *volume_button;
@@ -108,7 +108,7 @@ static void draw_volume(RoomPage *page, cairo_t *cr, TlSpace *space)
     }
     app_render_room3d(cr, page->tabs->document->project, space, &page->camera, width, height);
     AppTextStyle style = {10, false, app_color_hex(app_theme("#5d6470", "#aab3c0")), APP_TRANSPARENT};
-    app_text_centered(cr, "Тяните — повернуть, колесо или два пальца — ближе и дальше, двойной щелчок — как было", &style,
+    app_text_centered(cr, "Тяните — повернуть; правой кнопкой или с Shift — сдвинуть; колесо или два пальца — ближе и дальше; двойной щелчок — как было", &style,
                       tl_vec2(width / 2, height - 14), 0);
 }
 
@@ -270,6 +270,10 @@ static gboolean on_press(GtkWidget *widget, GdkEventButton *event, RoomPage *pag
     if (page->volume) { /* 3D: тянут — вращают; двойной щелчок — камера как была */
         if (event->type == GDK_2BUTTON_PRESS) {
             page->camera_ready = false;
+        } else if (event->type == GDK_BUTTON_PRESS &&
+                   (event->button == 2 || event->button == 3 || (event->state & GDK_SHIFT_MASK))) {
+            page->panning3d = true; /* сдвиг комнаты: от точки к точке */
+            page->orbit_press = screen;
         } else if (event->type == GDK_BUTTON_PRESS) {
             page->orbiting = true;
             page->orbit_press = screen;
@@ -385,7 +389,12 @@ static gboolean on_motion(GtkWidget *widget, GdkEventMotion *event, RoomPage *pa
     TlVec2 screen = {event->x, event->y}, world = app_view_to_world(&page->view, screen);
     bool free = event->state & GDK_SHIFT_MASK;
     if (page->volume) {
-        if (page->orbiting) {
+        if (page->panning3d) {
+            tl_room3d_pan(&page->camera, screen.x - page->orbit_press.x, screen.y - page->orbit_press.y,
+                          page->view.height);
+            page->orbit_press = screen;
+            gtk_widget_queue_draw(widget);
+        } else if (page->orbiting) {
             page->camera.yaw = fmod(page->orbit_yaw - (screen.x - page->orbit_press.x) * ORBIT_DEGREES_PER_PX, 360);
             page->camera.pitch = fmax(TL_CAMERA_MIN_PITCH, fmin(TL_CAMERA_MAX_PITCH,
                                       page->orbit_pitch + (screen.y - page->orbit_press.y) * ORBIT_DEGREES_PER_PX));
@@ -419,7 +428,7 @@ static gboolean on_release(GtkWidget *widget, GdkEventButton *event, RoomPage *p
     Grab grab = page->grab;
     page->grab = GRAB_NONE;
     if (page->volume) {
-        page->orbiting = false;
+        page->orbiting = page->panning3d = false;
         return TRUE;
     }
     if (!space || event->button != 1)
