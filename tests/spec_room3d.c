@@ -40,6 +40,48 @@ static int with_contours(const TlPaintList *paints, size_t contours)
     return found;
 }
 
+/* Тумба (её цвет — «#d8c8ad» со светом): у неё красный заметно больше синего. */
+static bool cabinet_paint(const TlPaint *paint)
+{
+    unsigned value;
+    sscanf(paint->fill + 1, "%x", &value);
+    return (int)((value >> 16) & 255) - (int)(value & 255) > 24;
+}
+
+static bool point_in(const TlPolygonList *contours, TlVec2 p)
+{
+    bool inside = false;
+    for (size_t c = 0; c < contours->count; c++) {
+        const TlPolygon *poly = &contours->items[c];
+        for (size_t i = 0, j = poly->count - 1; i < poly->count; j = i++) {
+            TlVec2 a = poly->items[i], b = poly->items[j];
+            if ((a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+                inside = !inside;
+        }
+    }
+    return inside;
+}
+
+/* Сколько граней тумбы видно хотя бы серединой (сверху в этой точке — сама тумба). */
+static int visible_cabinet_faces(const TlPaintList *paints)
+{
+    int visible = 0;
+    for (size_t i = 0; i < paints->count; i++) {
+        if (!cabinet_paint(&paints->items[i]))
+            continue;
+        const TlPolygon *outline = &paints->items[i].contours.items[0];
+        TlVec2 middle = {0, 0};
+        for (size_t k = 0; k < outline->count; k++)
+            middle = tl_vec2_add(middle, tl_vec2_scale(outline->items[k], 1.0 / outline->count));
+        size_t top = i;
+        for (size_t j = i + 1; j < paints->count; j++)
+            if (point_in(&paints->items[j].contours, middle))
+                top = j;
+        visible += cabinet_paint(&paints->items[top]);
+    }
+    return visible;
+}
+
 void spec_room3d(void)
 {
     tl_tile_settings_reset_defaults();
@@ -86,6 +128,33 @@ void spec_room3d(void)
             }
             EXPECT(inside);
             EXPECT_INT(tiles, tl_space_tile_total(space));
+            tl_paint_list_free_all(&paints);
+            tl_project_free(project);
+        }
+        IT("Г-образная комната: тумбу в дальнем колене закрывает стена внутреннего угла")
+        {
+            TlProject *project = tl_project_new();
+            const TlVec2 corners[] = {{0, 0}, {2000, 0}, {2000, 2000}, {4000, 2000}, {4000, 4000}, {0, 4000}};
+            tl_project_add_outline(project, tl_outline_new(corners, 6, 200));
+            TlFixture cabinet = tl_fixture_default(TL_FIXTURE_CABINET, tl_vec2(1000, 1000));
+            cabinet.height = 1400;
+            tl_fixture_list_push(&project->fixtures, cabinet);
+            tl_project_update_spaces(project);
+            TlSpace *space = project->spaces.items[0];
+            space->tile.enabled = false;
+            tl_project_update_spaces(project);
+            TlCamera camera = tl_room3d_default_camera(project, space, 800, 600);
+            TlPaintList paints = tl_room3d_paint(project, space, &camera, 800, 600);
+            EXPECT(visible_cabinet_faces(&paints) > 0); /* по умолчанию — видна */
+            tl_paint_list_free_all(&paints);
+            camera.yaw = 340; /* со стороны внутреннего угла, пониже */
+            camera.pitch = 27;
+            paints = tl_room3d_paint(project, space, &camera, 800, 600);
+            int cabinet_faces = 0;
+            for (size_t i = 0; i < paints.count; i++)
+                cabinet_faces += cabinet_paint(&paints.items[i]);
+            EXPECT(cabinet_faces > 0);                        /* грани тумбы есть… */
+            EXPECT_INT(visible_cabinet_faces(&paints), 0);    /* …но их закрывает стена */
             tl_paint_list_free_all(&paints);
             tl_project_free(project);
         }

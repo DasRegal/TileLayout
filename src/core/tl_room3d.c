@@ -38,13 +38,14 @@ typedef struct Face {
 
 TL_ARRAY_DEFINE(FaceList, Face, face_list)
 
-/* Слои рисования: пол, за ним стены, потом всё, что стоит в комнате (оно всегда перед видимыми
-   стенами — ближние не рисуются); внутри слоя — дальние раньше. */
+/* Пол рисуется первым (камера над ним — всё остальное перед ним); стены и предметы — в порядке,
+   который даёт paint_order: что за плоскостью другой поверхности — раньше неё. */
 typedef enum Layer { LAYER_FLOOR, LAYER_WALLS, LAYER_OBJECTS } Layer;
 
 /* Плоская поверхность: основа (первая грань) и плитка на ней. */
 typedef struct Group {
     TlVec3 normal, center;
+    Points3 outline;   /* контур основы — для порядка рисования */
     Layer layer;
     FaceList faces;
 } Group;
@@ -188,6 +189,8 @@ static Group group_new(TlVec3 normal, Face base)
         }
     if (count)
         group.center = vec3(sum.x / count, sum.y / count, sum.z / count);
+    for (size_t i = 0; base.contours.count && i < base.contours.items[0].count; i++)
+        points3_push(&group.outline, base.contours.items[0].items[i]);
     face_list_push(&group.faces, base);
     return group;
 }
@@ -198,6 +201,7 @@ static void groups_free(GroupList *groups)
         for (size_t f = 0; f < groups->items[g].faces.count; f++)
             face_free(&groups->items[g].faces.items[f]);
         face_list_free(&groups->items[g].faces);
+        points3_free(&groups->items[g].outline);
     }
     group_list_free(groups);
 }
@@ -574,18 +578,116 @@ static void hex_color(char out[8], const double rgb[3], double shade)
     snprintf(out, 8, "#%02x%02x%02x", c[0], c[1], c[2]);
 }
 
-typedef struct Ordered {
-    size_t group;
-    Layer layer;
-    double distance;
-} Ordered;
+#define PLANE_EPS_MM 1.0
 
-static int farther_first(const void *a, const void *b)
+/* Где поверхность b относительно плоскости a: -1 — за ней (от зрителя), +1 — перед ней (со стороны
+   зрителя), 0 — по обе стороны. Лежащая в плоскости считается «за». */
+static int side_of(const Group *a, const Group *b, TlVec3 eye)
 {
-    const Ordered *oa = a, *ob = b;
-    if (oa->layer != ob->layer)
-        return oa->layer < ob->layer ? -1 : 1;
-    return oa->distance < ob->distance ? 1 : oa->distance > ob->distance ? -1 : 0;
+    double toward = dot3(a->normal, sub3(eye, a->center)) >= 0 ? 1 : -1;
+    bool behind = true, front = true;
+    for (size_t i = 0; i < b->outline.count; i++) {
+        double d = dot3(a->normal, sub3(b->outline.items[i], a->center)) * toward;
+        behind = behind && d <= PLANE_EPS_MM;
+        front = front && d >= -PLANE_EPS_MM;
+    }
+    return behind ? -1 : front ? 1 : 0;
+}
+
+typedef struct Box2 {
+    double left, top, right, bottom;
+    bool valid;
+} Box2;
+
+static Box2 screen_box(const Eye *eye, const Points3 *outline)
+{
+    TlPolygon screen = project_contour(eye, outline);
+    Box2 box = {INFINITY, INFINITY, -INFINITY, -INFINITY, screen.count >= 3};
+    for (size_t i = 0; i < screen.count; i++) {
+        box.left = fmin(box.left, screen.items[i].x);
+        box.right = fmax(box.right, screen.items[i].x);
+        box.top = fmin(box.top, screen.items[i].y);
+        box.bottom = fmax(box.bottom, screen.items[i].y);
+    }
+    tl_polygon_free(&screen);
+    return box;
+}
+
+static bool boxes_overlap(Box2 a, Box2 b)
+{
+    return a.valid && b.valid && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+/*
+ * Порядок рисования видимых поверхностей visible[0..count): пол — первым; дальше «художник» по
+ * плоскостям: из двух перекрывающихся на экране поверхностей раньше рисуется та, что за плоскостью
+ * другой (стена Г-образной комнаты закрывает предмет в другом её колене, предмет у стены — перед ней).
+ * Где плоскости не решают (или по кругу) — дальняя раньше.
+ */
+static void paint_order(const GroupList *groups, size_t *visible, size_t count, const Eye *eye)
+{
+    double *distance = malloc(sizeof *distance * (count ? count : 1));
+    Box2 *box = malloc(sizeof *box * (count ? count : 1));
+    size_t cells = count * count;
+    unsigned char *before = calloc(cells ? cells : 1, 1); /* before[i*count+j]: i раньше j */
+    int *pending = calloc(count ? count : 1, sizeof *pending);
+    bool *done = calloc(count ? count : 1, sizeof *done);
+    for (size_t i = 0; i < count; i++) {
+        const Group *g = &groups->items[visible[i]];
+        TlVec3 to_eye = sub3(eye->position, g->center);
+        distance[i] = sqrt(dot3(to_eye, to_eye));
+        box[i] = screen_box(eye, &g->outline);
+    }
+    for (size_t i = 0; i < count; i++)
+        for (size_t j = i + 1; j < count; j++) {
+            const Group *a = &groups->items[visible[i]], *b = &groups->items[visible[j]];
+            if (a->layer == LAYER_FLOOR || b->layer == LAYER_FLOOR || !boxes_overlap(box[i], box[j]))
+                continue;
+            int side = side_of(a, b, eye->position); /* b относительно плоскости a */
+            int order = side < 0 ? 1 : side > 0 ? -1 : 0; /* -1 — a раньше, +1 — b раньше */
+            if (!order) {
+                side = side_of(b, a, eye->position);
+                order = side < 0 ? -1 : side > 0 ? 1 : 0;
+            }
+            if (order < 0) {
+                before[i * count + j] = 1;
+                pending[j]++;
+            } else if (order > 0) {
+                before[j * count + i] = 1;
+                pending[i]++;
+            }
+        }
+    size_t *result = malloc(sizeof *result * (count ? count : 1));
+    for (size_t n = 0; n < count; n++) {
+        size_t pick = SIZE_MAX;
+        for (size_t i = 0; i < count; i++) { /* пол; иначе из готовых — дальняя */
+            if (done[i])
+                continue;
+            bool floor = groups->items[visible[i]].layer == LAYER_FLOOR;
+            if (floor) {
+                pick = i;
+                break;
+            }
+            if (pending[i] == 0 && (pick == SIZE_MAX || distance[i] > distance[pick]))
+                pick = i;
+        }
+        if (pick == SIZE_MAX) /* по кругу — дальняя из оставшихся */
+            for (size_t i = 0; i < count; i++)
+                if (!done[i] && (pick == SIZE_MAX || distance[i] > distance[pick]))
+                    pick = i;
+        done[pick] = true;
+        result[n] = visible[pick];
+        for (size_t j = 0; j < count; j++)
+            if (before[pick * count + j] && pending[j] > 0)
+                pending[j]--;
+    }
+    memcpy(visible, result, sizeof *visible * count);
+    free(result);
+    free(distance);
+    free(box);
+    free(before);
+    free(pending);
+    free(done);
 }
 
 void tl_paint_list_free_all(TlPaintList *list)
@@ -610,18 +712,18 @@ TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera
     Eye eye = eye_of(camera, width, height);
     const TlVec3 light = normalized3(vec3(-0.45, -0.6, 0.85));
     GroupList groups = build(project, space);
-    Ordered *order = malloc(sizeof *order * (groups.count ? groups.count : 1));
+    size_t *order = malloc(sizeof *order * (groups.count ? groups.count : 1));
     size_t count = 0;
     for (size_t g = 0; g < groups.count; g++) {
         const Group *group = &groups.items[g];
         TlVec3 to_eye = sub3(eye.position, group->center);
         if (group->layer != LAYER_FLOOR && dot3(group->normal, to_eye) <= 0) /* спиной к зрителю: ближние стены, задние грани */
             continue;
-        order[count++] = (Ordered){g, group->layer, sqrt(dot3(to_eye, to_eye))};
+        order[count++] = g;
     }
-    qsort(order, count, sizeof *order, farther_first);
+    paint_order(&groups, order, count, &eye);
     for (size_t o = 0; o < count; o++) {
-        const Group *group = &groups.items[order[o].group];
+        const Group *group = &groups.items[order[o]];
         double shade = 0.62 + 0.38 * fmax(0, dot3(group->normal, light));
         for (size_t f = 0; f < group->faces.count; f++) {
             const Face *face = &group->faces.items[f];
