@@ -223,30 +223,45 @@ class Labels {
     return !this.taken.some(([tl, tt, tr, tb]) => l < tr && r > tl && t < tb && b > tt);
   }
 
-  /** Текст в одной из точек places (по очереди); angle — в радианах. */
-  place(ctx, text, places, angle = 0, style = {}) {
+  /** Текст в одной из точек places (по очереди); angle — в радианах. required — места нет нигде:
+   *  всё равно в первой точке (размер на чертеже важнее, чем наложение подписей). */
+  place(ctx, text, places, angle = 0, style = {}, required = false) {
     ctx.font = `${style.bold ? '600 ' : ''}${style.size || 9}px "Segoe UI", Roboto, Arial, sans-serif`;
     const width = ctx.measureText(text).width + 4;
     const height = (style.size || 9) + 3;
     const vertical = Math.abs(Math.sin(angle)) > 0.7;
     const [w, h] = vertical ? [height, width] : [width, height];
-    for (const [x, y] of places) {
-      const box = [x - w / 2, y - h / 2, x + w / 2, y + h / 2];
-      if (!this.fits(box)) continue;
-      this.taken.push(box);
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(angle);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-width / 2, -height / 2, width, height);
-      ctx.fillStyle = '#000000';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, 0, 0.5);
-      ctx.restore();
-      return true;
-    }
-    return false;
+    const boxAt = ([x, y]) => [x - w / 2, y - h / 2, x + w / 2, y + h / 2];
+    const point = places.find((p) => this.fits(boxAt(p))) ?? (required ? places[0] : null);
+    if (!point) return false;
+    const [x, y] = point;
+    this.taken.push(boxAt(point));
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-width / 2, -height / 2, width, height);
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 0, 0.5);
+    ctx.restore();
+    return true;
+  }
+
+  /** Размер вдоль отрезка a–b (точки на холсте): у середины по normal, по обе стороны, у концов,
+   *  дальше от линии — как app_labels_place_along программы; не нашлось места — всё равно ставится. */
+  placeAlong(ctx, text, a, b, normal, angle = 0) {
+    const middle = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    ctx.font = '9px "Segoe UI", Roboto, Arial, sans-serif';
+    const beside = length / 2 + ctx.measureText(text).width / 2 + 7; // за концом отрезка
+    const PLACES = [[8, 0], [16, 0], [-8, 0], [8, 1], [8, -1], [26, 0], [-16, 0], [-8, 1], [-8, -1], [16, 1],
+      [16, -1], [38, 0], [-26, 0], [50, 0]];
+    const places = PLACES.map(([off, shift]) => [middle[0] + normal[0] * off + along[0] * shift * beside,
+      middle[1] + normal[1] * off + along[1] * shift * beside]);
+    return this.place(ctx, text, places, angle, {}, true);
   }
 }
 
@@ -371,8 +386,8 @@ function drawDrill(ctx, labels, [cx, cy, diameter], part, scale, ox, oy, mono) {
   ctx.lineTo(x, y);
   ctx.stroke();
   ctx.setLineDash([]);
-  if (dx > 0.5) labels.place(ctx, String(Math.round(dx)), [[(edgeX + x) / 2, y - 7], [(edgeX + x) / 2, y + 7]]);
-  if (dy > 0.5) labels.place(ctx, String(Math.round(dy)), [[x - 9, (edgeY + y) / 2], [x + 9, (edgeY + y) / 2]], -Math.PI / 2);
+  if (dx > 0.5) labels.placeAlong(ctx, String(Math.round(dx)), [edgeX, y], [x, y], [0, -1]);
+  if (dy > 0.5) labels.placeAlong(ctx, String(Math.round(dy)), [x, edgeY], [x, y], [-1, 0], -Math.PI / 2);
   labels.place(ctx, `Ø${diameter}`, [
     [x + radius + 14, y - radius - 6], [x - radius - 14, y - radius - 6],
     [x + radius + 14, y + radius + 6], [x - radius - 14, y + radius + 6],
