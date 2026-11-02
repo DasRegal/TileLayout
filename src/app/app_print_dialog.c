@@ -197,6 +197,10 @@ static void on_save_pdf(GtkButton *button, PrintDialog *self)
 
 static void on_begin_print(GtkPrintOperation *operation, GtkPrintContext *context, PrintDialog *self)
 {
+    /* в окне печати ориентацию сменили — листы заново под неё, а не ужатые вдвое */
+    bool landscape = gtk_print_context_get_width(context) > gtk_print_context_get_height(context);
+    if (landscape != self->options.landscape)
+        gtk_combo_box_set_active(GTK_COMBO_BOX(self->orientation), landscape ? 0 : 1); /* пересоберёт листы */
     gtk_print_operation_set_n_pages(operation, app_print_job_page_count(self->job));
 }
 

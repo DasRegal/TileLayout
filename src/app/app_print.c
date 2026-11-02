@@ -13,7 +13,7 @@
 
 #define HEADER_PX 26.0
 #define DIMENSION_MARGIN_PX 55.0
-#define CARD_WIDTH_PX (63 * APP_PX_PER_MM)
+#define CARD_WIDTH_PX (63 * APP_PX_PER_MM)  /* наименьшая карточка; на листе их растягивают во всю ширину и высоту */
 #define CARD_HEIGHT_PX (56 * APP_PX_PER_MM)
 
 const int APP_PRINT_SCALES[] = {10, 20, 25, 50, 75, 100, 150, 200, 250, 500};
@@ -49,6 +49,7 @@ struct AppPrintJob {
     PlanLayout plan;
     TlCutCardList cards;
     int card_columns, card_rows;
+    double card_width, card_height;  /* карточки заполняют лист целиком */
     AppSheet *sheet;
     AppSheet *estimate;      /* смета для заказчика */
     AppSheet *cut_map;       /* карта раскроя — с чертежами подрезок */
@@ -125,6 +126,8 @@ AppPrintJob *app_print_job_new(TlProject *project, const char *title, const AppP
         job->cards = tl_report_cut_cards(project);
         job->card_columns = (int)fmax(1, floor(job->area_width / CARD_WIDTH_PX));
         job->card_rows = (int)fmax(1, floor((job->area_height - HEADER_PX) / CARD_HEIGHT_PX));
+        job->card_width = job->area_width / job->card_columns;
+        job->card_height = (job->area_height - HEADER_PX) / job->card_rows;
         int per_page = job->card_columns * job->card_rows;
         add_pages(job->pages, PAGE_CARDS, (int)((job->cards.count + per_page - 1) / per_page));
         job->cut_map = app_sheet_new_cut_map(project, job->title, options->mono, job->area_width);
@@ -623,14 +626,13 @@ static void render_cards_page(AppPrintJob *job, cairo_t *cr, int index)
     char right[96];
     g_snprintf(right, sizeof right, "Чертежей: %zu    Лист %d из %d", job->cards.count, index + 1, pages);
     draw_header(job, cr, "чертежи подрезок", right);
-    double x_offset = (job->area_width - job->card_columns * CARD_WIDTH_PX) / 2;
     for (int n = 0; n < per_page; n++) {
         size_t card = (size_t)(index * per_page + n);
         if (card >= job->cards.count)
             break;
-        double x = x_offset + (n % job->card_columns) * CARD_WIDTH_PX;
-        double y = HEADER_PX + (n / job->card_columns) * CARD_HEIGHT_PX;
-        draw_card(job, cr, &job->cards.items[card], x + 3, y + 3, CARD_WIDTH_PX - 6, CARD_HEIGHT_PX - 6);
+        double x = (n % job->card_columns) * job->card_width;
+        double y = HEADER_PX + (n / job->card_columns) * job->card_height;
+        draw_card(job, cr, &job->cards.items[card], x + 3, y + 3, job->card_width - 6, job->card_height - 6);
     }
 }
 

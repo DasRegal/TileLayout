@@ -28,24 +28,35 @@ export async function printProject({ core, title, options, image, loadImages }) 
   const walls = scene.spaces.map((space) => core.roomWalls(space.id)).filter((data) => data?.enabled && data.walls.length);
   await loadImages(scene);
   await loadImages({ spaces: walls.flatMap((data) => [...data.layouts, ...data.pannos]) }); // рисунки плитки стен и панно
-  const paper = options.landscape ? { width: 297, height: 210 } : { width: 210, height: 297 };
-  const area = { width: (paper.width - 2 * MARGIN_MM) * PX_PER_MM, height: (paper.height - 2 * MARGIN_MM) * PX_PER_MM };
+  /* Листы — в обеих ориентациях: браузер (Firefox) может не послушать @page и печатать книжной;
+     печатается набор той же ориентации, что страница (print.css: orientation), — не ужатый вдвое. */
   const root = document.createElement('div');
   root.id = 'print-root';
-  const sheets = [];
-  const plan = layoutPlan(scene.bounds, area, options.scale);
-  sheets.push(...planSheets(scene, plan, area, title, options, image, null));
-  if (options.cuts) sheets.push(...planSheets(scene, plan, area, title, options, image, core.tileNumbers()));
-  for (const data of walls) sheets.push(wallsSheet(data, area, title, options, image));
-  if (options.cuts) {
-    sheets.push(...cardSheets(core.cutCards(), area, title, options.mono));
-    sheets.push(cutMapSheet(core.cutMap(), title, options.mono));
+  const cards = options.cuts ? core.cutCards() : [];
+  let chosen = null;
+  for (const landscape of [true, false]) {
+    const paper = landscape ? { width: 297, height: 210 } : { width: 210, height: 297 };
+    const area = { width: (paper.width - 2 * MARGIN_MM) * PX_PER_MM, height: (paper.height - 2 * MARGIN_MM) * PX_PER_MM };
+    const sheets = [];
+    const plan = layoutPlan(scene.bounds, area, options.scale);
+    sheets.push(...planSheets(scene, plan, area, title, options, image, null));
+    if (options.cuts) sheets.push(...planSheets(scene, plan, area, title, options, image, core.tileNumbers()));
+    for (const data of walls) sheets.push(wallsSheet(data, area, title, options, image));
+    if (options.cuts) {
+      sheets.push(...cardSheets(cards, area, title, options.mono));
+      sheets.push(cutMapSheet(core.cutMap(), title, options.mono));
+    }
+    if (options.calc) sheets.push(calculationSheet(core.summary(), title, options.mono));
+    if (options.estimate) sheets.push(customerSheet(core.summary(), title, options.mono));
+    const set = document.createElement('div');
+    set.className = `print-set ${landscape ? 'landscape' : 'portrait'}`;
+    set.append(...sheets);
+    root.append(set);
+    if (landscape === Boolean(options.landscape)) chosen = { sheets, plan, paper };
   }
-  if (options.calc) sheets.push(calculationSheet(core.summary(), title, options.mono));
-  if (options.estimate) sheets.push(customerSheet(core.summary(), title, options.mono));
-  root.append(...sheets);
   document.body.append(root);
-  setPageSize(paper);
+  setPageSize(chosen.paper);
+  const { sheets, plan } = chosen;
   const cleanup = () => {
     root.remove();
     window.removeEventListener('afterprint', cleanup);
@@ -62,8 +73,7 @@ function setPageSize(paper) {
     style.id = 'print-page-style';
     document.head.append(style);
   }
-  style.textContent = `@page { size: ${paper.width}mm ${paper.height}mm; margin: 0; }
-    #print-root .sheet { width: ${paper.width}mm; height: ${paper.height}mm; }`;
+  style.textContent = `@page { size: A4 ${paper.width > paper.height ? 'landscape' : 'portrait'}; margin: 0; }`;
 }
 
 // ---- план ---------------------------------------------------------------------
@@ -180,14 +190,16 @@ function cardSheets(cards, area, title, mono) {
   if (!cards.length) return [];
   const columns = Math.max(1, Math.floor(area.width / CARD_WIDTH_PX));
   const rows = Math.max(1, Math.floor((area.height - HEADER_PX) / CARD_HEIGHT_PX));
+  const cardWidth = area.width / columns; // карточки — во весь лист, не меньше 63×56 мм
+  const cardHeight = (area.height - HEADER_PX) / rows;
   const perPage = columns * rows;
   const pages = Math.ceil(cards.length / perPage);
   const sheets = [];
   for (let page = 0; page < pages; page++) {
     const sheet = makeSheet(title, 'чертежи подрезок', `Чертежей: ${cards.length}    Лист ${page + 1} из ${pages}`);
     const canvas = document.createElement('canvas');
-    const height = rows * CARD_HEIGHT_PX;
-    const width = columns * CARD_WIDTH_PX;
+    const height = rows * cardHeight;
+    const width = columns * cardWidth;
     canvas.width = Math.round(width * RESOLUTION);
     canvas.height = Math.round(height * RESOLUTION);
     canvas.style.width = `${width}px`;
@@ -198,9 +210,9 @@ function cardSheets(cards, area, title, mono) {
     for (let n = 0; n < perPage; n++) {
       const card = cards[page * perPage + n];
       if (!card) break;
-      const x = (n % columns) * CARD_WIDTH_PX;
-      const y = Math.floor(n / columns) * CARD_HEIGHT_PX;
-      drawCard(ctx, card, x + 3, y + 3, CARD_WIDTH_PX - 6, CARD_HEIGHT_PX - 6, mono);
+      const x = (n % columns) * cardWidth;
+      const y = Math.floor(n / columns) * cardHeight;
+      drawCard(ctx, card, x + 3, y + 3, cardWidth - 6, cardHeight - 6, mono);
     }
     sheet.querySelector('.sheet-body').append(canvas);
     sheets.push(sheet);

@@ -673,6 +673,9 @@ button.danger:hover:not(:disabled) { background: var(--danger-soft); border-colo
 
 #print-root { display: none; }
 
+@media print and (orientation: landscape) { #print-root .print-set.portrait { display: none; } }
+@media print and (orientation: portrait) { #print-root .print-set.landscape { display: none; } }
+
 @media print {
   body > *:not(#print-root) { display: none !important; }
   body { display: block; background: #ffffff; }
@@ -684,7 +687,9 @@ button.danger:hover:not(:disabled) { background: var(--danger-soft); border-colo
     break-after: page;
     color: #000000;
   }
-  #print-root .sheet:last-child { break-after: auto; }
+  #print-root .print-set.landscape .sheet { width: 297mm; height: 210mm; }
+  #print-root .print-set.portrait .sheet { width: 210mm; height: 297mm; }
+  #print-root .print-set .sheet:last-child { break-after: auto; } /* виден один набор — без пустого листа в конце */
   #print-root .sheet > header {
     display: flex;
     justify-content: space-between;
