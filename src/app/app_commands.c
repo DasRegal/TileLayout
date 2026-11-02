@@ -315,7 +315,7 @@ void app_command_delete_selection(AppDocument *document)
         app_document_notify(document, APP_CHANGED_SELECTION);
         return;
     case APP_SELECT_ROOM_WALL:
-        app_document_status(document, "Стены образуют план: правьте их на вкладке «План»");
+        app_document_status(document, "Стены образуют план: правьте их на плане (кнопка «План» справа вверху)");
         return;
     case APP_SELECT_DRAIN:
         app_document_checkpoint(document, "");

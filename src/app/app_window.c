@@ -624,7 +624,8 @@ static const char DARK_CSS[] =
     "link, *:link { color: #8be9fd; }\n"
     "#tools-rail { background-color: #21222c; }\n"
     "#room-open { background-color: rgba(40, 42, 54, 0.95); border-color: #44475a; }\n"
-    "#room-open button { color: #bd93f9; }";
+    "#room-open button { color: #bd93f9; }\n"
+    "#room-open button:checked { color: #f8f8f2; background-color: #44475a; }";
 
 /* Тёмная тема: окна GTK (Adwaita тёмная — она есть в любой GTK — и цвета Dracula поверх) и план.
    Своя тема системы (например, Mint-Y) тёмного варианта может не иметь — поэтому на тёмную время
@@ -798,7 +799,7 @@ static void on_thanks(GtkButton *button, AppWindow *self)
     gtk_widget_destroy(dialog);
 }
 
-/* ---- вкладки помещений ---------------------------------------------------------- */
+/* ---- комната: план, её стены или 3D ------------------------------------------------ */
 
 static void on_open_space(TlSpace *space, void *data)
 {
@@ -806,7 +807,7 @@ static void on_open_space(TlSpace *space, void *data)
     app_room_tabs_open(self->room_tabs, space);
 }
 
-/* Выделенная комната — во вкладке: развёрткой стен или в 3D. */
+/* Выделенная комната — развёрткой стен или в 3D. */
 static void open_room(AppWindow *self, bool volume)
 {
     TlSpace *spaces[APP_MAX_ROOMS];
@@ -822,7 +823,14 @@ static void open_room_3d(void *data) { open_room(data, true); }
 static void on_room_open_walls(GtkButton *button, AppWindow *self) { open_room(self, false); }
 static void on_room_open_3d(GtkButton *button, AppWindow *self) { open_room(self, true); }
 
-/* Справа вверху плана: имя выбранной комнаты и кнопки — то же, что двойной щелчок по ней. */
+/* «План» на плане — открыт он: кнопка остаётся нажатой. */
+static void on_room_open_plan(GtkToggleButton *button, AppWindow *self)
+{
+    if (!gtk_toggle_button_get_active(button))
+        gtk_toggle_button_set_active(button, TRUE);
+}
+
+/* Справа вверху плана: имя выбранной комнаты и План | Стены | 3D — как в самой комнате (app_room_tabs.c). */
 static GtkWidget *build_room_open(AppWindow *self)
 {
     GtkWidget *box = self->room_open = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -833,8 +841,14 @@ static GtkWidget *build_room_open(AppWindow *self)
     gtk_box_pack_start(GTK_BOX(box), self->room_open_name, FALSE, FALSE, 0);
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_style_context_add_class(gtk_widget_get_style_context(buttons), "linked");
+    GtkWidget *plan = gtk_toggle_button_new_with_label("План");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plan), TRUE);
+    gtk_widget_set_tooltip_text(plan, "Открыт план квартиры");
+    g_signal_connect(plan, "toggled", G_CALLBACK(on_room_open_plan), self);
+    gtk_widget_set_can_focus(plan, FALSE);
+    gtk_container_add(GTK_CONTAINER(buttons), plan);
     GtkWidget *walls = gtk_button_new_with_label("Стены");
-    gtk_widget_set_tooltip_text(walls, "Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)");
+    gtk_widget_set_tooltip_text(walls, "Стены комнаты в ряд, как видно из комнаты (или двойной щелчок по комнате)");
     GtkWidget *volume = gtk_button_new_with_label("3D");
     gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
     g_signal_connect(walls, "clicked", G_CALLBACK(on_room_open_walls), self);
@@ -1111,7 +1125,11 @@ static GtkWidget *build_statusbar(AppWindow *self)
 static gboolean on_window_key(GtkWidget *widget, GdkEventKey *event, AppWindow *self)
 {
     if (event->keyval == GDK_KEY_Escape) {
-        app_canvas_escape(self->canvas);
+        const AppSelection *s = &self->document->selection;
+        if (app_room_tabs_current(self->room_tabs) && (s->kind == APP_SELECT_NONE || s->kind == APP_SELECT_SPACE))
+            app_room_tabs_show_plan(self->room_tabs); /* из комнаты — на план */
+        else
+            app_canvas_escape(self->canvas);
         return TRUE;
     }
     return FALSE;

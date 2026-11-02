@@ -49,7 +49,7 @@ typedef struct RoomPage {
     bool camera_ready, orbiting, panning3d;  /* panning3d — комнату сдвигают (правая кнопка, Shift) */
     TlVec2 orbit_press;
     double orbit_yaw, orbit_pitch;
-    GtkWidget *flat_button, *volume_button;
+    GtkWidget *plan_button, *flat_button, *volume_button;
     bool syncing;
     GtkGesture *zoom;            /* 3D: щипок на сенсорном экране или тачпаде */
     double zoom_distance;
@@ -482,7 +482,7 @@ static void set_volume(RoomPage *page, bool volume)
 
 static void on_mode_toggled(GtkToggleButton *button, RoomPage *page)
 {
-    if (!page->syncing)
+    if (!page->syncing) /* нажатую ещё раз — не отжимать */
         set_volume(page, button == GTK_TOGGLE_BUTTON(page->volume_button));
 }
 
@@ -501,29 +501,55 @@ static void on_zoom_scale(GtkGestureZoom *gesture, double scale, RoomPage *page)
     gtk_widget_queue_draw(page->area);
 }
 
-/* 2D | 3D справа вверху: развёртка стен (работа) или объёмный вид (просмотр). */
-static GtkWidget *mode_switch(RoomPage *page)
+/* «План» плашки: на план (кнопка не остаётся нажатой — нажата та, что открыта). */
+static void on_plan_toggled(GtkToggleButton *button, RoomPage *page)
+{
+    if (page->syncing || !gtk_toggle_button_get_active(button))
+        return;
+    page->syncing = true;
+    gtk_toggle_button_set_active(button, FALSE);
+    page->syncing = false;
+    app_room_tabs_show_plan(page->tabs);
+}
+
+static GtkWidget *switch_button(RoomPage *page, const char *label, const char *tooltip, GCallback toggled)
+{
+    GtkWidget *button = gtk_toggle_button_new_with_label(label);
+    gtk_widget_set_tooltip_text(button, tooltip);
+    gtk_widget_set_can_focus(button, FALSE); /* клавиши — развёртке */
+    g_signal_connect(button, "toggled", toggled, page);
+    return button;
+}
+
+/* Справа вверху — как на плане: имя комнаты и План | Стены | 3D; стены — работа, 3D — просмотр. */
+static GtkWidget *room_switch(RoomPage *page, const char *name)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_style_context_add_class(gtk_widget_get_style_context(box), "linked");
-    GtkWidget *flat = page->flat_button = gtk_toggle_button_new_with_label("2D");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(flat), TRUE);
-    gtk_widget_set_tooltip_text(flat, "Развёртка стен");
-    GtkWidget *volume = page->volume_button = gtk_toggle_button_new_with_label("3D");
-    gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
-    g_signal_connect(flat, "toggled", G_CALLBACK(on_mode_toggled), page);
-    g_signal_connect(volume, "toggled", G_CALLBACK(on_mode_toggled), page);
-    gtk_widget_set_can_focus(volume, FALSE);
-    gtk_container_add(GTK_CONTAINER(box), flat);
-    gtk_container_add(GTK_CONTAINER(box), volume);
-    gtk_widget_set_can_focus(flat, FALSE);
+    gtk_widget_set_name(box, "room-open");
+    page->label = gtk_label_new(name);
+    gtk_label_set_ellipsize(GTK_LABEL(page->label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(page->label), 18);
+    gtk_box_pack_start(GTK_BOX(box), page->label, FALSE, FALSE, 0);
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(buttons), "linked");
+    page->plan_button = switch_button(page, "План", "План квартиры (Esc)", G_CALLBACK(on_plan_toggled));
+    page->flat_button = switch_button(page, "Стены", "Стены в ряд, как видно из комнаты", G_CALLBACK(on_mode_toggled));
+    page->volume_button = switch_button(page, "3D", "Комната в объёме: пол, стены, плитка, предметы",
+                                        G_CALLBACK(on_mode_toggled));
+    page->syncing = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(page->flat_button), TRUE);
+    page->syncing = false;
+    gtk_container_add(GTK_CONTAINER(buttons), page->plan_button);
+    gtk_container_add(GTK_CONTAINER(buttons), page->flat_button);
+    gtk_container_add(GTK_CONTAINER(buttons), page->volume_button);
+    gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
     gtk_widget_set_halign(box, GTK_ALIGN_END);
     gtk_widget_set_valign(box, GTK_ALIGN_START);
     g_object_set(box, "margin", 8, NULL);
     return box;
 }
 
-/* ---- вкладки -------------------------------------------------------------------- */
+/* ---- страницы: план и одна комната (без ярлыков вкладок — переключает плашка) ---------- */
 
 static void close_page(AppRoomTabs *tabs, RoomPage *page)
 {
@@ -535,22 +561,6 @@ static void close_page(AppRoomTabs *tabs, RoomPage *page)
     g_free(page);
 }
 
-static void on_close_clicked(GtkButton *button, RoomPage *page) { close_page(page->tabs, page); }
-
-static GtkWidget *tab_label(RoomPage *page, const char *name)
-{
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    page->label = gtk_label_new(name);
-    GtkWidget *close = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    gtk_button_set_relief(GTK_BUTTON(close), GTK_RELIEF_NONE);
-    gtk_widget_set_can_focus(close, FALSE);
-    gtk_widget_set_tooltip_text(close, "Закрыть вкладку");
-    g_signal_connect(close, "clicked", G_CALLBACK(on_close_clicked), page);
-    gtk_box_pack_start(GTK_BOX(box), page->label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), close, FALSE, FALSE, 0);
-    gtk_widget_show_all(box);
-    return box;
-}
 
 static RoomPage *page_at(AppRoomTabs *tabs, int number)
 {
@@ -573,6 +583,8 @@ void app_room_tabs_open(AppRoomTabs *tabs, TlSpace *space)
             return;
         }
     }
+    for (guint i = tabs->pages->len; i-- > 0;) /* открыта одна комната: прежнюю закрыть */
+        close_page(tabs, g_ptr_array_index(tabs->pages, i));
     RoomPage *page = g_new0(RoomPage, 1);
     page->tabs = tabs;
     page->space_id = space->id;
@@ -591,13 +603,14 @@ void app_room_tabs_open(AppRoomTabs *tabs, TlSpace *space)
     g_signal_connect(page->zoom, "scale-changed", G_CALLBACK(on_zoom_scale), page);
     page->page = gtk_overlay_new();
     gtk_container_add(GTK_CONTAINER(page->page), page->area);
-    gtk_overlay_add_overlay(GTK_OVERLAY(page->page), mode_switch(page));
+    gtk_overlay_add_overlay(GTK_OVERLAY(page->page), room_switch(page, space->name));
     gtk_widget_show_all(page->page);
     g_ptr_array_add(tabs->pages, page);
-    int number = gtk_notebook_append_page(GTK_NOTEBOOK(tabs->notebook), page->page, tab_label(page, space->name));
-    gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(tabs->notebook), page->page, TRUE);
+    int number = gtk_notebook_append_page(GTK_NOTEBOOK(tabs->notebook), page->page, NULL);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs->notebook), number);
 }
+
+void app_room_tabs_show_plan(AppRoomTabs *tabs) { gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs->notebook), 0); }
 
 void app_room_tabs_set_volume(AppRoomTabs *tabs, bool volume)
 {
@@ -620,7 +633,7 @@ void app_room_tabs_tool_changed(AppRoomTabs *tabs, AppToolId tool)
         gtk_widget_queue_draw(page->area);
     }
     if (app_room_tabs_current(tabs) && tool != APP_TOOL_SELECT && tool != APP_TOOL_RULER && tool != APP_TOOL_PIPE)
-        gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs->notebook), 0); /* рисуют план — на план */
+        app_room_tabs_show_plan(tabs); /* рисуют план — на план */
 }
 
 /* Вкладка помещения — выделить его комнату (панель покажет её стены); план — выделенное на стенах
@@ -645,7 +658,7 @@ static void on_switch_page(GtkNotebook *notebook, GtkWidget *widget, guint numbe
     tabs->switching = false;
 }
 
-/* Правка: перерисовать, переименовать, закрыть вкладки исчезнувших комнат. */
+/* Правка: перерисовать, переименовать, закрыть исчезнувшую комнату. */
 static void on_document_changed(AppDocument *document, unsigned changes, void *data)
 {
     AppRoomTabs *tabs = data;
@@ -671,8 +684,9 @@ AppRoomTabs *app_room_tabs_new(AppDocument *document, GtkWidget *plan, AppCanvas
     tabs->canvas = canvas;
     tabs->pages = g_ptr_array_new();
     tabs->notebook = gtk_notebook_new();
-    gtk_notebook_set_scrollable(GTK_NOTEBOOK(tabs->notebook), TRUE);
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs->notebook), plan, gtk_label_new("План"));
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(tabs->notebook), FALSE);
+    gtk_notebook_set_show_border(GTK_NOTEBOOK(tabs->notebook), FALSE);
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs->notebook), plan, NULL);
     g_signal_connect(tabs->notebook, "switch-page", G_CALLBACK(on_switch_page), tabs);
     app_document_add_listener(document, on_document_changed, tabs);
     return tabs;

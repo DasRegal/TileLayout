@@ -155,6 +155,14 @@ static TlPolygonList wall_floors_of(TlProject *project, const TlOutline *house)
     return floors;
 }
 
+/* Ниша: узкая полоса между перегородками (или крошечный закуток за ними) — не комната, без плитки и подписи.
+   2 · площадь / периметр у длинной полосы — почти её ширина, у квадрата — половина стороны. */
+static bool is_niche(const TlPolygon *outline)
+{
+    double perimeter = tl_polygon_perimeter(outline);
+    return perimeter > 0 && 2 * tl_polygon_area(outline) / perimeter < TL_MIN_SPACE_WIDTH;
+}
+
 static void collect_components_of_house(TlProject *project, TlOutline *house, const FloorCutters *cutters,
                                         ComponentList *components)
 {
@@ -180,7 +188,8 @@ static void collect_components_of_house(TlProject *project, TlOutline *house, co
     for (size_t r = 0; r < regions.count; r++) {
         TlRegion *region = &regions.items[r];
         tl_polygon_clean(&region->outline, CLEAN_TOLERANCE);
-        if (region->outline.count >= 3 && tl_polygon_area(&region->outline) >= TL_MIN_SPACE_AREA) {
+        if (region->outline.count >= 3 && tl_polygon_area(&region->outline) >= TL_MIN_SPACE_AREA &&
+            !(regions.count > 1 && is_niche(&region->outline))) { /* дом целиком — комната, даже маленький */
             for (size_t h = 0; h < region->holes.count; h++)
                 tl_polygon_clean(&region->holes.items[h], CLEAN_TOLERANCE);
             Component component = {region->outline, room_part(&region->outline, &floor_extras),

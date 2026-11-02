@@ -45,8 +45,7 @@ const state = {
     ...readSettings(),
   },
   numbers: null, // номера плиток (tl_web_tile_numbers), когда слой включён
-  tabs: [], // открытые вкладки помещений — id комнат
-  tab: 0, // открытая вкладка: 0 — план, иначе id комнаты (развёртка её стен)
+  tab: 0, // что открыто: 0 — план, иначе id комнаты (развёртка её стен или 3D)
   walls: null, // развёртка открытой комнаты (tl_web_room_walls)
   wallsFitted: true, // вид развёртки вписан, пока его не двигали
   wallRuler: null, // инструмент «Линейка» на развёртке: {wall, start: [x, h]}, курсор — hover
@@ -63,7 +62,7 @@ const wallsCtx = wallsCanvas.getContext('2d');
 const wallsView = new View();
 const room3dCanvas = document.getElementById('room3d');
 const room3dCtx = room3dCanvas.getContext('2d');
-/** 3D во вкладке помещения: камера каждой комнаты — {yaw, pitch, distance} (нет — по умолчанию). */
+/** 3D комнаты: камера каждой комнаты — {yaw, pitch, distance} (нет — по умолчанию). */
 const volume = { on: false, cameras: {}, drag: null };
 const status = document.getElementById('status');
 let frame = 0;
@@ -557,7 +556,7 @@ function rebuildPath(c, contours) {
   }
 }
 
-/** 2D | 3D во вкладке помещения. */
+/** Комната: развёртка стен или 3D. */
 function setVolume(on) {
   volume.on = on;
   showCanvases();
@@ -651,11 +650,11 @@ function bindRoom3d() {
     delete volume.cameras[state.tab];
     requestDraw();
   });
-  for (const button of document.querySelectorAll('#mode-switch [data-mode]')) {
-    button.addEventListener('click', () => setVolume(button.dataset.mode === 'volume'));
-  }
   for (const button of document.querySelectorAll('#room-open [data-open]')) {
-    button.addEventListener('click', () => openRoom(selectedSpace(), button.dataset.open === 'volume'));
+    button.addEventListener('click', () => {
+      if (button.dataset.open === 'plan') showTab(0);
+      else openRoom(state.tab || selectedSpace(), button.dataset.open === 'volume');
+    });
   }
   new ResizeObserver(() => requestDraw()).observe(room3dCanvas);
 }
@@ -688,52 +687,41 @@ function drawWallsTab(dpr) {
   });
 }
 
-// ---- вкладки: план и стены помещений ------------------------------------------------
+// ---- комната: план, её стены или 3D ---------------------------------------------------
 
 const spaceName = (id) => state.scene?.spaces.find((space) => space.id === id)?.name ?? 'Комната';
 
-function openRoomTab(id) {
-  if (!id) return;
-  if (!state.tabs.includes(id)) state.tabs.push(id);
-  showTab(id);
-}
-
-/** Комната — сразу развёрткой стен или в 3D (кнопки на плане и в панели). */
+/** Комната — развёрткой стен или в 3D (плашка, кнопки в панели, двойной щелчок). */
 function openRoom(id, volumeOn) {
   if (!id) return;
-  openRoomTab(id);
+  showTab(id);
   setVolume(volumeOn);
 }
 
-/** Плашка «Комната: Стены | 3D» на плане — когда выбрана одна комната. */
+/** Плашка «Комната: План | Стены | 3D» — в комнате всегда, на плане — когда выбрана одна комната. */
 function syncRoomOpen() {
-  const id = state.tab ? 0 : selectedSpace();
+  const id = state.tab || selectedSpace();
   const box = document.getElementById('room-open');
-  box.hidden = !id || selectedSpaces().length > 1;
-  if (!box.hidden) document.getElementById('room-open-name').textContent = spaceName(id);
+  box.hidden = !id || (!state.tab && selectedSpaces().length > 1);
+  if (box.hidden) return;
+  document.getElementById('room-open-name').textContent = spaceName(id);
+  const mode = !state.tab ? 'plan' : volume.on ? 'volume' : 'flat';
+  for (const button of box.querySelectorAll('[data-open]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.open === mode));
+  }
 }
 
-function closeRoomTab(id) {
-  state.tabs = state.tabs.filter((tab) => tab !== id);
-  if (state.tab === id) showTab(0);
-  else renderTabs();
-}
-
-/** Показать план или развёртку (холсты, переключатель 2D | 3D, кнопка «спасибо»). */
+/** Показать план, развёртку или 3D (холсты, плашка комнаты, кнопка «спасибо»). */
 function showCanvases() {
   const walls = Boolean(state.tab);
   canvas.hidden = walls;
   wallsCanvas.hidden = !walls || volume.on;
   room3dCanvas.hidden = !walls || !volume.on;
-  document.getElementById('mode-switch').hidden = !walls;
-  for (const button of document.querySelectorAll('#mode-switch [data-mode]')) {
-    button.setAttribute('aria-pressed', String((button.dataset.mode === 'volume') === volume.on));
-  }
   document.querySelector('.thanks').hidden = walls;
   syncRoomOpen();
 }
 
-/** Перейти на вкладку: у помещения — выделить его комнату (панель — её настройки и стены). */
+/** Открыть план (0) или комнату: у комнаты — выделить её (панель — её настройки и стены). */
 function showTab(id) {
   if (state.tab !== id) state.wallsFitted = true;
   state.tab = id;
@@ -743,36 +731,6 @@ function showTab(id) {
   showCanvases();
   if (id) say('Развёртка стен — как видно из комнаты. Колесо или два пальца — масштаб, двойной щелчок — вписать.');
   refresh();
-}
-
-function renderTabs() {
-  const strip = document.getElementById('tab-strip');
-  const select = document.getElementById('tab-select');
-  document.getElementById('room-tabs').hidden = state.tabs.length === 0;
-  const tab = (id, title) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = id ? 'tab' : 'tab plan';
-    button.setAttribute('role', 'tab');
-    button.setAttribute('aria-selected', String(state.tab === id));
-    button.textContent = title;
-    button.addEventListener('click', () => showTab(id));
-    if (id) {
-      const close = document.createElement('span');
-      close.className = 'close';
-      close.textContent = '×';
-      close.title = 'Закрыть вкладку';
-      close.addEventListener('click', (event) => {
-        event.stopPropagation();
-        closeRoomTab(id);
-      });
-      button.append(close);
-    }
-    return button;
-  };
-  strip.replaceChildren(tab(0, 'План'), ...state.tabs.map((id) => tab(id, `Стены: ${spaceName(id)}`)));
-  select.replaceChildren(new Option('План', '0'), ...state.tabs.map((id) => new Option(`Стены: ${spaceName(id)}`, String(id))));
-  select.value = String(state.tab);
 }
 
 /** Контуры выделенного предмета для подсветки. */
@@ -923,8 +881,6 @@ function refresh() {
   }
   if (state.object?.kind === 'wall') state.object.keep_angles = state.settings.keepAngles;
   state.numbers = state.settings.layers.numbers ? core.tileNumbers() : null;
-  state.tabs = state.tabs.filter(exists); // комнаты больше нет — закрыть её вкладку
-  renderTabs();
   if (state.selection && state.selection.kind !== 'space' && !state.object) state.selection = null;
   panel.show(selectedSpaces().map((id) => core.spaceTile(id)), catalogs, state.multi, Boolean(state.tab), selectedRegion());
   panel.showObject(state.object);
@@ -978,7 +934,7 @@ function deleteSelection() {
   const selection = state.selection;
   if (!selection) return;
   if (selection.kind === 'room_wall') {
-    say('Стены образуют план: правьте их на вкладке «План».');
+    say('Стены образуют план: правьте их на плане (кнопка «План» справа вверху).');
     return;
   }
   if (WALL_ITEMS.has(selection.kind) || selection.kind === 'panno') {
@@ -1701,6 +1657,7 @@ function onKey(event) {
     setTool(tool);
   } else if (event.key === 'Escape') {
     if (tools.drawing) setTool('select');
+    else if (state.tab && (!state.selection || state.selection.kind === 'space')) showTab(0); // из комнаты — на план
     else {
       state.selection = null;
       state.multi = false;
@@ -1762,7 +1719,7 @@ function bindCommands() {
     const [x, y] = view.toWorld(event.clientX - box.left, event.clientY - box.top);
     const hit = state.core.pick(x, y, PICK_PX / view.scale);
     if (hit.kind === 'space') { // двойной щелчок по комнате — её стены
-      openRoomTab(hit.space);
+      openRoom(hit.space, false);
       return;
     }
     if (hit.kind === 'wall' && state.core.insertVertex(hit.index, hit.part, x, y, state.settings.grid)) {
@@ -1788,7 +1745,6 @@ function bindCommands() {
     onDragStart: (world, event) => dragOnWalls(world, event),
   });
   wallsCanvas.addEventListener('dblclick', () => fitView());
-  document.getElementById('tab-select').addEventListener('change', (event) => showTab(Number(event.target.value)));
   acceptDroppedFiles(document.body, openProject);
   // план поменял размер (шторка на телефоне, окно): середина вида остаётся на месте
   let size = null;

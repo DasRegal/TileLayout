@@ -55,6 +55,24 @@ void spec_project(void)
                 EXPECT_NEAR(created->tile.tile_width, 450, 1e-9);
             tl_project_free(project);
         }
+        IT("узкая ниша между перегородками — не комната (без плитки и подписи); коридор 900 мм — комната")
+        {
+            TlProject *project = single_room_project();
+            /* перегородки 100 мм от стены до стены: между ними 180 мм — ниша */
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(2050, 0), tl_vec2(2050, 3000), 100));
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(2330, 0), tl_vec2(2330, 3000), 100));
+            tl_project_update_spaces(project);
+            EXPECT_INT(project->spaces.count, 2);
+            EXPECT(tl_project_space_at(project, tl_vec2(2190, 1500)) == NULL);
+            tl_project_free(project);
+            project = single_room_project();
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(1950, 0), tl_vec2(1950, 3000), 100));
+            tl_project_add_partition(project, tl_partition_new(tl_vec2(2950, 0), tl_vec2(2950, 3000), 100));
+            tl_project_update_spaces(project);
+            EXPECT_INT(project->spaces.count, 3);
+            EXPECT(tl_project_space_at(project, tl_vec2(2450, 1500)) != NULL);
+            tl_project_free(project);
+        }
         IT("после удаления перегородки комнаты сливаются, остаётся большая")
         {
             TlProject *project = single_room_project();

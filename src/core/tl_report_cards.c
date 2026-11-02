@@ -50,18 +50,38 @@ static TlCutCard card_for(TlCutCardKind kind, int number, const TlTileSettings *
     return card;
 }
 
-static TlCutPart strip_part(const char *room, int number, TlRect rect)
+/* Точка куска с габаритом box — в полосу rect (turn — повёрнут на 90°: габарит box лежит поперёк). */
+static TlVec2 to_strip(TlVec2 p, TlRect box, TlRect rect, bool turn)
 {
-    TlCutPart part = {.number = number};
-    snprintf(part.room, sizeof part.room, "%s", room);
-    tl_polygon_list_push(&part.shapes, tl_polygon_from_rect(rect));
+    TlVec2 q = tl_vec2(p.x - box.left, p.y - box.top);
+    if (turn)
+        q = tl_vec2(tl_rect_height(box) - q.y, q.x);
+    return tl_vec2(rect.left + q.x, rect.top + q.y);
+}
+
+/* Кусок как он есть (косой рез, отверстия, запилы) — в своей полосе плитки rect. */
+static TlCutPart strip_part(const char *room, const TlTile *tile, TlRect rect)
+{
+    TlCutPart part = make_part(room, tile->number, tile);
+    TlRect box = tl_polygon_bounds(&part.shapes.items[0]);
+    bool turn = fabs(tl_rect_width(box) - tl_rect_width(rect)) > 0.5 &&
+                fabs(tl_rect_height(box) - tl_rect_width(rect)) < fabs(tl_rect_width(box) - tl_rect_width(rect));
+    for (size_t s = 0; s < part.shapes.count; s++)
+        for (size_t i = 0; i < part.shapes.items[s].count; i++)
+            part.shapes.items[s].items[i] = to_strip(part.shapes.items[s].items[i], box, rect, turn);
+    for (size_t m = 0; m < part.miters.count; m++)
+        for (size_t i = 0; i < part.miters.items[m].count; i++)
+            part.miters.items[m].items[i] = to_strip(part.miters.items[m].items[i], box, rect, turn);
+    for (size_t d = 0; d < part.drills.count; d++)
+        part.drills.items[d].center = to_strip(part.drills.items[d].center, box, rect, turn);
     return part;
 }
 
 /* Две подрезки из одной плитки — каждая у своего края (у углового куска — в
-   углу), отход между ними. across_width — бок о бок по ширине плитки. */
+   углу), отход между ними. across_width — бок о бок по ширине плитки. Куски — своими
+   контурами: косой рез на чертеже тоже косой. */
 static void add_pair_parts(TlCutCard *card, bool across_width, const char *first_room, const TlTile *first,
-                           double w2, double h2, const char *second_room, int second_number)
+                           double w2, double h2, const char *second_room, const TlTile *second)
 {
     double w = card->width, h = card->height, w1, h1;
     tl_tile_piece_size(first, &w1, &h1);
@@ -71,8 +91,8 @@ static void add_pair_parts(TlCutCard *card, bool across_width, const char *first
     }
     TlRect first_rect = {0, 0, w1, h1};
     TlRect second_rect = across_width ? (TlRect){w - w2, 0, w, h2} : (TlRect){0, h - h2, w2, h};
-    tl_cut_part_list_push(&card->parts, strip_part(first_room, first->number, first_rect));
-    tl_cut_part_list_push(&card->parts, strip_part(second_room, second_number, second_rect));
+    tl_cut_part_list_push(&card->parts, strip_part(first_room, first, first_rect));
+    tl_cut_part_list_push(&card->parts, strip_part(second_room, second, second_rect));
 }
 
 static bool lies_lengthwise(const TlTileSpec *spec) { return spec->laid_width >= spec->laid_height; }
@@ -247,7 +267,7 @@ static void add_layout_cards(TlCutCardList *cards, const TlSummary *summary, TlL
         card.width = spec->laid_width;
         card.height = spec->laid_height;
         card.narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW;
-        add_pair_parts(&card, pair->across_width, name, tile, mate_w, mate_h, mate_name, mate_tile->number);
+        add_pair_parts(&card, pair->across_width, name, tile, mate_w, mate_h, mate_name, mate_tile);
         if (strcmp(name, mate_name) == 0)
             snprintf(card.title, sizeof card.title, "№%d + №%d  %s", tile->number, mate_tile->number, name);
         else

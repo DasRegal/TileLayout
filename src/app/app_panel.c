@@ -924,14 +924,14 @@ static void build_walls(AppPanel *panel, GtkWidget *box)
     panel->room_height = walls_spin(panel, "room_height", 500, 20000);
     app_section_row(s, "Высота помещения", panel->room_height);
     panel->walls_enabled = gtk_check_button_new_with_label("Облицовка стен плиткой");
-    gtk_widget_set_tooltip_text(panel->walls_enabled, "Стены — в расчёте, смете и чертежах подрезок; развёртка — во вкладке комнаты");
+    gtk_widget_set_tooltip_text(panel->walls_enabled, "Стены — в расчёте, смете и чертежах подрезок; развёртка — кнопкой «Развёртка стен» или «Стены» справа вверху");
     g_signal_connect(panel->walls_enabled, "toggled", G_CALLBACK(on_walls_enabled), panel);
     app_section_wide(s, panel->walls_enabled);
     panel->walls_height = walls_spin(panel, "walls_height", 0, 20000);
     gtk_widget_set_tooltip_text(panel->walls_height, "0 — до потолка");
     app_section_row(s, "Облицовка до", panel->walls_height);
     GtkWidget *open = app_icon_button_new("walls", "Развёртка стен");
-    gtk_widget_set_tooltip_text(open, "Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)");
+    gtk_widget_set_tooltip_text(open, "Стены комнаты в ряд, как видно из комнаты (или двойной щелчок по комнате)");
     GtkWidget *volume = gtk_button_new_with_label("3D");
     gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
     panel->walls_open = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6); /* «Развёртка стен» и «3D» — рядом */
@@ -3331,7 +3331,7 @@ static void refresh(AppPanel *panel)
     gtk_widget_set_visible(panel->underlay_section.frame, idle && !drawing);
 
     gtk_widget_set_visible(panel->space_section.frame, room_count == 1);
-    /* на вкладке стен комнаты — только её стены; на плане — пол и кнопка развёртки */
+    /* в комнате (стены, 3D) — только её стены; на плане — пол и кнопка развёртки */
     bool walls_mode = space && document->walls_space == space->id;
     bool floor_mode = space && !walls_mode;
     gtk_widget_set_visible(panel->tile_section.frame, floor_mode);

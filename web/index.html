@@ -71,10 +71,6 @@
     </nav>
 
     <section class="plan-area" aria-label="План">
-      <div class="room-tabs" id="room-tabs" hidden>
-        <div class="tab-strip" id="tab-strip" role="tablist" aria-label="План и стены помещений"></div>
-        <select id="tab-select" aria-label="План или стены помещения"></select>
-      </div>
       <div class="stage">
       <canvas id="plan"></canvas>
       <canvas id="walls" hidden></canvas>
@@ -83,14 +79,11 @@
         <span class="dimension-title"></span>
         <span class="dimension-field"><input type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" aria-label="Размер, мм"><span class="unit">мм</span></span>
       </div>
-      <div class="mode-switch" id="mode-switch" hidden>
-        <button type="button" data-mode="flat" aria-pressed="true" title="Развёртка стен">2D</button>
-        <button type="button" data-mode="volume" aria-pressed="false" title="Комната в объёме: пол, стены, плитка, предметы">3D</button>
-      </div>
       <div class="mode-switch room-open" id="room-open" hidden>
         <span class="room-open-name" id="room-open-name"></span>
-        <button type="button" data-open="flat" title="Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)">Стены</button>
-        <button type="button" data-open="volume" title="Комната в объёме: пол, стены, плитка, предметы">3D</button>
+        <button type="button" data-open="plan" aria-pressed="true" title="План квартиры (Esc)">План</button>
+        <button type="button" data-open="flat" aria-pressed="false" title="Стены комнаты в ряд, как видно из комнаты (или двойной щелчок по комнате)">Стены</button>
+        <button type="button" data-open="volume" aria-pressed="false" title="Комната в объёме: пол, стены, плитка, предметы">3D</button>
       </div>
       <button type="button" class="thanks" data-action="thanks" data-icon="heart">Сказать спасибо автору</button>
       <p id="status" class="status" role="status">Загрузка…</p>

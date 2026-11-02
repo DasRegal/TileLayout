@@ -108,6 +108,34 @@ void spec_areas(void)
             EXPECT(fabs(space->tile.offset_y - room_y) > 1);
             tl_project_free(project);
         }
+        IT("косая линия раздела: в паре подрезок из одной плитки рез на чертеже тоже косой, куски — в плитке")
+        {
+            TlProject *project = room_project(3000, 2000);
+            TlSpace *space = only_space(project);
+            add_divider(project, tl_vec2(800, 0), tl_vec2(1600, 2000));
+            tl_space_add_area(space, tl_space_region_at(space, tl_vec2(300, 1000)), true);
+            tl_project_update_spaces(project);
+            TlCutCardList cards = tl_report_cut_cards(project);
+            int slanted = 0;
+            bool inside = true;
+            for (size_t i = 0; i < cards.count; i++) {
+                const TlCutCard *card = &cards.items[i];
+                if (card->kind != TL_CARD_OFFCUT_PAIR)
+                    continue;
+                for (size_t p = 0; p < card->parts.count; p++) {
+                    const TlPolygon *shape = &card->parts.items[p].shapes.items[0];
+                    for (size_t k = 0; k < shape->count; k++) {
+                        TlVec2 a = shape->items[k], b = shape->items[(k + 1) % shape->count];
+                        slanted += fabs(a.x - b.x) > 1 && fabs(a.y - b.y) > 1;
+                        inside = inside && a.x > -0.5 && a.y > -0.5 && a.x < card->width + 0.5 && a.y < card->height + 0.5;
+                    }
+                }
+            }
+            EXPECT(slanted > 0);
+            EXPECT(inside);
+            tl_cut_card_list_free_all(&cards);
+            tl_project_free(project);
+        }
         IT("плитка выключена у комнаты: участок со своей плиткой и облицовка стен всё равно кладутся и считаются")
         {
             TlProject *project = room_project(3000, 2000);

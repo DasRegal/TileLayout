@@ -226,7 +226,7 @@ const tileSize = (tile) => `${number(tile.w)}×${number(tile.h)}`;
 
 /*
  * Окна настроек комнаты: на панели — кнопка с короткой сводкой, по ней — окно с разделами (поля — те же,
- * что были на панели). На плане — настройки пола, во вкладке стен — полосы облицовки.
+ * что были на панели). На плане — настройки пола, в комнате (стены, 3D) — полосы облицовки.
  */
 const FLOOR_DIALOGS = [
   { key: 'cut', title: 'Подрезка и запас',
@@ -551,7 +551,7 @@ export class Panel {
     this.colorOnly = this.root.querySelector('#color-only');
     this.colorOnly.addEventListener('click', () => this.actions.colorOnly());
     const fields = this.root.querySelector('#tile-fields');
-    this.floorBlocks = []; // разделы пола — на вкладке стен скрыты
+    this.floorBlocks = []; // разделы пола — в комнате (стены, 3D) скрыты
     this.tileEnabledRow = this.enabled.closest('.row');
     this.texture = this.root.querySelector('.texture');
     const groups = {}; // окно → его разделы
@@ -1030,7 +1030,7 @@ export class Panel {
       this.areaName.disabled = part.covering === 'room';
       if (document.activeElement !== this.areaName) this.areaName.value = part.name;
     }
-    /* на вкладке стен — только стены комнаты; на плане — пол и кнопка развёртки */
+    /* в комнате — только её стены; на плане — пол и кнопка развёртки */
     for (const block of this.floorBlocks) block.hidden = walls;
     for (const block of this.bandBlocks) block.hidden = !walls;
     this.tileEnabledRow.hidden = walls;

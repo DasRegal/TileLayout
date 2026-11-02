@@ -293,28 +293,7 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
 .plan-area { position: relative; min-height: 0; display: flex; flex-direction: column; }
 .stage { position: relative; flex: 1; min-height: 0; }
 
-/* ---- вкладки: план и стены помещений ---- */
-
-.room-tabs { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); background: var(--surface); }
-.tab-strip { display: flex; overflow-x: auto; scrollbar-width: thin; }
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 7px 8px 6px 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.tab.plan { padding-right: 14px; }
-.tab[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
-.tab:hover { background: var(--ground); }
-.tab .close { padding: 0 4px; border-radius: 4px; color: var(--muted); font-weight: 400; }
-.tab .close:hover { background: var(--line); color: var(--ink); }
-#tab-select { display: none; margin: 6px 8px; }
+/* ---- комната: план, стены, 3D ---- */
 
 .mode-switch {
   position: absolute;
@@ -330,10 +309,11 @@ button.icon-only { padding: 5px; width: 34px; height: 32px; justify-content: cen
 .mode-switch button { border: 0; border-radius: 0; background: none; padding: 5px 12px; font-weight: 600; }
 .mode-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .mode-switch button:disabled { color: var(--line); }
-/* выбрана комната на плане — открыть её стены или 3D (то же, что двойной щелчок) */
+/* комната: план, её стены или 3D — на плане, когда выбрана одна комната, и в самой комнате */
 .room-open { align-items: center; }
 .room-open-name { padding: 0 6px 0 12px; color: var(--muted); font-size: 13px; max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-open button { color: var(--accent); }
+.room-open button[aria-pressed="true"] { color: var(--ink); }
 .room-open button + button { border-left: 1px solid var(--line); }
 
 #plan, #walls, #room3d {
@@ -590,8 +570,9 @@ button.danger:hover:not(:disabled) { background: var(--danger-soft); border-colo
   .rail-divider { width: 1px; height: auto; margin: 6px 2px; }
 
   .thanks { top: 8px; left: 8px; padding: 4px 8px; font-size: 12px; }
-  .tab-strip { display: none; }
-  #tab-select { display: block; flex: 1; }
+  .room-open { top: 8px; right: 8px; }
+  .room-open-name { display: none; } /* комната — в заголовке шторки; иначе плашка наезжает на «спасибо» */
+  .room-open button { padding: 5px 9px; }
   .zoom button { width: 40px; height: 40px; }
   .status { bottom: max(62px, env(safe-area-inset-bottom, 0px)); max-width: calc(100% - 24px); }
 

@@ -26,6 +26,7 @@
 #include "tl_underlay.h"
 
 #define TL_MIN_SPACE_AREA 20000.0 /* мм²: меньшие области (щели) — не комнаты */
+#define TL_MIN_SPACE_WIDTH 250.0  /* мм: часть дома за перегородками уже (2 · площадь / периметр) — ниша, не комната */
 
 TL_ARRAY_DEFINE(TlOutlineList, TlOutline *, tl_outline_list)
 TL_ARRAY_DEFINE(TlPartitionList, TlPartition *, tl_partition_list)
