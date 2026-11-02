@@ -81,6 +81,33 @@ void spec_areas(void)
             EXPECT(fabs(floor_layouts_area(space) - 6e6) < 3000);
             tl_project_free(project);
         }
+        IT("сетку плитки тянут на участке со своей плиткой — сдвигается его плитка, а не комнаты")
+        {
+            TlProject *project = room_project(3000, 2000);
+            TlSpace *space = only_space(project);
+            add_divider(project, tl_vec2(1000, 0), tl_vec2(1000, 2000));
+            size_t area = tl_space_add_area(space, tl_space_region_at(space, tl_vec2(500, 1000)), true);
+            TlTileSettings *own = &space->areas.items[area].zone.tile;
+            own->offset_x = own->offset_y = 0;
+            double room_x = space->tile.offset_x, room_y = space->tile.offset_y;
+            TlSnapContext snap = {.project = project, .tolerance = 1, .skip_vertex = -1};
+            TlDrag drag;
+            EXPECT(tl_drag_begin(&drag, project, (TlDragTarget){.kind = TL_DRAG_TILES, .space = space}, tl_vec2(500, 1000)));
+            tl_drag_move(&drag, project, tl_vec2(530, 1000), &snap, false, NULL);
+            tl_drag_end(&drag, project);
+            tl_drag_free(&drag);
+            EXPECT_NEAR(own->offset_x, 30, 1e-9);
+            EXPECT_NEAR(space->tile.offset_x, room_x, 1e-9);
+            EXPECT_NEAR(space->tile.offset_y, room_y, 1e-9);
+            /* на части без своей плитки — сетка комнаты */
+            EXPECT(tl_drag_begin(&drag, project, (TlDragTarget){.kind = TL_DRAG_TILES, .space = space}, tl_vec2(2000, 1000)));
+            tl_drag_move(&drag, project, tl_vec2(2000, 1040), &snap, false, NULL);
+            tl_drag_end(&drag, project);
+            tl_drag_free(&drag);
+            EXPECT_NEAR(own->offset_x, 30, 1e-9);
+            EXPECT(fabs(space->tile.offset_y - room_y) > 1);
+            tl_project_free(project);
+        }
         IT("плитка выключена у комнаты: участок со своей плиткой и облицовка стен всё равно кладутся и считаются")
         {
             TlProject *project = room_project(3000, 2000);

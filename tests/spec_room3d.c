@@ -237,6 +237,38 @@ void spec_room3d(void)
             tl_paint_list_free_all(&paints);
             tl_project_free(project);
         }
+        IT("откосы двери видны только в проёме: вдоль стены не вылезают за её край на соседнюю")
+        {
+            TlProject *project = room_project(4000, 3000);
+            TlSpace *space = project->spaces.items[0];
+            space->tile.enabled = false;
+            tl_project_add_opening(project, tl_opening_new(tl_vec2(3400, -100), 800)); /* дверь у угла */
+            tl_project_update_spaces(project);
+            for (int yaw = 0; yaw < 360; yaw += 10) {
+                TlCamera camera = tl_room3d_default_camera(project, space, 800, 600);
+                camera.yaw = yaw;
+                TlPaintList paints = tl_room3d_paint(project, space, &camera, 800, 600);
+                for (size_t w = 3; w < paints.count; w++) { /* стена с проёмом; перед ней — три откоса */
+                    if (paints.items[w].contours.count != 2)
+                        continue;
+                    const TlPolygon *hole = &paints.items[w].contours.items[1];
+                    double turn = tl_polygon_signed_area(hole) >= 0 ? 1 : -1, worst = 0;
+                    for (size_t j = w - 3; j < w; j++)
+                        for (size_t c = 0; c < paints.items[j].contours.count; c++)
+                            for (size_t k = 0; k < paints.items[j].contours.items[c].count; k++)
+                                for (size_t e = 0; e < hole->count; e++) {
+                                    TlVec2 a = hole->items[e], b = hole->items[(e + 1) % hole->count];
+                                    TlVec2 q = paints.items[j].contours.items[c].items[k];
+                                    double along = tl_vec2_length(tl_vec2_sub(b, a));
+                                    if (along > 1e-9)
+                                        worst = fmin(worst, turn * tl_vec2_cross(tl_vec2_sub(b, a), tl_vec2_sub(q, a)) / along);
+                                }
+                    EXPECT(worst > -0.5);
+                }
+                tl_paint_list_free_all(&paints);
+            }
+            tl_project_free(project);
+        }
         IT("камера внутри комнаты: всё, что за спиной, отсечено, координаты конечные")
         {
             TlProject *project = room_project(4000, 3000);

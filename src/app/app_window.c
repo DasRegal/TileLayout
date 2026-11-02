@@ -133,6 +133,7 @@ struct AppWindow {
     GtkAccelGroup *accelerators;
     GtkWidget *status, *coordinates, *snap;
     GtkWidget *recent_menu;
+    GtkWidget *room_open, *room_open_name; /* на плане: «Комната: Стены | 3D» у выбранной комнаты */
     GtkToolItem *tool_buttons[APP_TOOL_COUNT];
     GtkWidget *tool_items[APP_TOOL_COUNT];
     GtkWidget *view_items[G_N_ELEMENTS(VIEW_TOGGLES)];
@@ -150,9 +151,21 @@ static void update_title(AppWindow *self)
     g_free(title);
 }
 
+/* Плашка «Комната: Стены | 3D» — когда выбрана одна комната. */
+static void sync_room_open(AppWindow *self)
+{
+    TlSpace *spaces[APP_MAX_ROOMS];
+    size_t count = app_selection_spaces(&self->document->selection, spaces);
+    gtk_widget_set_visible(self->room_open, count == 1);
+    if (count == 1)
+        gtk_label_set_text(GTK_LABEL(self->room_open_name), spaces[0]->name);
+}
+
 static void on_document_changed(AppDocument *document, unsigned changes, void *data)
 {
     AppWindow *self = data;
+    if (changes & (APP_CHANGED_SELECTION | APP_CHANGED_MODEL))
+        sync_room_open(self);
     if (changes & APP_CHANGED_FILE)
         update_title(self);
     if (changes & APP_CHANGED_STATUS)
@@ -609,7 +622,9 @@ static const char DARK_CSS[] =
     "separator, paned > separator { background-color: #44475a; }\n"
     "frame > border, .frame, scrolledwindow.frame { border-color: #44475a; }\n"
     "link, *:link { color: #8be9fd; }\n"
-    "#tools-rail { background-color: #21222c; }";
+    "#tools-rail { background-color: #21222c; }\n"
+    "#room-open { background-color: rgba(40, 42, 54, 0.95); border-color: #44475a; }\n"
+    "#room-open button { color: #bd93f9; }";
 
 /* Тёмная тема: окна GTK (Adwaita тёмная — она есть в любой GTK — и цвета Dracula поверх) и план.
    Своя тема системы (например, Mint-Y) тёмного варианта может не иметь — поэтому на тёмную время
@@ -791,13 +806,51 @@ static void on_open_space(TlSpace *space, void *data)
     app_room_tabs_open(self->room_tabs, space);
 }
 
-/* Кнопка «Стены» панели: стены выделенной комнаты. */
-static void open_room_walls(void *data)
+/* Выделенная комната — во вкладке: развёрткой стен или в 3D. */
+static void open_room(AppWindow *self, bool volume)
 {
-    AppWindow *self = data;
     TlSpace *spaces[APP_MAX_ROOMS];
-    if (app_selection_spaces(&self->document->selection, spaces) > 0)
-        app_room_tabs_open(self->room_tabs, spaces[0]);
+    if (app_selection_spaces(&self->document->selection, spaces) == 0)
+        return;
+    app_room_tabs_open(self->room_tabs, spaces[0]);
+    app_room_tabs_set_volume(self->room_tabs, volume);
+}
+
+/* Кнопки «Развёртка стен» и «3D» панели. */
+static void open_room_walls(void *data) { open_room(data, false); }
+static void open_room_3d(void *data) { open_room(data, true); }
+static void on_room_open_walls(GtkButton *button, AppWindow *self) { open_room(self, false); }
+static void on_room_open_3d(GtkButton *button, AppWindow *self) { open_room(self, true); }
+
+/* Справа вверху плана: имя выбранной комнаты и кнопки — то же, что двойной щелчок по ней. */
+static GtkWidget *build_room_open(AppWindow *self)
+{
+    GtkWidget *box = self->room_open = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_name(box, "room-open");
+    self->room_open_name = gtk_label_new("");
+    gtk_label_set_ellipsize(GTK_LABEL(self->room_open_name), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(self->room_open_name), 18);
+    gtk_box_pack_start(GTK_BOX(box), self->room_open_name, FALSE, FALSE, 0);
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(buttons), "linked");
+    GtkWidget *walls = gtk_button_new_with_label("Стены");
+    gtk_widget_set_tooltip_text(walls, "Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)");
+    GtkWidget *volume = gtk_button_new_with_label("3D");
+    gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
+    g_signal_connect(walls, "clicked", G_CALLBACK(on_room_open_walls), self);
+    g_signal_connect(volume, "clicked", G_CALLBACK(on_room_open_3d), self);
+    gtk_widget_set_can_focus(walls, FALSE); /* клавиши — плану */
+    gtk_widget_set_can_focus(volume, FALSE);
+    gtk_container_add(GTK_CONTAINER(buttons), walls);
+    gtk_container_add(GTK_CONTAINER(buttons), volume);
+    gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+    gtk_widget_set_halign(box, GTK_ALIGN_END);
+    gtk_widget_set_valign(box, GTK_ALIGN_START);
+    g_object_set(box, "margin", 8, NULL);
+    gtk_widget_show_all(box);
+    gtk_widget_hide(box);
+    gtk_widget_set_no_show_all(box, TRUE); /* видна только у выбранной комнаты — окно её не показывает */
+    return box;
 }
 
 /* План с кнопкой «Сказать спасибо автору» в левом верхнем углу. */
@@ -815,6 +868,7 @@ static GtkWidget *build_plan(AppWindow *self)
     g_object_set(thanks, "margin", 8, NULL);
     g_signal_connect(thanks, "clicked", G_CALLBACK(on_thanks), self);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), thanks);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), build_room_open(self));
     return overlay;
 }
 
@@ -941,7 +995,11 @@ static void compact_toolbar_buttons(GtkWidget *toolbar)
                               "#tools-rail toolbutton > button { padding: 4px 2px; }\n"
                               "#tools-rail toolbutton label { font-size: 8.5pt; }\n"
                               "#tools-rail { border-right: 1px solid alpha(currentColor, 0.15); }\n"
-                              "#thanks-button { padding: 2px 8px; }";
+                              "#thanks-button { padding: 2px 8px; }\n"
+                              "#room-open { background-color: alpha(@theme_bg_color, 0.94); border-radius: 8px;"
+                              "  border: 1px solid alpha(currentColor, 0.15); padding: 2px; }\n"
+                              "#room-open > label { margin: 0 8px 0 8px; opacity: 0.75; }\n"
+                              "#room-open button { padding: 2px 12px; font-weight: bold; }";
     gtk_widget_set_name(toolbar, "main-toolbar");
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider, CSS, -1, NULL);
@@ -1101,7 +1159,7 @@ AppWindow *app_window_new(AppConfig *config, const char *path)
     gtk_window_add_accel_group(GTK_WINDOW(self->window), self->accelerators);
 
     self->canvas = app_canvas_new(self->document);
-    AppPanelActions actions = {add_house_dialog, open_print_dialog, open_room_walls, self};
+    AppPanelActions actions = {add_house_dialog, open_print_dialog, open_room_walls, open_room_3d, self};
     self->panel = app_panel_new(self->document, self->canvas, actions);
     self->room_tabs = app_room_tabs_new(self->document, build_plan(self), self->canvas);
 

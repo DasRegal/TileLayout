@@ -1208,6 +1208,7 @@ static struct {
     TlDrag drag;
     bool active, moved;
     int space; /* дом и сетка плитки — id комнаты, за которую взяли */
+    int region; /* сетка плитки — часть пола + 1, где взяли (0 — частей нет) */
 } dragging;
 
 bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x, double y)
@@ -1242,6 +1243,8 @@ bool tl_web_drag_begin(const char *kind, int index, int part, int end, double x,
         target.outline = space->house;
         target.space = space;
         dragging.space = space->id;
+        size_t region = space->regions.count > 1 ? tl_space_region_at(space, tl_vec2(x, y)) : SIZE_MAX;
+        dragging.region = region == SIZE_MAX ? 0 : (int)region + 1;
     } else if (is(kind, "ruler") && index >= 0 && (size_t)index < project->rulers.count) {
         target.kind = TL_DRAG_RULER;
         target.ruler = project->rulers.items[index];
@@ -1290,8 +1293,8 @@ static Item dragged_item(TlProject *project)
     case TL_DRAG_TEE: return (Item){"tee", index_of_partition(project, t->partition), 0, (int)t->end, 0};
     case TL_DRAG_OPENING: return (Item){"opening", index_of_opening(project, t->opening), 0, 0, 0};
     case TL_DRAG_THRESHOLD: return (Item){"threshold", index_of_opening(project, t->opening), t->index, 0, 0};
-    case TL_DRAG_HOUSE:
-    case TL_DRAG_TILES: return (Item){"space", 0, 0, 0, dragging.space};
+    case TL_DRAG_HOUSE: return (Item){"space", 0, 0, 0, dragging.space};
+    case TL_DRAG_TILES: return (Item){"space", 0, dragging.region, 0, dragging.space};
     case TL_DRAG_RULER:
     case TL_DRAG_JOINT: {
         int index = -1;

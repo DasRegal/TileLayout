@@ -38,6 +38,7 @@ typedef struct Face {
     TlVec3 corner[3];     /* углы плитки: левый верхний, правый верхний, левый нижний (оси раскладки);
                              правый нижний — четвёртый угол параллелограмма */
     double tile_width, tile_height;
+    Points3 window;       /* откос: проём в плоскости стены — сквозь стену откос виден только в нём */
 } Face;
 
 TL_ARRAY_DEFINE(FaceList, Face, face_list)
@@ -179,6 +180,7 @@ static void face_free(Face *face)
     for (size_t i = 0; i < face->contours.count; i++)
         points3_free(&face->contours.items[i]);
     contours3_free(&face->contours);
+    points3_free(&face->window);
 }
 
 static Group group_new(TlVec3 normal, Face base)
@@ -321,8 +323,9 @@ static TlVec2 inward(TlSpace *space, const TlRoomWall *wall)
     return n;
 }
 
-/* Откосы проёма (и стекло окна) — за плоскостью стены, наружу на глубину откоса. Рисуются до стены:
-   стена закрывает то, чего через проём не видно. */
+/* Откосы проёма (и стекло окна) — за плоскостью стены, наружу на глубину откоса. Рисуются до стены и
+   подрезаются по проёму на экране: стена тонкая, и под острым углом откос иначе вылез бы за её край —
+   поверх соседней стены, хотя на деле его закрывает толща стены. */
 static void add_jambs(FaceList *faces, TlProject *project, const TlWallHole *hole, const Mapper *mapper, TlVec2 out)
 {
     double depth = hole->reveal > 0 ? hole->reveal : JAMB_DEPTH;
@@ -331,12 +334,15 @@ static void add_jambs(FaceList *faces, TlProject *project, const TlWallHole *hol
     TlVec2 a = tl_vec2_add(mapper->start, tl_vec2_scale(mapper->direction, left));
     TlVec2 b = tl_vec2_add(mapper->start, tl_vec2_scale(mapper->direction, right));
     TlVec2 a2 = tl_vec2_add(a, tl_vec2_scale(out, depth)), b2 = tl_vec2_add(b, tl_vec2_scale(out, depth));
-    bool window = hole->opening < project->openings.count &&
+    bool is_window = hole->opening < project->openings.count &&
                   project->openings.items[hole->opening]->kind == TL_OPENING_WINDOW;
-    if (window) {
+    const TlVec3 window[4] = {plan_point(a, bottom), plan_point(b, bottom), plan_point(b, top), plan_point(a, top)};
+    if (is_window) {
         Face glass = face_new(GLASS, EDGE, EDGE_STROKE_PX);
         const TlVec3 pane[4] = {plan_point(a2, bottom), plan_point(b2, bottom), plan_point(b2, top), plan_point(a2, top)};
         face_add_points(&glass, pane, 4);
+        for (int k = 0; k < 4; k++)
+            points3_push(&glass.window, window[k]);
         face_list_push(faces, glass);
     }
     const TlVec3 sides[4][4] = {
@@ -352,6 +358,8 @@ static void add_jambs(FaceList *faces, TlProject *project, const TlWallHole *hol
         for (int c = 0; c < 3; c++)
             jamb.rgb[c] *= i == 3 ? 1.0 : i == 2 ? 0.86 : 0.93;
         face_add_points(&jamb, sides[i], 4);
+        for (int k = 0; k < 4; k++)
+            points3_push(&jamb.window, window[k]);
         face_list_push(faces, jamb);
     }
 }
@@ -613,6 +621,29 @@ static TlPolygon project_contour(const Eye *eye, const Points3 *contour)
     return screen;
 }
 
+/* Выпуклый многоугольник clip отсекает subject (Сазерленд — Ходжман); обход clip — любой. */
+static TlPolygon clip_convex(const TlPolygon *subject, const TlPolygon *clip)
+{
+    TlPolygon result = tl_polygon_copy(subject);
+    double turn = tl_polygon_signed_area(clip) >= 0 ? 1 : -1;
+    for (size_t e = 0; e < clip->count && result.count; e++) {
+        TlVec2 a = clip->items[e], b = clip->items[(e + 1) % clip->count];
+        TlPolygon input = result;
+        result = (TlPolygon){0};
+        for (size_t i = 0; i < input.count; i++) {
+            TlVec2 p = input.items[i], q = input.items[(i + 1) % input.count];
+            double dp = turn * tl_vec2_cross(tl_vec2_sub(b, a), tl_vec2_sub(p, a));
+            double dq = turn * tl_vec2_cross(tl_vec2_sub(b, a), tl_vec2_sub(q, a));
+            if (dp >= 0)
+                tl_polygon_push(&result, p);
+            if ((dp >= 0) != (dq >= 0))
+                tl_polygon_push(&result, tl_vec2_lerp(p, q, dp / (dp - dq)));
+        }
+        tl_polygon_free(&input);
+    }
+    return result;
+}
+
 static void hex_color(char out[8], const double rgb[3], double shade)
 {
     int c[3];
@@ -837,13 +868,20 @@ TlPaintList tl_room3d_paint(TlProject *project, TlSpace *space, TlCamera *camera
         for (size_t f = 0; f < group->faces.count; f++) {
             const Face *face = &group->faces.items[f];
             TlPaint paint = {.stroke_width = face->stroked ? face->stroke_width : 0};
+            TlPolygon window = face->window.count ? project_contour(&eye, &face->window) : (TlPolygon){0};
             for (size_t c = 0; c < face->contours.count; c++) {
                 TlPolygon screen = project_contour(&eye, &face->contours.items[c]);
+                if (face->window.count) {
+                    TlPolygon seen = clip_convex(&screen, &window);
+                    tl_polygon_free(&screen);
+                    screen = seen;
+                }
                 if (screen.count >= 3)
                     tl_polygon_list_push(&paint.contours, screen);
                 else
                     tl_polygon_free(&screen);
             }
+            tl_polygon_free(&window);
             if (!paint.contours.count)
                 continue;
             hex_color(paint.fill, face->rgb, shade);

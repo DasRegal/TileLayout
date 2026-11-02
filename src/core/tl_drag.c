@@ -61,6 +61,13 @@ static bool house_locked(TlProject *project, const TlOutline *house)
 
 /* ---- начало ----------------------------------------------------------------- */
 
+/* Сетка плитки: участка со своей плиткой или комнаты (у общего пола — источника). */
+static TlTileSettings *dragged_tile(TlDrag *drag)
+{
+    TlSpace *space = drag->target.space;
+    return drag->target.index > 0 ? &space->areas.items[drag->target.index - 1].zone.tile : tl_space_effective_tile(space);
+}
+
 bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2 start)
 {
     *drag = (TlDrag){.target = target, .start = start};
@@ -132,7 +139,9 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
         drag->measures = tl_measure_anchors_remember(project);
         return true;
     case TL_DRAG_TILES: {
-        const TlTileSettings *tile = tl_space_effective_tile(target.space);
+        size_t area = tl_space_area_of_region(target.space, tl_space_region_at(target.space, start));
+        drag->target.index = area != SIZE_MAX && target.space->areas.items[area].tiled ? (int)area + 1 : 0;
+        const TlTileSettings *tile = dragged_tile(drag);
         drag->original_offset_x = tile->offset_x;
         drag->original_offset_y = tile->offset_y;
         return true;
@@ -192,7 +201,7 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
 /* Сетка плитки: сдвиг мыши — в осях раскладки, целыми мм; к одному шагу сетки. */
 static void drag_tiles(TlDrag *drag, TlVec2 delta, bool free)
 {
-    TlTileSettings *tile = tl_space_effective_tile(drag->target.space);
+    TlTileSettings *tile = dragged_tile(drag);
     double radians = tile->rotation_degrees * TL_PI / 180;
     double along = delta.x * cos(radians) + delta.y * sin(radians);
     double across = -delta.x * sin(radians) + delta.y * cos(radians);

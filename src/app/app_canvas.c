@@ -686,8 +686,11 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer dat
 
 static void on_document_changed(AppDocument *document, unsigned changes, void *data)
 {
+    AppCanvas *canvas = data;
+    if (changes & APP_CHANGED_MODEL) /* предмет под мышью мог уйти (удалили дом с ним) — найдётся при движении */
+        canvas->hover = (AppSelection){0};
     if (changes & (APP_CHANGED_MODEL | APP_CHANGED_SELECTION | APP_CHANGED_VIEW))
-        app_canvas_redraw(data);
+        app_canvas_redraw(canvas);
 }
 
 AppCanvas *app_canvas_new(AppDocument *document)

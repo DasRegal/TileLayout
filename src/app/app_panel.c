@@ -896,6 +896,12 @@ static void on_walls_enabled(GtkToggleButton *check, AppPanel *panel)
     commit_walls(panel, "walls_enabled", gtk_toggle_button_get_active(check));
 }
 
+static void on_open_3d(GtkButton *button, AppPanel *panel)
+{
+    if (panel->actions.open_3d)
+        panel->actions.open_3d(panel->actions.user_data);
+}
+
 static void on_open_walls(GtkButton *button, AppPanel *panel)
 {
     if (panel->actions.open_walls)
@@ -926,7 +932,11 @@ static void build_walls(AppPanel *panel, GtkWidget *box)
     app_section_row(s, "Облицовка до", panel->walls_height);
     GtkWidget *open = app_icon_button_new("walls", "Развёртка стен");
     gtk_widget_set_tooltip_text(open, "Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)");
-    panel->walls_open = connect_button(open, G_CALLBACK(on_open_walls), panel);
+    GtkWidget *volume = gtk_button_new_with_label("3D");
+    gtk_widget_set_tooltip_text(volume, "Комната в объёме: пол, стены, плитка, предметы");
+    panel->walls_open = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6); /* «Развёртка стен» и «3D» — рядом */
+    gtk_box_pack_start(GTK_BOX(panel->walls_open), connect_button(open, G_CALLBACK(on_open_walls), panel), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(panel->walls_open), connect_button(volume, G_CALLBACK(on_open_3d), panel), FALSE, FALSE, 0);
     app_section_wide(s, panel->walls_open);
     panel->walls_floor = floor_button(panel, "Швы всех стен как у пола", true);
     app_section_wide(s, panel->walls_floor);

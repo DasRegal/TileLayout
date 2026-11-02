@@ -460,7 +460,7 @@ const OBJECTS = {
  * actions: {setField(key, value), chooseTile(), colorOnly(), rename(name),
  *           align(mode), setSetting(key, value), setObjectField(key, value), deleteObject(),
  *           setFloorSource(id), swapTile(), toggleMulti(), setZoneField(zone, key, value), chooseZoneTile(zone),
- *           setWalls(key, value), openWalls()}.
+ *           setWalls(key, value), openWalls(), open3d()}.
  */
 export class Panel {
   constructor(root, actions) {
@@ -716,6 +716,11 @@ export class Panel {
     open.textContent = 'Развёртка стен';
     open.title = 'Вкладка комнаты: стены в ряд, как видно из комнаты (или двойной щелчок по комнате)';
     open.addEventListener('click', () => this.actions.openWalls());
+    const volume = document.createElement('button');
+    volume.type = 'button';
+    volume.textContent = '3D';
+    volume.title = 'Комната в объёме: пол, стены, плитка, предметы';
+    volume.addEventListener('click', () => this.actions.open3d());
     const floor = document.createElement('button');
     floor.type = 'button';
     floor.textContent = 'Швы всех стен как у пола';
@@ -723,11 +728,12 @@ export class Panel {
     floor.addEventListener('click', () => this.actions.wallAction('floor_all'));
     const buttons = document.createElement('div');
     buttons.className = 'button-row';
-    buttons.append(open, floor);
+    buttons.append(open, volume, floor);
     block.append(buttons);
     this.wallsHint = hint('Щелчок по стене — её плитка; Ctrl + перетаскивание — сдвиг плитки. «Линейка» и «Труба» ставятся прямо на стену. Под стенами — пол у них.');
     block.append(this.wallsHint);
     this.wallsOpen = open;
+    this.wallsVolume = volume;
     this.wallsFloor = floor;
     return block;
   }
@@ -1030,6 +1036,7 @@ export class Panel {
     this.tileEnabledRow.hidden = walls;
     this.texture.hidden = walls;
     this.wallsOpen.hidden = walls;
+    this.wallsVolume.hidden = walls;
     this.wallsFloor.hidden = !walls;
     this.wallsHint.hidden = !walls;
     this.multi.hidden = walls;

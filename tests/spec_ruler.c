@@ -368,5 +368,33 @@ void spec_ruler(void)
             EXPECT_NEAR(ruler->start.x, 0, 1e-9);
             tl_project_free(project);
         }
+        IT("удалили дом — уходят и трубы, предметы, трапы, линейки и швы в нём; соседний дом не трогается")
+        {
+            TlProject *project = tl_project_new();
+            const TlVec2 first[] = {{0, 0}, {4000, 0}, {4000, 3000}, {0, 3000}};
+            const TlVec2 second[] = {{6000, 0}, {9000, 0}, {9000, 3000}, {6000, 3000}};
+            tl_project_add_outline(project, tl_outline_new(first, 4, 200));
+            tl_project_add_outline(project, tl_outline_new(second, 4, 200));
+            tl_project_update_spaces(project);
+            tl_project_add_pipe(project, tl_pipe_new(tl_vec2(1000, 1000), 110));
+            tl_project_add_pipe(project, tl_pipe_new(tl_vec2(7000, 1000), 110));
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(0, 1000), tl_vec2(945, 1000)));
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(-200, 0), tl_vec2(-200, 3000))); /* снаружи по стене */
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(4200, 500), tl_vec2(6000, 500))); /* между домами */
+            tl_project_add_ruler(project, tl_ruler_new(tl_vec2(6000, 1000), tl_vec2(6945, 1000)));
+            tl_project_add_expansion_joint(project, tl_expansion_joint_new(tl_vec2(2000, 0), tl_vec2(2000, 3000), 10));
+            tl_fixture_list_push(&project->fixtures, tl_fixture_default(TL_FIXTURE_CABINET, tl_vec2(3000, 2000)));
+            tl_drain_list_push(&project->drains, tl_drain_default(TL_DRAIN_POINT, tl_vec2(8000, 2000)));
+            tl_project_delete_outline(project, project->outlines.items[0]);
+            EXPECT_INT(project->outlines.count, 1);
+            EXPECT_INT(project->pipes.count, 1);
+            EXPECT_NEAR(project->pipes.items[0]->center.x, 7000, 1e-9);
+            EXPECT_INT(project->rulers.count, 2);
+            EXPECT_NEAR(project->rulers.items[0]->start.x, 4200, 1e-9);
+            EXPECT_INT(project->expansion_joints.count, 0);
+            EXPECT_INT(project->fixtures.count, 0);
+            EXPECT_INT(project->drains.count, 1);
+            tl_project_free(project);
+        }
     }
 }

@@ -41,7 +41,9 @@ void app_select_begin_tiles_drag(AppCanvas *canvas, const AppPointer *pointer)
     TlSpace *space = tl_project_space_at(canvas->document->project, pointer->world);
     if (!space)
         return;
-    app_document_select(canvas->document, (AppSelection){.kind = APP_SELECT_SPACE, .space = space});
+    size_t region = space->regions.count > 1 ? tl_space_region_at(space, pointer->world) : SIZE_MAX;
+    app_document_select(canvas->document, (AppSelection){.kind = APP_SELECT_SPACE, .space = space,
+                                                         .index = region == SIZE_MAX ? 0 : (int)region + 1});
     canvas->drag = (AppDrag){.start = pointer->world};
     if (tl_drag_begin(&canvas->drag.geometry, canvas->document->project,
                       (TlDragTarget){.kind = TL_DRAG_TILES, .space = space}, pointer->world))

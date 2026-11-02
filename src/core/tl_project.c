@@ -196,8 +196,41 @@ static bool partition_inside_outline(const TlPartition *partition, const TlOutli
            tl_outline_contains_or_touches(outline, partition->end);
 }
 
+/* Точка в доме вместе со стенами: внутри наружного контура или на нём. */
+static bool in_house(const TlPolygon *outer, TlVec2 point)
+{
+    return tl_polygon_contains(outer, point) || tl_polygon_on_boundary(outer, point, 1.0);
+}
+
+/* Что стоит в доме — трубы, предметы, трапы, линейки и швы (оба конца в доме), — уходит с ним. */
+static void delete_contents(TlProject *project, const TlOutline *outline)
+{
+    TlPolygon outer = tl_outline_outer(outline);
+    for (size_t i = project->pipes.count; i-- > 0;)
+        if (in_house(&outer, project->pipes.items[i]->center))
+            tl_project_delete_pipe(project, project->pipes.items[i]);
+    for (size_t i = project->rulers.count; i-- > 0;) {
+        const TlRuler *ruler = project->rulers.items[i];
+        if (in_house(&outer, ruler->start) && in_house(&outer, ruler->end))
+            tl_project_delete_ruler(project, project->rulers.items[i]);
+    }
+    for (size_t i = project->expansion_joints.count; i-- > 0;) {
+        const TlExpansionJoint *joint = project->expansion_joints.items[i];
+        if (in_house(&outer, joint->start) && in_house(&outer, joint->end))
+            tl_project_delete_expansion_joint(project, project->expansion_joints.items[i]);
+    }
+    for (size_t i = project->fixtures.count; i-- > 0;)
+        if (in_house(&outer, project->fixtures.items[i].center))
+            tl_fixture_list_remove_at(&project->fixtures, i);
+    for (size_t i = project->drains.count; i-- > 0;)
+        if (in_house(&outer, project->drains.items[i].center))
+            tl_drain_list_remove_at(&project->drains, i);
+    tl_polygon_free(&outer);
+}
+
 void tl_project_delete_outline(TlProject *project, TlOutline *outline)
 {
+    delete_contents(project, outline);
     for (size_t i = project->partitions.count; i-- > 0;)
         if (partition_inside_outline(project->partitions.items[i], outline))
             tl_project_delete_partition(project, project->partitions.items[i]);

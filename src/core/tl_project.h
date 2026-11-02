@@ -129,7 +129,8 @@ void tl_project_delete_opening(TlProject *project, TlOpening *opening);
 void tl_project_delete_ruler(TlProject *project, TlRuler *ruler);
 void tl_project_delete_all_rulers(TlProject *project);
 void tl_project_delete_expansion_joint(TlProject *project, TlExpansionJoint *joint);
-/* Удаляет дом вместе с перегородками внутри и осиротевшими проёмами. */
+/* Удаляет дом вместе с перегородками внутри, осиротевшими проёмами и всем, что в нём стоит:
+   трубами, предметами, трапами, линейками и швами (у линеек и швов — оба конца в доме). */
 void tl_project_delete_outline(TlProject *project, TlOutline *outline);
 
 /* ---- добавление на план (tl_project_commands.c) ---------------------------- */

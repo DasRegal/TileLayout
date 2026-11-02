@@ -106,7 +106,8 @@ const panel = new Panel(document.getElementById('panel'), {
   setAreaCovering: (covering) => editRoom(() => state.core.setArea(selectedSpace(), selectedRegion(), covering)),
   renameArea: (name) => editRoom(() => state.core.setArea(selectedSpace(), selectedRegion(), '', name)),
   setWalls: (key, value) => editRoom(() => state.core.setWalls(selectedSpaces(), { [key]: value })),
-  openWalls: () => openRoomTab(selectedSpace()),
+  openWalls: () => openRoom(selectedSpace(), false),
+  open3d: () => openRoom(selectedSpace(), true),
   addPanno: () => addPanno(),
   /** «Швы как у пола» (у выделенной стены или у всех), «От левого угла». */
   wallAction: (action) => {
@@ -653,6 +654,9 @@ function bindRoom3d() {
   for (const button of document.querySelectorAll('#mode-switch [data-mode]')) {
     button.addEventListener('click', () => setVolume(button.dataset.mode === 'volume'));
   }
+  for (const button of document.querySelectorAll('#room-open [data-open]')) {
+    button.addEventListener('click', () => openRoom(selectedSpace(), button.dataset.open === 'volume'));
+  }
   new ResizeObserver(() => requestDraw()).observe(room3dCanvas);
 }
 
@@ -694,6 +698,21 @@ function openRoomTab(id) {
   showTab(id);
 }
 
+/** Комната — сразу развёрткой стен или в 3D (кнопки на плане и в панели). */
+function openRoom(id, volumeOn) {
+  if (!id) return;
+  openRoomTab(id);
+  setVolume(volumeOn);
+}
+
+/** Плашка «Комната: Стены | 3D» на плане — когда выбрана одна комната. */
+function syncRoomOpen() {
+  const id = state.tab ? 0 : selectedSpace();
+  const box = document.getElementById('room-open');
+  box.hidden = !id || selectedSpaces().length > 1;
+  if (!box.hidden) document.getElementById('room-open-name').textContent = spaceName(id);
+}
+
 function closeRoomTab(id) {
   state.tabs = state.tabs.filter((tab) => tab !== id);
   if (state.tab === id) showTab(0);
@@ -711,6 +730,7 @@ function showCanvases() {
     button.setAttribute('aria-pressed', String((button.dataset.mode === 'volume') === volume.on));
   }
   document.querySelector('.thanks').hidden = walls;
+  syncRoomOpen();
 }
 
 /** Перейти на вкладку: у помещения — выделить его комнату (панель — её настройки и стены). */
@@ -908,6 +928,7 @@ function refresh() {
   if (state.selection && state.selection.kind !== 'space' && !state.object) state.selection = null;
   panel.show(selectedSpaces().map((id) => core.spaceTile(id)), catalogs, state.multi, Boolean(state.tab), selectedRegion());
   panel.showObject(state.object);
+  syncRoomOpen();
   panel.showTool(tools.tool, state.settings, TOOL_HINTS[tools.tool]);
   panel.showUnderlay(state.scene.underlay);
   document.getElementById('sheet-title').textContent = sheetTitle();
@@ -1325,7 +1346,8 @@ function startDrag(world, event) {
   let hit = handle ? handle.grab : state.core.pick(world[0], world[1], PICK_PX / view.scale);
   if (tools.tool === 'tiles') { /* «Плитка»: только сетка комнаты под пальцем, стены и предметы — нет */
     const space = state.core.spaceAt(world[0], world[1]);
-    hit = space ? { kind: 'space', space } : { kind: 'none' };
+    const floor = state.core.pick(world[0], world[1], 0); // часть пола под пальцем — её плитка и сдвинется
+    hit = space ? (floor.kind === 'space' && floor.space === space ? floor : { kind: 'space', space }) : { kind: 'none' };
   }
   let target = DRAGGABLE.has(hit.kind) ? hit : null;
   if (hit.kind === 'space') {

@@ -12,6 +12,7 @@ typedef struct AppPanelActions {
     void (*add_house)(void *user_data);
     void (*print)(void *user_data);
     void (*open_walls)(void *user_data); /* вкладка стен выделенной комнаты */
+    void (*open_3d)(void *user_data);    /* она же — сразу в 3D */
     void *user_data;
 } AppPanelActions;
 
