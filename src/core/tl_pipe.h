@@ -29,6 +29,10 @@ TlPipe *tl_pipe_new(TlVec2 center, double diameter);
 void tl_pipe_free(TlPipe *pipe);
 TlCircle tl_pipe_circle(const TlPipe *pipe);
 
+/* Точки трубы для линеек: центр, верх, низ, лево, право (край отверстия по осям плана). */
+#define TL_PIPE_POINT_COUNT 5
+void tl_pipe_points(const TlPipe *pipe, TlVec2 points[TL_PIPE_POINT_COUNT]);
+
 /* Круг задевает прямоугольник (не только касается). */
 bool tl_circle_touches_rect(TlCircle circle, TlRect rect);
 

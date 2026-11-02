@@ -24,8 +24,8 @@ void app_render_room3d(cairo_t *cr, TlProject *project, TlSpace *space, TlCamera
 {
     cairo_pattern_t *sky = cairo_pattern_create_linear(0, 0, 0, height); /* фон: светлее к низу */
     bool dark = app_draw_is_dark();
-    cairo_pattern_add_color_stop_rgb(sky, 0, dark ? 0.10 : 0.88, dark ? 0.11 : 0.9, dark ? 0.13 : 0.93);
-    cairo_pattern_add_color_stop_rgb(sky, 1, dark ? 0.16 : 0.97, dark ? 0.18 : 0.97, dark ? 0.21 : 0.98);
+    cairo_pattern_add_color_stop_rgb(sky, 0, dark ? 0.13 : 0.88, dark ? 0.13 : 0.9, dark ? 0.17 : 0.93);
+    cairo_pattern_add_color_stop_rgb(sky, 1, dark ? 0.21 : 0.97, dark ? 0.22 : 0.97, dark ? 0.29 : 0.98);
     cairo_set_source(cr, sky);
     cairo_paint(cr);
     cairo_pattern_destroy(sky);

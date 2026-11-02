@@ -570,11 +570,73 @@ static bool *view_flag(AppWindow *self, size_t index)
     return (bool *)((char *)&self->document->view + VIEW_TOGGLES[index].offset);
 }
 
-/* Тёмная тема: окна GTK (Adwaita тёмная) и план. */
+/* Тёмная тема поверх Adwaita тёмной: серо-фиолетовая, как Dracula, а не чёрная. */
+static const char DARK_CSS[] =
+    "window.background, .background, dialog, messagedialog .dialog-vbox { background-color: #282a36; color: #f8f8f2; }\n"
+    "headerbar, menubar, toolbar, .toolbar, .titlebar, notebook > header, statusbar, actionbar {\n"
+    "  background-image: none; background-color: #21222c; border-color: #191a21; box-shadow: none; color: #f8f8f2; }\n"
+    "notebook > header tab { color: #a9aec8; }\n"
+    "notebook > header tab:checked { color: #f8f8f2; box-shadow: inset 0 -3px #bd93f9; }\n"
+    "notebook > stack:not(:only-child), notebook { background-color: #282a36; border-color: #191a21; }\n"
+    "menu, .menu, .context-menu, popover, popover.background, tooltip.background {\n"
+    "  background-color: #21222c; border-color: #44475a; color: #f8f8f2; }\n"
+    "menuitem:hover, modelbutton:hover { background-color: #44475a; color: #f8f8f2; }\n"
+    "menuitem:disabled, label:disabled { color: #6272a4; }\n"
+    "entry, spinbutton:not(.vertical), textview text, treeview.view, iconview, list, .view, combobox window {\n"
+    "  background-image: none; background-color: #1e1f29; color: #f8f8f2; border-color: #44475a; box-shadow: none; }\n"
+    "entry:focus, spinbutton:focus { border-color: #bd93f9; }\n"
+    "treeview.view header button { background-color: #21222c; color: #a9aec8; border-color: #44475a; }\n"
+    ".view:selected, treeview.view:selected, list row:selected, iconview:selected, entry selection, textview text selection {\n"
+    "  background-color: #44475a; color: #f8f8f2; }\n"
+    "list row:hover { background-color: #2f3140; }\n"
+    "button, spinbutton button, combobox button {\n"
+    "  background-image: none; background-color: #343746; border-color: #191a21; color: #f8f8f2; box-shadow: none; text-shadow: none; }\n"
+    "button:hover { background-color: #3d4052; }\n"
+    "button:active, button:checked { background-color: #4d4f66; }\n"
+    "button:disabled { background-color: #2b2d3a; color: #6272a4; }\n"
+    "button.flat, toolbutton > button, notebook > header button, headerbar button.titlebutton { background-color: transparent; border-color: transparent; }\n"
+    "button.flat:hover, toolbutton > button:hover { background-color: #3d4052; }\n"
+    "toolbutton > button:checked { background-color: #44475a; }\n"
+    "button.suggested-action { background-color: #bd93f9; border-color: #9a72d8; color: #21222c; }\n"
+    "button.destructive-action { background-color: #ff5555; border-color: #c43b3b; color: #21222c; }\n"
+    "check:checked, radio:checked { background-image: none; background-color: #bd93f9; border-color: #9a72d8; color: #21222c; }\n"
+    "check, radio { background-image: none; background-color: #1e1f29; border-color: #6272a4; }\n"
+    "switch:checked { background-color: #bd93f9; }\n"
+    "scale highlight, progressbar progress, levelbar block.filled { background-image: none; background-color: #bd93f9; border-color: #bd93f9; }\n"
+    "scrollbar { background-color: #21222c; border-color: #191a21; }\n"
+    "scrollbar slider { background-color: #4d5066; }\n"
+    "scrollbar slider:hover { background-color: #6272a4; }\n"
+    "separator, paned > separator { background-color: #44475a; }\n"
+    "frame > border, .frame, scrolledwindow.frame { border-color: #44475a; }\n"
+    "link, *:link { color: #8be9fd; }\n"
+    "#tools-rail { background-color: #21222c; }";
+
+/* Тёмная тема: окна GTK (Adwaita тёмная — она есть в любой GTK — и цвета Dracula поверх) и план.
+   Своя тема системы (например, Mint-Y) тёмного варианта может не иметь — поэтому на тёмную время
+   включаем Adwaita, а на светлую возвращаем прежнюю. */
 static void apply_theme(AppWindow *self)
 {
+    static GtkCssProvider *dark_css;
+    static char *light_theme;
+    static bool installed;
+    GtkSettings *settings = gtk_settings_get_default();
+    GdkScreen *screen = gdk_screen_get_default();
     bool dark = self->document->view.dark;
-    g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", dark, NULL);
+    if (!dark_css) {
+        g_object_get(settings, "gtk-theme-name", &light_theme, NULL);
+        dark_css = gtk_css_provider_new();
+        gtk_css_provider_load_from_data(dark_css, DARK_CSS, -1, NULL);
+    }
+    g_object_set(settings, "gtk-theme-name", dark || !light_theme ? "Adwaita" : light_theme,
+                 "gtk-application-prefer-dark-theme", dark, NULL);
+    if (dark != installed) {
+        if (dark)
+            gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(dark_css),
+                                                      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        else
+            gtk_style_context_remove_provider_for_screen(screen, GTK_STYLE_PROVIDER(dark_css));
+        installed = dark;
+    }
     app_draw_set_dark(dark);
 }
 

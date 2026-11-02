@@ -107,7 +107,7 @@ static void draw_volume(RoomPage *page, cairo_t *cr, TlSpace *space)
         page->camera_ready = true;
     }
     app_render_room3d(cr, page->tabs->document->project, space, &page->camera, width, height);
-    AppTextStyle style = {10, false, app_color_hex(app_theme("#5d6470", "#aab3c0")), APP_TRANSPARENT};
+    AppTextStyle style = {10, false, app_color_hex(app_theme("#5d6470", "#a9aec8")), APP_TRANSPARENT};
     app_text_centered(cr, "Тяните — повернуть; правой кнопкой или с Shift — сдвинуть; колесо или два пальца — ближе и дальше; двойной щелчок — как было", &style,
                       tl_vec2(width / 2, height - 14), 0);
 }
@@ -135,7 +135,7 @@ static gboolean on_draw(GtkWidget *widget, cairo_t *cr, RoomPage *page)
     app_render_walls(cr, page->tabs->document->project, space, &page->view, &options, &marks);
     if (page->ruler_started) { /* новая линейка — от первого конца к курсору */
         TlRuler preview = {tl_space_wall_to_development(space, page->ruler_wall, page->ruler_start), page->hover, ""};
-        app_render_ruler(cr, &page->view, &preview, app_color_hex("#2563eb"), 1.5);
+        app_render_ruler(cr, &page->view, &preview, app_color_hex("#2563eb"), 1.5, APP_RULER_LABEL_ON_SCREEN);
     }
     return TRUE;
 }

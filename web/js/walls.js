@@ -22,7 +22,7 @@ const LIGHT = {
 };
 
 /* Тёмная тема: фон и подписи — тёмный и светлые; стены, плитка, проёмы — как есть. */
-const DARK = { ...LIGHT, text: '#e6e9ed', muted: '#aab3c0', background: '#15181c', dim: '#8fb4ff', finish: '#e2b35a', selection: '#64a0ff' };
+const DARK = { ...LIGHT, text: '#f8f8f2', muted: '#a9aec8', background: '#2d2f3d', dim: '#8be9fd', finish: '#ffb86c', selection: '#bd93f9' };
 
 let COLOR = LIGHT; // палитра текущей отрисовки
 
@@ -130,12 +130,12 @@ export function drawRoomWalls(ctx, data, view, options) {
       const hit = options.hits && !options.printing // длину линейки на стене можно ввести числом
         ? (box) => options.hits.push({ ...box, target: { kind: 'wall_ruler', index: i, value: ruler.length, start: ruler.start, end: ruler.end } })
         : null;
-      drawRuler(ctx, { line: [...ruler.a, ...ruler.b], length: ruler.length }, view, i === marks.ruler ? COLOR.selection : undefined, hit);
+      drawRuler(ctx, { line: [...ruler.a, ...ruler.b], length: ruler.length }, view, i === marks.ruler ? COLOR.selection : undefined, hit, i === marks.ruler);
     }
   });
   if (options.preview) {
     const [a, b] = options.preview;
-    drawRuler(ctx, { line: [...a, ...b], length: Math.round(Math.hypot(b[0] - a[0], b[1] - a[1])) }, view, COLOR.selection);
+    drawRuler(ctx, { line: [...a, ...b], length: Math.round(Math.hypot(b[0] - a[0], b[1] - a[1])) }, view, COLOR.selection, null, true);
   }
   drawHoleLabels(ctx, data, view);
   for (const stairs of data.stairs || []) { // подпись над лестницей

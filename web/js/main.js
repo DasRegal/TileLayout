@@ -463,6 +463,7 @@ function draw() {
   drawScene(ctx, state.scene, view, {
     hits: dimensionHits.plan,
     selected: state.selection?.kind === 'panno' ? [] : selectedSpaces(), // у панно — его рамка
+    activeRuler: state.selection?.kind === 'ruler' ? state.selection.index : -1, // её подпись — всегда на экране
     dark: isDark(),
     highlight: highlightOf(state.object),
     image: (ref) => catalogs.image(ref),
@@ -490,8 +491,8 @@ function drawRoom3d(dpr) {
   const c = room3dCtx;
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const sky = c.createLinearGradient(0, 0, 0, box.height);
-  sky.addColorStop(0, isDark() ? '#1a1d22' : '#e0e5ed');
-  sky.addColorStop(1, isDark() ? '#2a2f36' : '#f7f7fa');
+  sky.addColorStop(0, isDark() ? '#21222c' : '#e0e5ed');
+  sky.addColorStop(1, isDark() ? '#363949' : '#f7f7fa');
   c.fillStyle = sky;
   c.fillRect(0, 0, box.width, box.height);
   if (box.width <= 0 || box.height <= 0) return;
@@ -1519,17 +1520,16 @@ function restoreDraft() {
   say('Вернули ваш проект.');
 }
 
-/** Тёмная тема: выбрана кнопкой, а пока не выбирали — как в системе. */
-const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
+/** Тёмная тема — по умолчанию; светлую выбирают кнопкой. */
 
 function isDark() {
-  return state.settings.theme ? state.settings.theme === 'dark' : Boolean(systemDark?.matches);
+  return state.settings.theme !== 'light';
 }
 
 function applyTheme() {
   const dark = isDark();
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#1c1f24' : '#1f5f6b');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#282a36' : '#1f5f6b');
   const button = document.getElementById('theme-toggle');
   const title = dark ? 'Светлая тема' : 'Тёмная тема';
   button.title = title;
@@ -1642,7 +1642,22 @@ function addHouse() {
 
 const TOOL_KEYS = { v: 'select', t: 'tiles', r: 'rect', c: 'contour', p: 'partition', o: 'opening', j: 'joint', h: 'pipe', l: 'ruler', d: 'divider', b: 'fixture', g: 'drain' };
 
+/** Закрыть открытые меню «Вид» и «Экспорт», кроме того, где лежит inside. */
+function closeMenus(inside) {
+  let closed = false;
+  for (const menu of document.querySelectorAll('details.view-menu[open]')) {
+    if (inside && menu.contains(inside)) continue;
+    menu.removeAttribute('open');
+    closed = true;
+  }
+  return closed;
+}
+
 function onKey(event) {
+  if (event.key === 'Escape' && closeMenus()) {
+    event.preventDefault();
+    return;
+  }
   const typing = event.target.matches('input, select, textarea');
   if (document.querySelector('dialog[open]')) return;
   if (event.ctrlKey || event.metaKey) {
@@ -1692,6 +1707,7 @@ function bindCommands() {
     button.addEventListener('click', () => setTool(button.dataset.tool));
   }
   document.addEventListener('keydown', onKey);
+  document.addEventListener('pointerdown', (event) => closeMenus(event.target));
   attachViewControls(canvas, view, {
     onChange: requestDraw,
     onClick: (world, event) => {
@@ -1791,9 +1807,6 @@ function bindCommands() {
 async function start() {
   bindCommands();
   applyTheme();
-  systemDark?.addEventListener?.('change', () => {
-    if (!state.settings.theme) applyTheme();
-  });
   try {
     [state.core] = await Promise.all([loadCore(), catalogs.load()]);
   } catch (error) {

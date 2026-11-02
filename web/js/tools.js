@@ -350,10 +350,31 @@ function cross(ctx, [x, y]) {
   ctx.stroke();
 }
 
-/** Подпись размера у середины отрезка. */
+/** Середина видимой части отрезка a→b (px экрана) — чтобы размер, который сейчас правят, не
+ *  уходил за край. Отрезок целиком за краем — ближайшая к середине точка экрана. margin — отступ. */
+export function visibleMidpoint(ctx, a, b, margin = 24) {
+  const dpr = ctx.getTransform().a || 1;
+  const right = ctx.canvas.width / dpr - margin;
+  const bottom = ctx.canvas.height / dpr - margin;
+  const d = [b[0] - a[0], b[1] - a[1]];
+  let t0 = 0;
+  let t1 = 1;
+  for (const [p, q] of [[-d[0], a[0] - margin], [d[0], right - a[0]], [-d[1], a[1] - margin], [d[1], bottom - a[1]]]) {
+    if (p === 0) {
+      if (q < 0) t1 = -1; // параллельно краю и снаружи
+    } else if (p < 0) t0 = Math.max(t0, q / p);
+    else t1 = Math.min(t1, q / p);
+  }
+  const t = t0 <= t1 ? (t0 + t1) / 2 : 0.5;
+  const clamp = (v, low, high) => Math.min(Math.max(v, low), Math.max(low, high));
+  return [clamp(a[0] + d[0] * t, margin, right), clamp(a[1] + d[1] * t, margin, bottom)];
+}
+
+/** Подпись размера у середины отрезка (его видимой части): всегда на экране. */
 function label(ctx, text, a, b) {
-  const x = (a[0] + b[0]) / 2;
-  const y = (a[1] + b[1]) / 2 - 14;
+  const [mx, my] = visibleMidpoint(ctx, a, b, 30);
+  const x = mx;
+  const y = my - 14;
   ctx.font = '600 12px "Segoe UI", Roboto, Arial, sans-serif';
   const width = ctx.measureText(text).width + 10;
   ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';

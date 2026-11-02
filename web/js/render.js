@@ -2,7 +2,7 @@
 // пол с раскладкой, трубы, стены и перегородки одним силуэтом, проёмы, размеры,
 // подписи комнат. Сцена — от ядра (src/web/tl_web_scene.c), всё в мм.
 
-import { drawPipe } from './tools.js';
+import { drawPipe, visibleMidpoint } from './tools.js';
 
 const COLOR = {
   background: '#f4f5f7',
@@ -28,21 +28,21 @@ const COLOR = {
   labelText: '#1f2328',
 };
 
-/* Тёмная тема: фон, размеры и линейки светлые на тёмном; плитка, стены и предметы — как есть. */
+/* Тёмная тема (как Dracula): фон, размеры и линейки светлые на тёмном; плитка, стены и предметы — как есть. */
 const DARK = {
   ...COLOR,
-  background: '#15181c',
-  innerDim: '#8fb4ff',
-  outerDim: '#e2b35a',
-  openingDim: '#c7a4f3',
-  threshold: '#d08a5c',
-  selection: '#64a0ff',
-  ruler: '#b3bdc9',
-  joint: '#c9d1db',
-  dimBox: 'rgba(21, 24, 28, 0.86)',
-  labelBox: 'rgba(30, 34, 40, 0.92)',
-  labelEdge: 'rgba(200, 208, 218, 0.35)',
-  labelText: '#e6e9ed',
+  background: '#2d2f3d',
+  innerDim: '#8be9fd',
+  outerDim: '#ffb86c',
+  openingDim: '#ff79c6',
+  threshold: '#ffb86c',
+  selection: '#bd93f9',
+  ruler: '#c0c4da',
+  joint: '#d4d7e6',
+  dimBox: 'rgba(40, 42, 54, 0.88)',
+  labelBox: 'rgba(40, 42, 54, 0.92)',
+  labelEdge: 'rgba(189, 147, 249, 0.4)',
+  labelText: '#f8f8f2',
 };
 
 /* Ч/б печать: без заливок цветом, линии — чёрные. */
@@ -139,7 +139,8 @@ export function drawScene(ctx, scene, view, options) {
   for (const fixture of scene.fixtures || []) drawFixtureLabel(ctx, fixture, view);
   if (layers.rulers) {
     scene.rulers.forEach((ruler, index) => {
-      drawRuler(ctx, ruler, view, C.ruler, hit && ((box) => hit(box, { kind: 'ruler', index, value: ruler.length })));
+      drawRuler(ctx, ruler, view, C.ruler, hit && ((box) => hit(box, { kind: 'ruler', index, value: ruler.length })),
+        index === options.activeRuler);
     });
   }
   if (options.overlay) options.overlay(ctx);
@@ -637,8 +638,10 @@ function drawJoint(ctx, joint, px) {
   stroke(ctx, C.joint, px(1), [px(4), px(4)]);
 }
 
-/** Линейка: отрезок с засечками и длиной (в пикселях экрана). */
-export function drawRuler(ctx, ruler, view, color = C.ruler, hit = null) {
+/** Линейка: отрезок с засечками и длиной (в пикселях экрана). Подпись длиннее самой линейки на
+ *  экране (мелкий масштаб) не показывается — кроме линейки, которую правят (active): у неё подпись
+ *  всегда есть и не уходит за край экрана. */
+export function drawRuler(ctx, ruler, view, color = C.ruler, hit = null, active = false) {
   const a = view.toScreen(ruler.line[0], ruler.line[1]);
   const b = view.toScreen(ruler.line[2], ruler.line[3]);
   const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -652,18 +655,25 @@ export function drawRuler(ctx, ruler, view, color = C.ruler, hit = null) {
     ctx.lineTo(end[0] + normal[0] * 4, end[1] + normal[1] * 4);
   }
   stroke(ctx, color, 1);
-  const box = textAlong(ctx, ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length), a, b, normal, 9, color);
+  const text = ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length);
+  if (!active) {
+    ctx.font = `11.3px ${FONT}`;
+    if (ctx.measureText(text).width + 16 > length) return;
+  }
+  const box = textAlong(ctx, text, a, b, normal, 9, color, false, active);
   if (hit) hit(box);
 }
 
 // ---- подписи (в пикселях экрана) ---------------------------------------------------
 
-/** Текст вдоль отрезка a→b (px), не вверх ногами; offset — сдвиг по normal. */
-function textAlong(ctx, text, a, b, normal, offset, color, bold = false) {
+/** Текст вдоль отрезка a→b (px), не вверх ногами; offset — сдвиг по normal; onScreen — у середины
+ *  видимой части отрезка, не за краем экрана. */
+function textAlong(ctx, text, a, b, normal, offset, color, bold = false, onScreen = false) {
   let angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
   if (angle > Math.PI / 2 || angle < -Math.PI / 2) angle += Math.PI;
-  const x = (a[0] + b[0]) / 2 + normal[0] * offset;
-  const y = (a[1] + b[1]) / 2 + normal[1] * offset;
+  const [mx, my] = onScreen ? visibleMidpoint(ctx, a, b, 40) : [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const x = mx + normal[0] * offset;
+  const y = my + normal[1] * offset;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);

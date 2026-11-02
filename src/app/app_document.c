@@ -35,7 +35,7 @@ AppDocument *app_document_new(void)
         .keep_angles = true, .measure_magnet = true, .auto_align = true,
         .expansion_joint_gap = TL_EXPANSION_JOINT_DEFAULT_GAP, .divider_gap = TL_DIVIDER_DEFAULT_GAP, .pipe_diameter = TL_PIPE_DEFAULT_DIAMETER,
         .house_width = 6000, .house_height = 4000, .house_thickness = 200, .outline_thickness = 200};
-    document->view = (AppViewFlags){.tiles = true, .clips = true, .dims = true, .grid = true,
+    document->view = (AppViewFlags){.dark = true, .tiles = true, .clips = true, .dims = true, .grid = true,
                                     .expansion_joints = true};
     return document;
 }

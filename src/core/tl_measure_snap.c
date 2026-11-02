@@ -72,12 +72,17 @@ static void offer_wall_surfaces(SnapSearch *search, TlProject *project)
     for (size_t i = 0; i < bodies.count; i++)
         offer_contour(search, &bodies.items[i], TL_SNAP_WALL_EDGE);
     tl_polygon_list_free_all(&bodies);
-    for (size_t i = 0; i < project->openings.count; i++) {
-        TlPolygon cut;
-        if (!tl_project_opening_cut(project, project->openings.items[i], &cut))
-            continue;
-        offer_contour(search, &cut, TL_SNAP_WALL_EDGE);
-        tl_polygon_free(&cut);
+    for (size_t i = 0; i < project->openings.count; i++) { /* углы — на гранях стены, вырез шире её на запас */
+        const TlOpening *opening = project->openings.items[i];
+        TlVec2 from[2], to[2];
+        if (tl_project_opening_jambs(project, opening, from, to))
+            for (int side = 0; side < 2; side++) {
+                offer(search, from[side], TL_SNAP_CORNER);
+                offer(search, to[side], TL_SNAP_CORNER);
+                offer(search, tl_vec2_midpoint(from[side], to[side]), TL_SNAP_WALL_MIDDLE);
+                offer_segment(search, from[side], to[side], TL_SNAP_WALL_EDGE);
+                offer_segment(search, side ? to[0] : from[0], side ? to[1] : from[1], TL_SNAP_WALL_EDGE);
+            }
     }
 }
 
@@ -85,9 +90,18 @@ static const TlExpansionJoint *skipped_line;
 
 void tl_measure_snap_skip_line(const TlExpansionJoint *line) { skipped_line = line; }
 
-/* Деформационные швы и линии раздела: концы — точки, сами линии — линии. */
+/* Деформационные швы, линии раздела и стыки полов в проёмах: концы — точки, сами линии — линии. */
 static void offer_lines(SnapSearch *search, TlProject *project)
 {
+    for (size_t i = 0; i < project->openings.count; i++) {
+        TlVec2 from, to;
+        if (!tl_project_opening_threshold(project, project->openings.items[i], &from, &to))
+            continue;
+        offer(search, from, TL_SNAP_CORNER);
+        offer(search, to, TL_SNAP_CORNER);
+        offer(search, tl_vec2_midpoint(from, to), TL_SNAP_WALL_MIDDLE);
+        offer_segment(search, from, to, TL_SNAP_WALL_EDGE);
+    }
     for (size_t i = 0; i < project->expansion_joints.count; i++) {
         const TlExpansionJoint *line = project->expansion_joints.items[i];
         if (line == skipped_line)
@@ -95,6 +109,28 @@ static void offer_lines(SnapSearch *search, TlProject *project)
         offer(search, line->start, TL_SNAP_CORNER);
         offer(search, line->end, TL_SNAP_CORNER);
         offer_segment(search, line->start, line->end, TL_SNAP_WALL_EDGE);
+    }
+}
+
+/* Трубы — центр и края по осям; предметы — углы, середины и стороны; трапы — ещё и центр. */
+static void offer_objects(SnapSearch *search, TlProject *project)
+{
+    for (size_t i = 0; i < project->pipes.count; i++) {
+        TlVec2 points[TL_PIPE_POINT_COUNT];
+        tl_pipe_points(project->pipes.items[i], points);
+        for (size_t p = 0; p < TL_PIPE_POINT_COUNT; p++)
+            offer(search, points[p], TL_SNAP_CORNER);
+    }
+    for (size_t i = 0; i < project->fixtures.count; i++) {
+        TlPolygon outline = tl_fixture_outline(&project->fixtures.items[i]);
+        offer_contour(search, &outline, TL_SNAP_WALL_EDGE);
+        tl_polygon_free(&outline);
+    }
+    for (size_t i = 0; i < project->drains.count; i++) {
+        offer(search, project->drains.items[i].center, TL_SNAP_CORNER);
+        TlPolygon outline = tl_drain_outline(&project->drains.items[i]);
+        offer_contour(search, &outline, TL_SNAP_WALL_EDGE);
+        tl_polygon_free(&outline);
     }
 }
 
@@ -185,6 +221,8 @@ bool tl_measure_snap(TlProject *project, TlVec2 probe, double radius, TlSnapTarg
         offer_tiles(&search, project);
     if (targets & TL_SNAP_TO_LINES)
         offer_lines(&search, project);
+    if (targets & TL_SNAP_TO_OBJECTS)
+        offer_objects(&search, project);
     *result = search.best;
     return search.best.kind != TL_SNAP_NONE;
 }

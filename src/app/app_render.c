@@ -10,9 +10,9 @@
 #include "tl_layout.h"
 #include "tl_report.h"
 
-#define COLOR_BACKGROUND app_theme("#f4f5f7", "#15181c")
-#define COLOR_GRID_MINOR app_theme("#e3e6ea", "#1f2328")
-#define COLOR_GRID_MAJOR app_theme("#cfd4da", "#2c323b")
+#define COLOR_BACKGROUND app_theme("#f4f5f7", "#2d2f3d")
+#define COLOR_GRID_MINOR app_theme("#e3e6ea", "#343746")
+#define COLOR_GRID_MAJOR app_theme("#cfd4da", "#414458")
 #define COLOR_WALL "#6f7681"
 #define COLOR_WALL_SELECTED "#5d6470"
 #define COLOR_WALL_EDGE "#2c3038"
@@ -22,12 +22,12 @@
 #define COLOR_OPENING_FLOOR "#ece5d5"
 #define COLOR_OPENING_EDGE "#7a6a4f"
 #define COLOR_CLIP "#c2410c"
-#define COLOR_INNER_DIM app_theme("#1f4e9c", "#8fb4ff")
-#define COLOR_OUTER_DIM app_theme("#8a5a00", "#e2b35a")
-#define COLOR_OPENING_DIM app_theme("#6b3fa0", "#c7a4f3")
-#define COLOR_THRESHOLD app_theme("#a0522d", "#d08a5c")
-#define COLOR_RULER app_theme("#5f6b7a", "#b3bdc9")
-#define COLOR_EXPANSION_JOINT app_theme("#37414d", "#c9d1db")
+#define COLOR_INNER_DIM app_theme("#1f4e9c", "#8be9fd")
+#define COLOR_OUTER_DIM app_theme("#8a5a00", "#ffb86c")
+#define COLOR_OPENING_DIM app_theme("#6b3fa0", "#ff79c6")
+#define COLOR_THRESHOLD app_theme("#a0522d", "#ffb86c")
+#define COLOR_RULER app_theme("#5f6b7a", "#c0c4da")
+#define COLOR_EXPANSION_JOINT app_theme("#37414d", "#d4d7e6")
 #define COLOR_EXPANSION_JOINT_GAP "#fbfaf6"
 #define EXPANSION_JOINT_MIN_WIDTH_PX 3.0
 #define COLOR_PIPE "#3d5a80"
@@ -801,7 +801,16 @@ static void render_locks(cairo_t *cr, const AppView *view, TlProject *project)
 
 /* ---- линейки ------------------------------------------------------------------ */
 
-void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px)
+/* Подпись линейки помещается вдоль неё (с запасом на засечки). */
+static bool ruler_label_fits(const char *text, const AppTextStyle *style, TlVec2 a, TlVec2 b)
+{
+    double width, height;
+    app_text_size(text, style, &width, &height);
+    return width + 16 <= tl_distance(a, b);
+}
+
+void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px,
+                      AppRulerLabel label)
 {
     TlVec2 a = app_view_to_screen(view, ruler->start), b = app_view_to_screen(view, ruler->end);
     if (tl_distance(a, b) < 1)
@@ -819,7 +828,14 @@ void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, Ap
     char text[64]; /* «Л1 · 1250» */
     snprintf(text, sizeof text, ruler->name[0] ? "%s · %.0f" : "%s%.0f", ruler->name, tl_ruler_length(ruler));
     AppTextStyle style = {10.5, false, color, app_label_background(0.8)};
-    app_text_along(cr, text, &style, a, b, normal, RULER_LABEL_OFFSET_PX);
+    if (label == APP_RULER_LABEL_FIT) {
+        if (ruler_label_fits(text, &style, a, b))
+            app_text_along(cr, text, &style, a, b, normal, RULER_LABEL_OFFSET_PX);
+        return;
+    }
+    TlVec2 middle = app_view_visible_midpoint(view, a, b, 40), along = tl_vec2_normalized(tl_vec2_sub(b, a));
+    app_text_along(cr, text, &style, tl_vec2_sub(middle, along), tl_vec2_add(middle, along), normal,
+                   RULER_LABEL_OFFSET_PX);
 }
 
 void app_render_expansion_joint(cairo_t *cr, const AppView *view, const TlExpansionJoint *joint, AppColor color)
@@ -997,13 +1013,15 @@ static void render_rulers(cairo_t *cr, const AppView *view, TlProject *project)
 {
     for (size_t i = 0; i < project->rulers.count; i++) {
         TlRuler *ruler = project->rulers.items[i];
-        app_render_ruler(cr, view, ruler, app_color_hex(COLOR_RULER), 1);
+        app_render_ruler(cr, view, ruler, app_color_hex(COLOR_RULER), 1, APP_RULER_LABEL_FIT);
         TlVec2 a = app_view_to_screen(view, ruler->start), b = app_view_to_screen(view, ruler->end);
         if (tl_distance(a, b) < 1)
             continue;
         char text[64]; /* та же подпись, что у app_render_ruler */
         snprintf(text, sizeof text, ruler->name[0] ? "%s · %.0f" : "%s%.0f", ruler->name, tl_ruler_length(ruler));
         AppTextStyle style = {10.5, false, APP_TRANSPARENT, APP_TRANSPARENT};
+        if (!ruler_label_fits(text, &style, a, b))
+            continue; /* подписи нет — и вводить длину щелчком по ней нечем */
         record_dimension(dimension_of(APP_DIMENSION_RULER, ruler, 0, false, round(tl_ruler_length(ruler))), text,
                          &style, a, b, tl_vec2_perpendicular(tl_vec2_normalized(tl_vec2_sub(b, a))), RULER_LABEL_OFFSET_PX);
     }
@@ -1025,13 +1043,13 @@ static void render_scale_bar(cairo_t *cr, const AppView *view)
     cairo_line_to(cr, x, y + 5);
     cairo_move_to(cr, x + length, y - 5);
     cairo_line_to(cr, x + length, y + 5);
-    app_stroke(cr, app_color_hex(app_theme("#333333", "#c9d1db")), 2);
+    app_stroke(cr, app_color_hex(app_theme("#333333", "#d4d7e6")), 2);
     char text[32];
     if (mm >= 1000)
         snprintf(text, sizeof text, "%g м", mm / 1000.0);
     else
         snprintf(text, sizeof text, "%.0f мм", mm);
-    AppTextStyle style = {11.3, false, app_color_hex(app_theme("#333333", "#c9d1db")), APP_TRANSPARENT};
+    AppTextStyle style = {11.3, false, app_color_hex(app_theme("#333333", "#d4d7e6")), APP_TRANSPARENT};
     app_text_in_rect(cr, text, &style, x + length + 8, y - 8, 100, 16, -1);
 }
 

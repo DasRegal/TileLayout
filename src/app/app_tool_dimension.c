@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include "app_render.h"
+#include "tl_measure_anchor.h"
 
 typedef struct DimensionEdit {
     AppCanvas *canvas;
@@ -36,12 +37,12 @@ static bool apply(AppDocument *document, const AppDimension *d, double value)
         return false;
     switch (d->kind) {
     case APP_DIMENSION_RULER: {
-        TlRuler moved = *(TlRuler *)d->item;
-        if (!tl_ruler_set_length(&moved, value))
+        TlRuler probe = *(TlRuler *)d->item;
+        if (!tl_ruler_set_length(&probe, value))
             return false;
         app_document_checkpoint(document, "");
-        *(TlRuler *)d->item = moved;
-        app_document_commit(document);
+        tl_measure_set_ruler_length(project, d->item, value); /* и предмет на её конце — как мышкой */
+        app_document_commit_rooms(document);
         return true;
     }
     case APP_DIMENSION_OPENING: {

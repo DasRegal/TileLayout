@@ -933,6 +933,7 @@ static void build_walls(AppPanel *panel, GtkWidget *box)
     panel->walls_hint = gtk_label_new("Щелчок по стене — её плитка; Ctrl + перетаскивание — сдвиг плитки. "
                                       "«Линейка» и «Труба» ставятся прямо на стену. Под стенами — пол у них.");
     gtk_label_set_line_wrap(GTK_LABEL(panel->walls_hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->walls_hint), 40);
     gtk_label_set_xalign(GTK_LABEL(panel->walls_hint), 0);
     gtk_widget_set_opacity(panel->walls_hint, 0.7);
     app_section_wide(s, panel->walls_hint);
@@ -1084,6 +1085,7 @@ static void build_area(AppPanel *panel, GtkWidget *box)
     panel->area_info = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(panel->area_info), 0);
     gtk_label_set_line_wrap(GTK_LABEL(panel->area_info), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->area_info), 40);
     gtk_widget_set_opacity(panel->area_info, 0.75);
     app_section_wide(s, panel->area_info);
     panel->area_covering = gtk_combo_box_text_new();
@@ -1182,6 +1184,7 @@ static void build_panno(AppPanel *panel, GtkWidget *box)
     *s = app_section_new(box, "Панно");
     GtkWidget *hint = gtk_label_new("Картинка из нескольких плиток: кладётся целиком, плитка вокруг обходит его со швом.");
     gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(hint), 40);
     gtk_label_set_xalign(GTK_LABEL(hint), 0);
     gtk_widget_set_opacity(hint, 0.7);
     app_section_wide(s, hint);
@@ -2287,7 +2290,7 @@ static void build_rooms(AppPanel *panel, GtkWidget *box)
 
 static void build_tools(AppPanel *panel, GtkWidget *box)
 {
-    AppSection section = app_section_new(box, "Перегородки, проёмы, швы, разделы, линейки, трубы, предметы, трапы");
+    AppSection section = app_section_new(box, "Инструменты");
     panel->tools_frame = section.frame;
     panel->partition_thickness = app_unit_spin_new(10, 1000, 10, 0, "мм");
     g_signal_connect(panel->partition_thickness, "value-changed", G_CALLBACK(on_partition_preference), panel);
@@ -2424,6 +2427,7 @@ static void build_partition_corners(AppPanel *panel, AppSection *section)
     panel->partition_corner_hint = gtk_label_new("Выделите квадратный маркер на углу перегородки: его можно "
                                                  "тянуть поперёк оси или задать отступ здесь.");
     gtk_label_set_line_wrap(GTK_LABEL(panel->partition_corner_hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->partition_corner_hint), 40);
     gtk_label_set_xalign(GTK_LABEL(panel->partition_corner_hint), 0);
     gtk_widget_set_opacity(panel->partition_corner_hint, 0.7);
     app_section_wide(section, panel->partition_corner_hint);
@@ -2734,6 +2738,7 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     *cut = app_section_new(panel->settings_box[APP_SETTINGS_CUT], "Подрезка и запас");
     panel->shared_note = gtk_label_new("");
     gtk_label_set_line_wrap(GTK_LABEL(panel->shared_note), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->shared_note), 40);
     gtk_label_set_xalign(GTK_LABEL(panel->shared_note), 0);
     app_section_wide(s, panel->shared_note);
     GtkWidget *enabled = gtk_check_button_new_with_label("Укладывать плитку");
@@ -3431,6 +3436,7 @@ AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelAction
     build_underlay(panel, box);
     panel->hint = gtk_label_new("Выберите комнату, стену, перегородку, проём, шов, трубу или линейку.");
     gtk_label_set_line_wrap(GTK_LABEL(panel->hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(panel->hint), 40); /* иначе панель — шириной во всю строку */
     gtk_widget_set_no_show_all(panel->hint, TRUE);
     gtk_box_pack_start(GTK_BOX(box), panel->hint, FALSE, FALSE, 0);
     build_space(panel, box);

@@ -54,6 +54,8 @@ AppSection app_section_new(GtkWidget *container, const char *title)
     char *markup = g_markup_printf_escaped("<b>%s</b>", title);
     gtk_label_set_markup(GTK_LABEL(label), markup);
     g_free(markup);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END); /* длинный заголовок не распирает панель */
+    gtk_widget_set_tooltip_text(label, title);
     gtk_frame_set_label_widget(GTK_FRAME(section.frame), label);
     gtk_grid_set_row_spacing(GTK_GRID(section.grid), 4);
     gtk_grid_set_column_spacing(GTK_GRID(section.grid), 8);

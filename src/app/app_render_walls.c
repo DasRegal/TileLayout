@@ -17,11 +17,11 @@
 #define COLOR_FLOOR "#6f7681"
 #define COLOR_OPENING "#ffffff"
 #define COLOR_OPENING_EDGE "#7a6a4f"
-#define COLOR_DIM app_theme("#1f4e9c", "#8fb4ff")
-#define COLOR_FINISH app_theme("#8a5a00", "#e2b35a")
+#define COLOR_DIM app_theme("#1f4e9c", "#8be9fd")
+#define COLOR_FINISH app_theme("#8a5a00", "#ffb86c")
 #define COLOR_SELECTION "#2563eb"
 #define COLOR_PIPE "#3d5a80"
-#define COLOR_RULER app_theme("#5f6b7a", "#b3bdc9")
+#define COLOR_RULER app_theme("#5f6b7a", "#c0c4da")
 #define COLOR_FLOOR_STRIP "#f0ede6"
 
 #define LABEL_SPACE_MM 500.0 /* над стенами — подписи, под полом — размеры */
@@ -154,7 +154,7 @@ static void render_stairs(cairo_t *cr, const AppView *view, TlSpace *space, bool
                 y -= size;
             }
         if (outline) {
-            AppTextStyle name = {10, true, app_color_hex(app_theme("#5d6470", "#aab3c0")), APP_TRANSPARENT};
+            AppTextStyle name = {10, true, app_color_hex(app_theme("#5d6470", "#a9aec8")), APP_TRANSPARENT};
             char text[64];
             snprintf(text, sizeof text, "Лестница");
             TlVec2 at = app_view_to_screen(view, tl_vec2((column.left + column.right) / 2, column.top));
@@ -255,14 +255,15 @@ static void render_rulers(cairo_t *cr, const AppView *view, TlSpace *space, long
         TlRuler shown = {tl_space_wall_to_development(space, wall, ruler->start),
                          tl_space_wall_to_development(space, wall, ruler->end), ""};
         bool chosen = (long)i == selected;
-        app_render_ruler(cr, view, &shown, app_color_hex(chosen ? COLOR_SELECTION : COLOR_RULER), chosen ? 2 : 1.3);
+        app_render_ruler(cr, view, &shown, app_color_hex(chosen ? COLOR_SELECTION : COLOR_RULER), chosen ? 2 : 1.3,
+                         chosen ? APP_RULER_LABEL_ON_SCREEN : APP_RULER_LABEL_FIT);
     }
 }
 
 /* Над стеной — «Стена 1», под полом — длина; слева от первой — высота помещения. */
 static void render_labels(cairo_t *cr, const AppView *view, TlSpace *space)
 {
-    AppTextStyle title = {12, true, app_color_hex(app_theme(COLOR_WALL_EDGE, "#e6e9ed")), APP_TRANSPARENT};
+    AppTextStyle title = {12, true, app_color_hex(app_theme(COLOR_WALL_EDGE, "#f8f8f2")), APP_TRANSPARENT};
     for (size_t w = 0; w < tl_space_wall_count(space); w++) {
         const TlRoomWall *wall = tl_space_wall_at(space, w);
         char text[64];
@@ -291,7 +292,7 @@ void app_render_walls(cairo_t *cr, TlProject *project, TlSpace *space, const App
     if (options->printing) /* печать и PDF — в светлой теме */
         app_draw_set_dark(false);
     if (!options->printing) {
-        app_set_color(cr, app_color_hex(app_theme("#f4f5f7", "#15181c")));
+        app_set_color(cr, app_color_hex(app_theme("#f4f5f7", "#2d2f3d")));
         cairo_paint(cr);
     }
     for (size_t w = 0; w < tl_space_wall_count(space); w++) {

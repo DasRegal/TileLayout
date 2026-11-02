@@ -34,7 +34,11 @@ void app_render_plan(cairo_t *cr, TlProject *project, const AppView *view,
                      const AppRenderOptions *options);
 
 /* Линейка: тонкая линия с засечками на концах и длиной посередине. */
-void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px);
+/* Подпись линейки: FIT — только если не длиннее самой линейки на экране (мелкий масштаб — без
+   плашек); ON_SCREEN — всегда и у видимой части (линейку правят или рисуют). */
+typedef enum AppRulerLabel { APP_RULER_LABEL_FIT, APP_RULER_LABEL_ON_SCREEN } AppRulerLabel;
+void app_render_ruler(cairo_t *cr, const AppView *view, const TlRuler *ruler, AppColor color, double width_px,
+                      AppRulerLabel label);
 
 /* Косяки проёма в перегородке: сечения у краёв проёма, от правого бока к левому. */
 bool app_render_doorway_jambs(TlProject *project, const TlOpening *opening, TlVec2 from_jamb[2], TlVec2 to_jamb[2]);

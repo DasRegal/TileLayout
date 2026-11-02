@@ -10,26 +10,39 @@
   --accent: #1f4e9c;
   --accent-soft: #e3ebf8;
   --wall: #6f7681;
-  --overlay: var(--overlay); /* плашки поверх плана: масштаб, подсказка, 2D | 3D */
+  --overlay: rgba(255, 255, 255, 0.95); /* плашки поверх плана: масштаб, подсказка, 2D | 3D */
   --on-accent: #ffffff;
+  --hover: #f7f8fa; /* кнопка под указателем */
+  --hover-line: #aab2bf;
+  --accent-hover: #1a4387;
+  --danger: #b3261e;
+  --danger-line: #e7b9b4;
+  --danger-soft: #fdf1f0;
   --font: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --bar-height: 52px;
 }
 
-/* Тёмная тема (кнопка в верхней строке): тёмный интерфейс, план — на тёмном фоне, но плитка своих
-   цветов, подписи комнат и цифры — на своих плашках, всё читается. */
+/* Тёмная тема (по умолчанию; кнопка в верхней строке): серо-фиолетовая, как Dracula, не чёрная.
+   План — на тёмном фоне, но плитка своих цветов, подписи комнат и цифры — на своих плашках. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ink: #e4e7eb;
-  --muted: #9ba4b1;
-  --line: #363c46;
-  --surface: #1c1f24;
-  --ground: #121418;
-  --accent: #8db3ff;
-  --accent-soft: #233451;
-  --wall: #8a929e;
-  --overlay: rgba(28, 31, 36, 0.95);
-  --on-accent: #0f1622;
+  --ink: #f8f8f2;
+  --muted: #a9aec8;
+  --line: #44475a;
+  --surface: #282a36;
+  --ground: #21222c;
+  --accent: #bd93f9;
+  --accent-soft: #3d3a5c;
+  --wall: #9ea3bd;
+  --overlay: rgba(40, 42, 54, 0.95);
+  --on-accent: #21222c;
+  --hover: #343746;
+  --hover-line: #6272a4;
+  --accent-hover: #caa8fa;
+  --danger: #ff5555;
+  --danger-line: #7a3a48;
+  --danger-soft: #3d2a35;
+  scrollbar-color: #4d5066 var(--surface); /* полосы прокрутки — тоже тёмные */
 }
 
 * { box-sizing: border-box; }
@@ -56,10 +69,10 @@ button {
   background: var(--surface);
   cursor: pointer;
 }
-button:hover:not(:disabled) { border-color: #aab2bf; background: #f7f8fa; }
+button:hover:not(:disabled) { border-color: var(--hover-line); background: var(--hover); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-button.primary:hover:not(:disabled) { background: #1a4387; }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- верхняя панель ---- */
@@ -426,8 +439,8 @@ legend {
 .control input[type="number"]::placeholder { color: var(--muted); font-style: italic; }
 .control input:disabled, .control select:disabled { opacity: 0.5; }
 .sheet-toggle { display: none; }
-button.danger { color: #b3261e; border-color: #e7b9b4; }
-button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e; }
+button.danger { color: var(--danger); border-color: var(--danger-line); }
+button.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
 #tool-settings, #object-settings { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; }
 
@@ -485,7 +498,7 @@ button.danger:hover:not(:disabled) { background: #fdf1f0; border-color: #b3261e;
 }
 .tree-row .count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tree-row.active { background: var(--accent); color: var(--on-accent); }
-.tree-row.active .count { color: rgba(255, 255, 255, 0.8); }
+.tree-row.active .count { color: var(--on-accent); opacity: 0.8; }
 .catalog-grid {
   overflow: auto;
   padding: 12px;

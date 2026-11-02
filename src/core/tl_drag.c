@@ -129,6 +129,7 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
         drag->original_shares[0] = target.opening->threshold;
         drag->original_shares[1] = target.opening->threshold_end;
         drag->original_share = threshold_share_at(project, target.opening, TL_DRAG_THRESHOLD_LINE, start, NULL);
+        drag->measures = tl_measure_anchors_remember(project);
         return true;
     case TL_DRAG_TILES: {
         const TlTileSettings *tile = tl_space_effective_tile(target.space);
@@ -159,18 +160,21 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
         return true;
     case TL_DRAG_PIPE:
         drag->original_point = target.pipe->center;
+        drag->measures = tl_measure_anchors_remember(project);
         return true;
     case TL_DRAG_DRAIN:
         if (target.index < 0 || (size_t)target.index >= project->drains.count)
             return false;
         drag->original_point = project->drains.items[target.index].center;
         drag->original_corner_offset = project->drains.items[target.index].angle;
+        drag->measures = tl_measure_anchors_remember(project);
         return true;
     case TL_DRAG_FIXTURE:
         if (target.index < 0 || (size_t)target.index >= project->fixtures.count)
             return false;
         drag->original_point = project->fixtures.items[target.index].center;
         drag->original_corner_offset = project->fixtures.items[target.index].angle;
+        drag->measures = tl_measure_anchors_remember(project);
         return true;
     case TL_DRAG_PANNO:
         if (!target.space || target.index < 0 || (size_t)target.index >= target.space->pannos.count ||
@@ -239,6 +243,7 @@ static void drag_threshold(TlDrag *drag, TlProject *project, TlVec2 world, const
         opening->threshold_end = drag->original_shares[1] + shift;
     }
     tl_project_update_spaces(project);
+    tl_measure_anchors_apply(project, drag->measures);
 }
 
 /* Отрезок — линейка или шов: за линию — целиком, за конец — с притягиванием
@@ -452,6 +457,7 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
             drain->center = free || snap->grid_step <= 0 ? drain->center : tl_snap_grid(snap->grid_step, drain->center);
         tl_polygon_free(&walls);
         tl_project_update_spaces(project); /* конверт — от нового места */
+        tl_measure_anchors_apply(project, drag->measures);
         return;
     }
     case TL_DRAG_FIXTURE: { /* у стены — спинкой к ней, иначе — по сетке */
@@ -464,6 +470,7 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
             fixture->center = free || snap->grid_step <= 0 ? fixture->center : tl_snap_grid(snap->grid_step, fixture->center);
         tl_polygon_free(&walls);
         tl_project_update_spaces(project); /* пол и стены под предметом */
+        tl_measure_anchors_apply(project, drag->measures);
         return;
     }
     case TL_DRAG_PANNO: { /* сдвиг — в осях раскладки комнаты (в них задано панно) */
@@ -478,6 +485,7 @@ void tl_drag_move(TlDrag *drag, TlProject *project, TlVec2 world, const TlSnapCo
         TlVec2 center = tl_vec2_add(drag->original_point, delta);
         drag->target.pipe->center = free || snap->grid_step <= 0 ? center : tl_snap_grid(snap->grid_step, center);
         tl_project_update_spaces(project); /* отверстие — в другой плитке */
+        tl_measure_anchors_apply(project, drag->measures);
         return;
     }
     case TL_DRAG_PARTITION: drag_partition(drag, project, delta, snap, free, guides); break;

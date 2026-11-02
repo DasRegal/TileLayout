@@ -10,6 +10,7 @@
 
 #include "tl_drag.h"
 #include "tl_layout.h"
+#include "tl_measure_anchor.h"
 #include "tl_snap.h"
 #include "tl_web.h"
 #include "tl_web_internal.h"
@@ -938,11 +939,11 @@ bool tl_web_set_ruler_length(int index, double length, double now_seconds)
     TlProject *project = tl_web_project();
     if (index < 0 || (size_t)index >= project->rulers.count || !(length >= 1 && length <= 1e6))
         return false;
-    TlRuler moved = *project->rulers.items[index];
-    if (!tl_ruler_set_length(&moved, length))
+    TlRuler probe = *project->rulers.items[index];
+    if (!tl_ruler_set_length(&probe, length))
         return false;
     tl_web_checkpoint("", now_seconds);
-    *project->rulers.items[index] = moved;
+    tl_measure_set_ruler_length(project, project->rulers.items[index], length); /* и предмет на её конце */
     return true;
 }
 

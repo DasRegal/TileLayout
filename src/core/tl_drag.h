@@ -91,7 +91,7 @@ typedef struct TlDrag {
     double follower_at[TL_DRAG_MAX_FOLLOWERS]; /* где на линии (0 — начало, 1 — конец) */
     size_t follower_count;
     double original_offset_x, original_offset_y; /* сетка плитки */
-    struct TlMeasureAnchors *measures;   /* проём: концы линеек на его краях едут с ним */
+    struct TlMeasureAnchors *measures;   /* концы линеек и швов на проёме, стыке, трубе, предмете, трапе едут с ним */
     bool geometry_changed;
     TlEditToken *token;
 } TlDrag;

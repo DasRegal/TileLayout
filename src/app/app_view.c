@@ -37,3 +37,23 @@ void app_view_zoom_at(AppView *view, double factor, TlVec2 screen_anchor)
     view->pan_x = screen_anchor.x - anchor_world.x * view->scale;
     view->pan_y = screen_anchor.y - anchor_world.y * view->scale;
 }
+
+TlVec2 app_view_visible_midpoint(const AppView *view, TlVec2 a, TlVec2 b, double margin)
+{
+    double right = view->width - margin, bottom = view->height - margin;
+    TlVec2 d = tl_vec2_sub(b, a);
+    const double p[4] = {-d.x, d.x, -d.y, d.y}, q[4] = {a.x - margin, right - a.x, a.y - margin, bottom - a.y};
+    double t0 = 0, t1 = 1; /* отсечение отрезка прямоугольником (Лян — Барски) */
+    for (int i = 0; i < 4; i++) {
+        if (p[i] == 0) {
+            if (q[i] < 0)
+                t1 = -1;
+        } else if (p[i] < 0) {
+            t0 = fmax(t0, q[i] / p[i]);
+        } else {
+            t1 = fmin(t1, q[i] / p[i]);
+        }
+    }
+    TlVec2 middle = tl_vec2_lerp(a, b, t0 <= t1 ? (t0 + t1) / 2 : 0.5);
+    return tl_vec2(fmin(fmax(middle.x, margin), fmax(margin, right)), fmin(fmax(middle.y, margin), fmax(margin, bottom)));
+}

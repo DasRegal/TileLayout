@@ -176,8 +176,11 @@ void app_canvas_draw_dimension(AppCanvas *canvas, cairo_t *cr, TlVec2 a, TlVec2 
         snprintf(text, sizeof text, "⌨ %s", canvas->typed);
     else
         snprintf(text, sizeof text, "%.0f", length);
-    app_render_dimension_text(cr, app_view_to_screen(&canvas->view, a), app_view_to_screen(&canvas->view, b),
-                              12, text, color_hex ? color_hex : APP_GREEN, bold);
+    TlVec2 from = app_view_to_screen(&canvas->view, a), to = app_view_to_screen(&canvas->view, b);
+    TlVec2 middle = app_view_visible_midpoint(&canvas->view, from, to, 40); /* размер, который правят, — на экране */
+    TlVec2 along = tl_vec2_normalized(tl_vec2_sub(to, from));
+    app_render_dimension_text(cr, tl_vec2_sub(middle, along), tl_vec2_add(middle, along), 12, text,
+                              color_hex ? color_hex : APP_GREEN, bold);
 }
 
 void app_canvas_draw_cross(AppCanvas *canvas, cairo_t *cr, TlVec2 world)
@@ -281,7 +284,7 @@ static void draw_hover(AppCanvas *canvas, cairo_t *cr)
         cairo_fill(cr);
         tl_polygon_free(&body);
     } else if (hover->kind == APP_SELECT_RULER) {
-        app_render_ruler(cr, &canvas->view, hover->ruler, app_color_hex(APP_BLUE), 1);
+        app_render_ruler(cr, &canvas->view, hover->ruler, app_color_hex(APP_BLUE), 1, APP_RULER_LABEL_ON_SCREEN);
     } else if (hover->kind == APP_SELECT_OPENING && hover->index >= APP_OPENING_THRESHOLD) {
         TlVec2 from, to;
         if (tl_project_opening_threshold(canvas->document->project, hover->opening, &from, &to))
@@ -382,7 +385,7 @@ static void draw_selection(AppCanvas *canvas, cairo_t *cr)
         return;
     }
     if (s->kind == APP_SELECT_RULER) {
-        app_render_ruler(cr, view, s->ruler, app_color_hex(APP_BLUE), 1.5);
+        app_render_ruler(cr, view, s->ruler, app_color_hex(APP_BLUE), 1.5, APP_RULER_LABEL_ON_SCREEN);
         draw_handle(cr, app_view_to_screen(view, s->ruler->start), s->index == 1 ? 5 : 3.5, s->index == 1, APP_BLUE);
         draw_handle(cr, app_view_to_screen(view, s->ruler->end), s->index == 2 ? 5 : 3.5, s->index == 2, APP_BLUE);
         return;

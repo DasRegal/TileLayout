@@ -21,6 +21,9 @@ TlVec2 app_view_to_screen(const AppView *view, TlVec2 world);
 TlVec2 app_view_to_world(const AppView *view, TlVec2 screen);
 /* n пикселей экрана — в миллиметры. */
 double app_view_pixels_to_mm(const AppView *view, double pixels);
+/* Середина видимой части отрезка a–b (точки экрана) не ближе margin пикселей к краям; отрезок
+   целиком за краем — ближайшая к его середине точка. Чтобы размер, который правят, был на экране. */
+TlVec2 app_view_visible_midpoint(const AppView *view, TlVec2 a, TlVec2 b, double margin);
 
 /* Вписать прямоугольник мира в область с полями margin пикселей. */
 void app_view_fit(AppView *view, TlRect world, double margin);
