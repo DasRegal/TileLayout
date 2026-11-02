@@ -377,8 +377,13 @@ AppSheet *app_sheet_new_cut_map(TlProject *project, const char *title, bool mono
             }
         }
         if (entry->pairs.count) {
-            add_text(sheet, "<b>Две подрезки из одной плитки</b> (полосы — по ширине, остальное — в отход)", 13);
-            add_row(sheet, table + 1, PAIR_COLUMNS, PAIR_ALIGN, 2, true, cells_from("<b>Куски</b>", "<b>Полосы, мм</b>", NULL));
+            bool figured = !entry->type->spec.rectangular; /* шеврон, вставка: куски у разных торцов */
+            add_text(sheet, figured ? "<b>Две подрезки из одной плитки</b> (куски у разных торцов плитки — как на "
+                                      "чертеже, между ними — отход)"
+                                    : "<b>Две подрезки из одной плитки</b> (полосы — по ширине, остальное — в отход)",
+                     13);
+            add_row(sheet, table + 1, PAIR_COLUMNS, PAIR_ALIGN, 2, true,
+                    cells_from("<b>Куски</b>", figured ? "<b>Габарит, мм</b>" : "<b>Полосы, мм</b>", NULL));
             for (size_t k = 0; k < entry->pairs.count; k++) {
                 const TlCutMapPair *pair = &entry->pairs.items[k];
                 char pieces[48], sizes[64];

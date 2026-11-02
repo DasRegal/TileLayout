@@ -290,14 +290,15 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
     }
     cairo_clip_preserve(cr);
     TlLayout *layout = tl_space_layout(space);
-    if (tile->enabled && layout->too_many) {
+    bool floor = tl_space_floor_on(space);
+    if (floor && layout->too_many) {
         app_set_fill_color(cr, app_color_hex(tile->color));
         cairo_fill(cr);
         cairo_restore(cr);
         return;
     }
-    if (!tile->enabled || tile->wall_gap > 0) { /* без плитки на полу — белый, участки со своей плиткой — поверх */
-        app_set_fill_color(cr, app_color_hex(tile->enabled ? COLOR_GAP : "#ffffff"));
+    if (!floor || tile->wall_gap > 0) { /* без плитки на полу — белый, участки со своей плиткой — поверх */
+        app_set_fill_color(cr, app_color_hex(floor ? COLOR_GAP : "#ffffff"));
         cairo_fill(cr);
     }
     cairo_new_path(cr);
@@ -309,7 +310,7 @@ static void render_floor(cairo_t *cr, const AppView *view, const AppRenderOption
         app_render_tiles(cr, view, options, tl_space_layout_tile(space, i), part);
         cairo_restore(cr);
     }
-    for (size_t i = 0; tile->enabled && i < space->pannos.count; i++) /* панно на полу */
+    for (size_t i = 0; floor && i < space->pannos.count; i++) /* панно на полу */
         if (space->pannos.items[i].wall == TL_PANNO_FLOOR)
             app_render_panno(cr, view, options, space, i, NULL);
     cairo_restore(cr);

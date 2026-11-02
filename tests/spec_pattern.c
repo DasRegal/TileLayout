@@ -10,6 +10,7 @@
 #include "tl_project.h"
 #include "tl_project_io.h"
 #include "tl_report.h"
+#include "tl_regions.h"
 
 static TlProject *room_project(double width, double height)
 {
@@ -142,7 +143,7 @@ void spec_pattern(void)
                 EXPECT(area < cell && area > cell * 0.9);
             }
         }
-        IT("шеврон: к покупке — левые и правые плитки отдельно; остатки подрезок не парятся (плитка не прямоугольная)")
+        IT("шеврон: к покупке — левые и правые плитки отдельно; остаток от одного торца — в кусок у другого")
         {
             TlProject *project = room_project(3000, 2000);
             TlTileSettings *tile = &only_space(project)->tile;
@@ -159,8 +160,16 @@ void spec_pattern(void)
             EXPECT(type_named(&summary, "600×100 мм, левая") != NULL);
             EXPECT(type_named(&summary, "600×100 мм, правая") != NULL);
             for (size_t i = 0; i < summary.types.count; i++) {
-                EXPECT_INT(summary.types.items[i].offcut_saving, 0);
+                EXPECT(summary.types.items[i].offcut_saving > 0);
                 EXPECT_NEAR(tl_tile_spec_area_m2(&summary.types.items[i].spec), 0.06, 1e-9);
+            }
+            EXPECT(summary.offcut_pairs.count > 0);
+            for (size_t i = 0; i < summary.offcut_pairs.count; i++) { /* куски пары — в одной плитке, не внахлёст */
+                const TlOffcutPair *pair = &summary.offcut_pairs.items[i];
+                const TlTile *a = tl_layout_tile_at(layout, pair->first.cell), *b = tl_layout_tile_at(layout, pair->second.cell);
+                EXPECT(a && b && a->spec == b->spec);
+                if (a && b)
+                    EXPECT(tl_polygons_overlap_area(&a->shapes.items[0], &b->shapes.items[0]) < 1);
             }
             tl_summary_free(&summary);
             tl_project_free(project);

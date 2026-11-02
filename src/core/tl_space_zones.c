@@ -548,7 +548,7 @@ TlZoneKind tl_space_layout_zone(TlSpace *space, size_t index)
 bool tl_space_layout_counted(TlSpace *space, size_t index)
 {
     TlLayout *layout = tl_space_layout_at(space, index);
-    return layout && !layout->too_many && tl_space_layout_tile(space, index)->enabled;
+    return layout && !space->excluded && !layout->too_many && tl_space_layout_tile(space, index)->enabled;
 }
 
 int tl_space_tile_total(TlSpace *space)

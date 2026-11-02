@@ -169,7 +169,8 @@ const TlRoomSummary *tl_summary_room(const TlSummary *summary, const TlSpace *sp
 /* Пары полос, которые режутся из одной плитки width × height (с запасом на рез
  * allowance). Жадно: самая широкая полоса — с самой узкой; не подошла — идёт из
  * целой плитки. Куски — одного вида, по его осям. */
-TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, const TlPieceList *pieces);
+TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, bool can_turn,
+                                        const TlPieceList *pieces);
 
 /* ---- карта раскроя ----------------------------------------------------------
  * По виду плитки: одинаковые подрезки — резать стопкой (размер куска и номера на плане),

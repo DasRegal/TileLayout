@@ -78,7 +78,7 @@ struct AppPanel {
     GtkWidget *hint;
 
     AppSection space_section;
-    GtkWidget *space_name, *space_area, *space_perimeter, *floor_source;
+    GtkWidget *space_name, *space_area, *space_perimeter, *floor_source, *space_counted;
 
     AppSection outline_section;
     GtkWidget *outline_area, *outline_thickness;
@@ -867,7 +867,7 @@ static GtkWidget *spin_with(AppPanel *panel, double minimum, double maximum, dou
 static void on_delete_selection(GtkButton *button, AppPanel *panel);
 static GtkWidget *floor_button(AppPanel *panel, const char *text, bool all);
 
-/* Высота помещения, облицовка вкл./выкл. и её высота — всем выделенным комнатам. */
+/* Высота помещения, облицовка вкл./выкл. и её высота, «Комната в расчёте» — всем выделенным комнатам. */
 static void commit_walls(AppPanel *panel, const char *key, double value)
 {
     TlSpace *rooms[APP_MAX_ROOMS];
@@ -880,6 +880,8 @@ static void commit_walls(AppPanel *panel, const char *key, double value)
             rooms[i]->height = value;
         else if (strcmp(key, "walls_enabled") == 0)
             rooms[i]->walls.enabled = value != 0;
+        else if (strcmp(key, "counted") == 0)
+            rooms[i]->excluded = value == 0;
         else
             rooms[i]->walls.height = value;
     }
@@ -894,6 +896,11 @@ static void on_walls_spin(GtkSpinButton *spin, AppPanel *panel)
 static void on_walls_enabled(GtkToggleButton *check, AppPanel *panel)
 {
     commit_walls(panel, "walls_enabled", gtk_toggle_button_get_active(check));
+}
+
+static void on_space_counted(GtkToggleButton *check, AppPanel *panel)
+{
+    commit_walls(panel, "counted", gtk_toggle_button_get_active(check));
 }
 
 static void on_open_3d(GtkButton *button, AppPanel *panel)
@@ -2371,6 +2378,11 @@ static void build_space(AppPanel *panel, GtkWidget *box)
     gtk_widget_set_tooltip_text(panel->floor_source, "Своя раскладка или общая сетка плитки с другой комнатой");
     g_signal_connect(panel->floor_source, "changed", G_CALLBACK(on_floor_source), panel);
     app_section_row(s, "Пол", panel->floor_source);
+    panel->space_counted = gtk_check_button_new_with_label("Комната в расчёте");
+    gtk_widget_set_tooltip_text(panel->space_counted, "Снята — у комнаты ничего не показывается и не считается: пол, "
+                                                      "участки, бордюр, ковёр, стены, панно (настройки сохраняются)");
+    g_signal_connect(panel->space_counted, "toggled", G_CALLBACK(on_space_counted), panel);
+    app_section_wide(s, panel->space_counted);
 }
 
 static void build_outline(AppPanel *panel, GtkWidget *box)
@@ -2751,7 +2763,9 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
     gtk_label_set_max_width_chars(GTK_LABEL(panel->shared_note), 40);
     gtk_label_set_xalign(GTK_LABEL(panel->shared_note), 0);
     app_section_wide(s, panel->shared_note);
-    GtkWidget *enabled = gtk_check_button_new_with_label("Укладывать плитку");
+    GtkWidget *enabled = gtk_check_button_new_with_label("Плитка на полу");
+    gtk_widget_set_tooltip_text(enabled, "Плитка на основном полу — на плане и в расчёте; стены и участки со своей "
+                                         "плиткой — отдельно");
     bind_tile(panel, "enabled", enabled);
     app_section_wide(s, enabled);
 
@@ -2889,6 +2903,12 @@ static void build_tile(AppPanel *panel, GtkWidget *box)
                                        "(учитывается в итоге)");
     bind_tile(panel, "reuse", reuse);
     app_section_wide(cut, reuse);
+    GtkWidget *directional = gtk_check_button_new_with_label("Рисунок с направлением");
+    gtk_widget_set_tooltip_text(directional, "Куски не поворачивать на 90°, когда две подрезки режутся из одной\n"
+                                             "плитки (у квадратной). Плитка из каталога — включено; «только цвет»\n"
+                                             "или мрамор без направления — можно снять.");
+    bind_tile(panel, "directional", directional);
+    app_section_wide(cut, directional);
     app_section_row(cut, "Запас на рез", tile_spin(panel, "cut_allow", 0, 20, 0.5, 1, "мм"));
     app_section_row(cut, "Запас", tile_spin(panel, "reserve", 0, 100, 1, 0, "%"));
     panel->color_button = gtk_color_button_new();
@@ -3061,6 +3081,7 @@ static void refresh_space(AppPanel *panel, TlSpace *space)
     gtk_entry_set_text(GTK_ENTRY(panel->space_name), space->name);
     set_label(panel->space_area, "%.2f м²", tl_space_room_area(space) / 1e6);
     set_label(panel->space_perimeter, "%.0f мм", tl_space_room_perimeter(space));
+    set_check(panel->space_counted, !space->excluded);
     GtkComboBoxText *floor = GTK_COMBO_BOX_TEXT(panel->floor_source);
     gtk_combo_box_text_remove_all(floor);
     gtk_combo_box_text_append(floor, "0", "Своя раскладка");

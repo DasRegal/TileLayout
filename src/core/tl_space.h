@@ -73,6 +73,7 @@ typedef struct TlSpace {
     char *name;
     TlTileSettings tile;
     int source_id;                 /* id комнаты с общей раскладкой, 0 — своя */
+    bool excluded;                 /* «Комната в расчёте» снята: ни плитки, ни расчёта (настройки целы) */
 
     TlPolygon outline;             /* контур пола, с полом дверных проёмов */
     TlPolygon room_outline;        /* контур без проёмов: от него строится сетка плитки */
@@ -124,9 +125,15 @@ const TlPolygon *tl_space_room_outline(const TlSpace *space);
 TlTileSettings *tl_space_effective_tile(TlSpace *space);
 const TlPolygon *tl_space_frame(const TlSpace *space);
 bool tl_space_has_shared_floor(const TlSpace *space);
+/* Плитка на основном полу: комната в расчёте и «Плитка на полу» (у общего пола — источника). */
+bool tl_space_floor_on(const TlSpace *space);
+/* Облицовка стен: комната в расчёте и «Облицовка стен плиткой». */
+bool tl_space_walls_on(const TlSpace *space);
 /* Часть пола под точкой (номер в regions) и участок на этой части; SIZE_MAX — нет. */
 size_t tl_space_region_at(const TlSpace *space, TlVec2 point);
 size_t tl_space_area_of_region(const TlSpace *space, size_t region);
+/* Плитка части пола: участка со своей плиткой, иначе комнаты (у общего пола — источника). */
+TlTileSettings *tl_space_region_tile(TlSpace *space, size_t region);
 /* Участок на части region: своя плитка (как у комнаты) или без плитки → номер. */
 size_t tl_space_add_area(TlSpace *space, size_t region, bool tiled);
 void tl_space_remove_area(TlSpace *space, size_t area);

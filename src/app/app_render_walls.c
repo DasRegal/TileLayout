@@ -58,7 +58,7 @@ static void fill_rect(cairo_t *cr, const AppView *view, TlRect rect, AppColor fi
 static void render_wall_tiles(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlSpace *space,
                               bool reveals)
 {
-    for (size_t i = 0; i < tl_space_wall_layout_count(space); i++) {
+    for (size_t i = 0; !space->excluded && i < tl_space_wall_layout_count(space); i++) { /* и ступени */
         TlWallBand band;
         TlLayout *layout = tl_space_wall_layout_at(space, i, NULL, &band);
         if (layout->too_many || (tl_space_wall_layout_reveal(space, i) != SIZE_MAX) != reveals)
@@ -169,7 +169,7 @@ static void render_stairs(cairo_t *cr, const AppView *view, TlSpace *space, bool
 /* Верх облицовки и границы полос — пунктиром поперёк всех стен. */
 static void render_band_lines(cairo_t *cr, const AppView *view, TlSpace *space)
 {
-    if (!space->walls.enabled)
+    if (!tl_space_walls_on(space))
         return;
     double top = tl_space_walls_finish_top(space);
     for (size_t w = 0; w < tl_space_wall_count(space); w++) {
@@ -195,7 +195,6 @@ static void render_band_lines(cairo_t *cr, const AppView *view, TlSpace *space)
 /* Под стеной — пол у неё, как будто откинут вниз: плитка пола и зон в полосе TL_WALL_FLOOR_DEPTH. */
 static void render_floor_strips(cairo_t *cr, const AppView *view, const AppRenderOptions *options, TlSpace *space)
 {
-    const TlTileSettings *room_tile = tl_space_effective_tile(space);
     for (size_t w = 0; w < tl_space_wall_count(space); w++) {
         const TlRoomWall *wall = tl_space_wall_at(space, w);
         TlRect strip = {wall->x, space->height, wall->x + wall->length, space->height + TL_WALL_FLOOR_DEPTH};
@@ -207,7 +206,7 @@ static void render_floor_strips(cairo_t *cr, const AppView *view, const AppRende
         cairo_fill_preserve(cr);
         cairo_clip(cr);
         TlAffine to_development = tl_space_wall_floor_affine(space, w);
-        for (size_t l = 0; options->show_tiles && room_tile->enabled && l < tl_space_floor_layout_count(space); l++) {
+        for (size_t l = 0; options->show_tiles && tl_space_floor_on(space) && l < tl_space_floor_layout_count(space); l++) {
             TlLayout layout = *tl_space_layout_at(space, l); /* та же раскладка, оси — в развёртке */
             if (layout.too_many)
                 continue;
@@ -216,7 +215,7 @@ static void render_floor_strips(cairo_t *cr, const AppView *view, const AppRende
             app_render_tiles(cr, view, options, tl_space_layout_tile(space, l), &layout);
             cairo_restore(cr);
         }
-        for (size_t p = 0; options->show_tiles && room_tile->enabled && p < space->pannos.count; p++)
+        for (size_t p = 0; options->show_tiles && tl_space_floor_on(space) && p < space->pannos.count; p++)
             if (space->pannos.items[p].wall == TL_PANNO_FLOOR)
                 app_render_panno(cr, view, options, space, p, &to_development);
         cairo_restore(cr);
@@ -303,7 +302,7 @@ void app_render_walls(cairo_t *cr, TlProject *project, TlSpace *space, const App
     render_stairs(cr, view, space, false);
     if (options->show_tiles)
         render_wall_tiles(cr, view, options, space, false);
-    for (size_t p = 0; options->show_tiles && space->walls.enabled && p < space->pannos.count; p++)
+    for (size_t p = 0; options->show_tiles && tl_space_walls_on(space) && p < space->pannos.count; p++)
         if (space->pannos.items[p].wall != TL_PANNO_FLOOR)
             app_render_panno(cr, view, options, space, p, NULL);
     render_floor_strips(cr, view, options, space);

@@ -136,6 +136,36 @@ void spec_areas(void)
             tl_cut_card_list_free_all(&cards);
             tl_project_free(project);
         }
+        IT("«Комната в расчёте» снята: ни пол, ни участок, ни стены не считаются; в файле — сохраняется")
+        {
+            TlProject *project = room_project(3000, 2000);
+            TlSpace *space = only_space(project);
+            add_divider(project, tl_vec2(1000, 0), tl_vec2(1000, 2000));
+            tl_space_add_area(space, tl_space_region_at(space, tl_vec2(500, 1000)), true);
+            space->walls.enabled = true;
+            tl_project_update_spaces(project);
+            EXPECT(tl_space_tile_total(space) > 0);
+            space->excluded = true;
+            EXPECT_INT(tl_space_tile_total(space), 0);
+            EXPECT(!tl_space_floor_on(space) && !tl_space_walls_on(space));
+            TlSummary summary = tl_report_summarize(project);
+            int to_buy = 0;
+            for (size_t i = 0; i < summary.types.count; i++)
+                to_buy += summary.types.items[i].to_buy;
+            EXPECT_INT(to_buy, 0);
+            EXPECT(!summary.rooms.items[0].tiled);
+            tl_summary_free(&summary);
+            char *text = tl_project_to_string(project);
+            TlProject *loaded = tl_project_new();
+            EXPECT(tl_project_from_string(loaded, text, NULL, 0));
+            tl_project_update_spaces(loaded);
+            EXPECT(loaded->spaces.count == 1 && loaded->spaces.items[0]->excluded);
+            free(text);
+            tl_project_free(loaded);
+            space->excluded = false; /* настройки целы: вернули — всё снова считается */
+            EXPECT(tl_space_tile_total(space) > 0);
+            tl_project_free(project);
+        }
         IT("плитка выключена у комнаты: участок со своей плиткой и облицовка стен всё равно кладутся и считаются")
         {
             TlProject *project = room_project(3000, 2000);

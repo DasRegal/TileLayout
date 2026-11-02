@@ -194,7 +194,7 @@ static void offer_tiles(SnapSearch *search, TlProject *project)
 {
     for (size_t i = 0; i < project->spaces.count; i++) {
         TlSpace *space = project->spaces.items[i];
-        if (!tl_space_effective_tile(space)->enabled)
+        if (!tl_space_floor_on(space))
             continue;
         for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) { /* основной пол и зоны */
             const TlTileSettings *tile = tl_space_layout_tile(space, l);

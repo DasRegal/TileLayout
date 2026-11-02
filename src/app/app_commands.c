@@ -255,7 +255,7 @@ void app_command_set_tile_texture(AppDocument *document, const TlCatalog *catalo
         if (catalog && tile)
             app_catalogs_apply(catalog, tile, settings);
         else
-            settings->texture[0] = '\0';
+            settings->texture[0] = '\0', settings->directional = false; /* только цвет — однотонная */
         tl_tile_settings_remember_as_default(settings);
     }
     app_document_commit(document);
@@ -281,7 +281,7 @@ void app_command_set_zone_texture(AppDocument *document, int zone, const TlCatal
         if (catalog && tile)
             app_catalogs_apply(catalog, tile, settings);
         else
-            settings->texture[0] = '\0';
+            settings->texture[0] = '\0', settings->directional = false;
     }
     app_document_commit(document);
 }
@@ -522,9 +522,10 @@ void app_command_nudge(AppDocument *document, double dx, double dy, bool move_ti
     }
     if (tiles_mode) {
         app_document_checkpoint(document, "nudge");
-        TlTileSettings *tile = tl_space_effective_tile(s.space);
-        tile->offset_x += dx;
-        tile->offset_y += dy;
+        /* по экрану, при любом повороте плитки; выделена часть со своей плиткой — её */
+        tl_layout_shift_offsets(s.index > 0 ? tl_space_region_tile(s.space, (size_t)s.index - 1)
+                                            : tl_space_effective_tile(s.space),
+                                offset);
     } else if (s.kind == APP_SELECT_RULER) {
         app_document_checkpoint(document, "nudge");
         tl_ruler_translate(s.ruler, offset);

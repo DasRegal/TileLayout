@@ -167,7 +167,8 @@
           <label class="row" id="floor-row"><span class="caption">Пол</span>
             <span class="control"><select id="floor-source"></select></span></label>
           <p id="room-shared" class="hint" hidden></p>
-          <label class="row check"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка в комнате</span></label>
+          <label class="row check" title="Снята — у комнаты ничего не показывается и не считается: пол, участки, бордюр, ковёр, стены, панно (настройки сохраняются)"><input type="checkbox" id="room-counted"> <span class="caption">Комната в расчёте</span></label>
+          <label class="row check" title="Плитка на основном полу — на плане и в расчёте; стены и участки со своей плиткой — отдельно"><input type="checkbox" id="tile-enabled"> <span class="caption">Плитка на полу</span></label>
           <div class="texture">
             <img id="texture-image" alt="" hidden>
             <div>

@@ -71,7 +71,7 @@ export class Catalogs {
   async fieldsFor(catalog, tile) {
     let color = tile.color;
     if (!color) color = await averageColor(this.imageUrl(catalog, tile));
-    const fields = { w: tile.width, h: tile.height, texture: `${catalog.id}/${tile.id}` };
+    const fields = { w: tile.width, h: tile.height, texture: `${catalog.id}/${tile.id}`, directional: true };
     if (color) fields.color = color;
     return fields;
   }

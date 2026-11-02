@@ -37,7 +37,7 @@ TlLayoutGroupList tl_report_build_groups(TlProject *project, const TlLayoutOptio
         TlSpace *space = project->spaces.items[i];
         if (only_source && space->layout_source != only_source)
             continue;
-        bool floor = tl_space_effective_tile(space)->enabled; /* без плитки на полу — участки и стены */
+        bool floor = tl_space_floor_on(space); /* без плитки на полу — участки и стены */
         if (!floor && fresh)
             continue;
         TlLayout *layout = fresh ? tl_layout_compute(space, options) : tl_space_layout(space);

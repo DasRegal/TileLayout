@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "tl_drag.h"
+#include "tl_layout.h"
 
 /* Дом 6000×4000 (стены 200) и вертикальная перегородка по x = 3000. */
 static TlProject *house_with_partition(void)
@@ -204,6 +205,23 @@ void spec_drag(void)
             EXPECT_NEAR(tile->offset_x, 100, 1e-9); /* поворот 90°: вниз на экране — вдоль раскладки */
             EXPECT_NEAR(tile->offset_y, 0, 1e-9);
             tl_project_free(project);
+        }
+        IT("стрелки при повороте плитки на 90°: вверх — вверх по экрану, а не вбок")
+        {
+            TlTileSettings tile = tl_tile_settings_factory();
+            tile.rotation_degrees = 90;
+            tile.offset_x = tile.offset_y = 0;
+            double x = -10, y = 0; /* ось X раскладки смотрит вниз: вверх — минус по X */
+            tl_layout_normalize_offsets(&tile, &x, &y);
+            tl_layout_shift_offsets(&tile, tl_vec2(0, -10)); /* вверх на 10 мм */
+            EXPECT_NEAR(tile.offset_x, x, 1e-9);
+            EXPECT_NEAR(tile.offset_y, y, 1e-9);
+            tile.offset_x = tile.offset_y = 0;
+            x = 0, y = -10; /* ось Y раскладки смотрит влево: вправо — минус по Y */
+            tl_layout_normalize_offsets(&tile, &x, &y);
+            tl_layout_shift_offsets(&tile, tl_vec2(10, 0));
+            EXPECT_NEAR(tile.offset_x, x, 1e-9);
+            EXPECT_NEAR(tile.offset_y, y, 1e-9);
         }
     }
 }

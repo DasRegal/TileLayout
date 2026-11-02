@@ -20,7 +20,7 @@ static int group_offcut_pairs(const TlLayoutGroup *group)
             if (pieces.items[i].spec == (int)s)
                 tl_piece_list_push(&of_spec, pieces.items[i]);
         TlOffcutPairList pairs = tl_report_offcut_pairs(pattern->specs[s].laid_width, pattern->specs[s].laid_height,
-                                                        tile->cut_allowance, &of_spec);
+                                                        tile->cut_allowance, !tile->directional, &of_spec);
         pairs_count += (int)pairs.count;
         tl_offcut_pair_list_free(&pairs);
         tl_piece_list_free(&of_spec);

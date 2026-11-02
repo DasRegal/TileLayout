@@ -63,7 +63,7 @@ static void add_work(TlEstimate *estimate, const TlSummary *summary)
         for (size_t p = 0; p < room->space->pannos.count; p++) { /* панно — по цене укладки плитки вокруг */
             const TlPanno *panno = &room->space->pannos.items[p];
             bool on_wall = panno->wall != TL_PANNO_FLOOR;
-            if (on_wall && !room->space->walls.enabled)
+            if (on_wall && !tl_space_walls_on(room->space))
                 continue;
             add_work_amount(on_wall ? &walls : &laying, tl_space_panno_tile(room->space, p).price_work_m2,
                             tl_panno_width(panno) * tl_panno_height(panno) / 1e6);
@@ -120,7 +120,7 @@ static void add_pannos(TlEstimate *estimate, const TlSummary *summary)
         const TlSpace *space = summary->rooms.items[r].space;
         for (size_t i = 0; i < space->pannos.count; i++) {
             const TlPanno *panno = &space->pannos.items[i];
-            if (panno->wall != TL_PANNO_FLOOR && !space->walls.enabled)
+            if (panno->wall != TL_PANNO_FLOOR && !tl_space_walls_on(space))
                 continue;
             char name[160];
             tl_panno_name(panno, name, sizeof name);

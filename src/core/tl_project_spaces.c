@@ -525,6 +525,7 @@ void tl_project_update_spaces(TlProject *project)
             if (parent[c]) { /* часть разделённой комнаты — её высота и стены */
                 space->height = parent[c]->height;
                 space->walls = parent[c]->walls;
+                space->excluded = parent[c]->excluded;
             }
             tl_space_list_push(&named, space);
             names_in_use++;

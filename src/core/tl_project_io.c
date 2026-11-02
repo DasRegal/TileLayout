@@ -539,6 +539,8 @@ static TlJson *space_to_json(const TlSpace *space)
     tl_json_object_set(object, "name", tl_json_string(space->name));
     tl_json_object_set(object, "tile", tile_to_json(&space->tile));
     tl_json_object_set(object, "source", space->source_id ? tl_json_number(space->source_id) : tl_json_null());
+    if (space->excluded)
+        tl_json_object_set(object, "excluded", tl_json_bool(true));
     tl_json_object_set(object, "pts", polygon_to_json(&space->outline));
     tl_json_object_set(object, "zones", zones_to_json(space));
     tl_json_object_set(object, "height", tl_json_number(space->height));
@@ -558,6 +560,7 @@ static TlSpace *space_from_json(const TlJson *object)
                                   tl_json_string_or(tl_json_get(object, "name"), "Комната"),
                                   tile_from_json(tl_json_get(object, "tile")));
     space->source_id = (int)tl_json_number_or(tl_json_get(object, "source"), 0);
+    space->excluded = tl_json_bool_or(tl_json_get(object, "excluded"), false);
     space->outline = polygon_from_json(tl_json_get(object, "pts"));
     zones_from_json(space, tl_json_get(object, "zones"));
     space->height = tl_json_number_or(tl_json_get(object, "height"), TL_ROOM_HEIGHT);

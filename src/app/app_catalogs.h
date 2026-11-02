@@ -15,6 +15,7 @@
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
 #include "tl_catalog.h"
+#include "tl_project.h"
 
 /* Перечитать все каталоги (и забыть загруженные рисунки). */
 void app_catalogs_reload(void);
@@ -26,6 +27,9 @@ const char *app_catalogs_user_directory(void);
 cairo_surface_t *app_catalogs_image(const char *reference);
 /* Уменьшенный рисунок для выбора, не больше size по длинной стороне (новая ссылка). */
 GdkPixbuf *app_catalogs_thumbnail(const TlCatalog *catalog, const TlCatalogTile *tile, int size);
+/* Плитки проекта с рисунком из своих каталогов: на сайте этих рисунков нет — по ссылке там будет
+   только цвет. «Мрамор белый, Дуб» (новая строка) или NULL — все рисунки есть и на сайте. */
+char *app_catalogs_missing_on_site(const TlProject *project);
 /* Плитку — в настройки комнаты; цвета нет в описании — средний по рисунку. */
 void app_catalogs_apply(const TlCatalog *catalog, const TlCatalogTile *tile, TlTileSettings *settings);
 

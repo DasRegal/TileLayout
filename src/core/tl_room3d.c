@@ -302,7 +302,7 @@ static void build_floor(GroupList *groups, TlProject *project, TlSpace *space)
     for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) /* у участка плитка своя, даже без плитки комнаты */
         if (tl_space_layout_counted(space, l))
             add_tiles(&group, tl_space_layout_at(space, l), &mapper, tl_space_layout_tile(space, l));
-    for (size_t p = 0; p < space->pannos.count; p++)
+    for (size_t p = 0; tl_space_floor_on(space) && p < space->pannos.count; p++)
         if (space->pannos.items[p].wall == TL_PANNO_FLOOR)
             add_panno(&group, space, p, &mapper);
     for (size_t i = 0; i < project->pipes.count; i++) { /* отверстия в плитке пола */
@@ -409,12 +409,12 @@ static void build_walls(GroupList *groups, TlProject *project, TlSpace *space)
             size_t on_wall = SIZE_MAX;
             TlWallBand band = TL_WALL_MAIN;
             TlLayout *layout = tl_space_wall_layout_at(space, i, &on_wall, &band);
-            if (on_wall == w && tl_space_wall_layout_reveal(space, i) == SIZE_MAX &&
+            if (on_wall == w && tl_space_walls_on(space) && tl_space_wall_layout_reveal(space, i) == SIZE_MAX &&
                 tl_space_wall_layout_stairs(space, i, NULL, NULL) == SIZE_MAX)
                 add_tiles(&group, layout, &mapper, tl_space_wall_tile(space, band));
         }
         (void)floors;
-        for (size_t p = 0; space->walls.enabled && p < space->pannos.count; p++)
+        for (size_t p = 0; tl_space_walls_on(space) && p < space->pannos.count; p++)
             if (space->pannos.items[p].wall != TL_PANNO_FLOOR && tl_space_wall_of_edge(space, space->pannos.items[p].wall) == w)
                 add_panno(&group, space, p, &mapper);
         for (size_t p = 0; p < space->wall_pipes.count; p++) { /* отверстия на стене: розетки, смесители */
@@ -506,8 +506,8 @@ static void build_stairs(GroupList *groups, TlSpace *space, size_t k)
             for (size_t i = 0; i < tl_space_wall_layout_count(space); i++) {
                 int layout_step;
                 bool tread;
-                if (tl_space_wall_layout_stairs(space, i, &layout_step, &tread) == k && layout_step == step &&
-                    tread == (part == 1))
+                if (!space->excluded && tl_space_wall_layout_stairs(space, i, &layout_step, &tread) == k &&
+                    layout_step == step && tread == (part == 1))
                     add_tiles(&group, tl_space_wall_layout_at(space, i, NULL, NULL), &mapper, tl_space_effective_tile(space));
             }
             group_list_push(groups, group);

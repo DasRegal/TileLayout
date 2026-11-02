@@ -93,7 +93,7 @@ static void append_zone(GString *text, TlSpace *space, TlZoneKind kind)
 /* Облицовка стен — по полосам. */
 static void append_walls(GString *text, TlSpace *space)
 {
-    for (int band = 0; space->walls.enabled && band < TL_WALL_BAND_COUNT; band++) {
+    for (int band = 0; tl_space_walls_on(space) && band < TL_WALL_BAND_COUNT; band++) {
         int whole = 0, cut = 0;
         double area = 0;
         bool found = false;
@@ -133,6 +133,8 @@ static void append_walls(GString *text, TlSpace *space)
 static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
 {
     const TlTileSettings *tile = tl_space_effective_tile(space);
+    if (space->excluded) /* «Комната в расчёте» снята */
+        return;
     if (!tile->enabled) { /* пол без плитки: облицовка стен (участки со своей плиткой — в расчёте по видам) */
         if (!space->walls.enabled)
             return;
@@ -166,7 +168,7 @@ static void append_room(GString *text, const TlSummary *summary, TlSpace *space)
     append_walls(text, space);
     for (size_t i = 0; i < space->pannos.count; i++) { /* панно — комплектом */
         const TlPanno *panno = &space->pannos.items[i];
-        if (panno->wall != TL_PANNO_FLOOR && !space->walls.enabled)
+        if (panno->wall != TL_PANNO_FLOOR && !tl_space_walls_on(space))
             continue;
         char title[160];
         tl_panno_name(panno, title, sizeof title);

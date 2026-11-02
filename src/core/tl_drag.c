@@ -202,10 +202,8 @@ bool tl_drag_begin(TlDrag *drag, TlProject *project, TlDragTarget target, TlVec2
 static void drag_tiles(TlDrag *drag, TlVec2 delta, bool free)
 {
     TlTileSettings *tile = dragged_tile(drag);
-    double radians = tile->rotation_degrees * TL_PI / 180;
-    double along = delta.x * cos(radians) + delta.y * sin(radians);
-    double across = -delta.x * sin(radians) + delta.y * cos(radians);
-    double x = drag->original_offset_x + along, y = drag->original_offset_y + across;
+    TlVec2 local = tl_layout_axes_delta(tile, delta);
+    double x = drag->original_offset_x + local.x, y = drag->original_offset_y + local.y;
     if (!free) {
         x = round(x);
         y = round(y);

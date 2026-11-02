@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tl_layout.h"
 #include "tl_memory.h"
+#include "tl_regions.h"
 
 /* ---- нумерация ------------------------------------------------------------- */
 
@@ -135,9 +137,10 @@ static TlOffcutPairList pair_pieces(const TlPieceList *pieces, double tile_width
     return width_first;
 }
 
-TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, const TlPieceList *pieces)
+TlOffcutPairList tl_report_offcut_pairs(double width, double height, double allowance, bool can_turn,
+                                        const TlPieceList *pieces)
 {
-    return pair_pieces(pieces, width, height, allowance, fabs(width - height) < 0.5);
+    return pair_pieces(pieces, width, height, allowance, can_turn && fabs(width - height) < 0.5);
 }
 
 /* ---- сводка ---------------------------------------------------------------- */
@@ -205,6 +208,7 @@ static int compare_types_by_area(const void *left, const void *right)
  * из всех комнат с этим видом и плитки с весом запаса каждой комнаты. */
 typedef struct TypeTally {
     TlPieceList pieces;          /* в осях вида (type->spec) */
+    TlPieceList figured;         /* куски шеврона и вставки — пары по контурам */
     double allowance;            /* запас на рез — наибольший из комнат */
     double reserved;             /* Σ плиток × (1 + запас) */
 } TypeTally;
@@ -267,6 +271,7 @@ static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlL
      * 600×300 в одной комнате и 300×600 в другой — одна: куски поворачиваются. */
     bool turned = lies_lengthwise(spec) != lies_lengthwise(&type->spec);
     bool reuse = tile->reuse_offcuts && spec->rectangular; /* куски шеврона и вставки — не полосы */
+    bool figured = tile->reuse_offcuts && !spec->rectangular;
     TlPieceList pieces = tl_group_unshared_pieces(group);
     if (!type->pieces)
         type->pieces = TL_NEW(TlPieceList);
@@ -279,9 +284,11 @@ static void summarize_spec(TlSummary *summary, TypeTallyList *tallies, const TlL
         tl_piece_list_push(type->pieces, piece); /* для карты раскроя — все подрезки */
         if (reuse)
             tl_piece_list_push(&tally->pieces, piece);
+        if (figured && !turned) /* фигурный кусок — в осях своей плитки, повёрнутый не сравнить */
+            tl_piece_list_push(&tally->figured, piece);
     }
     tl_piece_list_free(&pieces);
-    if (reuse && tile->cut_allowance > tally->allowance)
+    if ((reuse || figured) && tile->cut_allowance > tally->allowance)
         tally->allowance = tile->cut_allowance;
 }
 
@@ -313,12 +320,88 @@ static void summarize_group(TlSummary *summary, TypeTallyList *tallies, const Tl
     }
 }
 
+/* ---- пары фигурных кусков (шеврон, вставка) — по контурам -------------------------
+ * Куски одного вида лежат в общих осях своей плитки (от угла габарита): у шеврона кусок у
+ * одного торца — с одного края, у другого — с другого. Два куска режутся из одной плитки, если
+ * их контуры не пересекаются и между ними — запас на рез: остаток от одного торца идёт туда,
+ * где нужен другой торец, а два куска у одного торца — нет. */
+
+static const TlPolygon *piece_outline(const TlPieceRef *ref)
+{
+    TlLayout *layout = tl_space_layout_at(ref->space, ref->layout);
+    const TlTile *tile = layout ? tl_layout_tile_at(layout, ref->cell) : NULL;
+    return tile && tile->shapes.count && tile->shapes.items[0].count >= 3 ? &tile->shapes.items[0] : NULL;
+}
+
+static double edges_distance(const TlPolygon *a, const TlPolygon *b)
+{
+    double best = INFINITY;
+    for (size_t i = 0; i < a->count; i++)
+        for (size_t k = 0; k < b->count; k++)
+            best = fmin(best, tl_point_segment_distance(a->items[i], b->items[k], b->items[(k + 1) % b->count], NULL));
+    return best;
+}
+
+static bool cut_apart(const TlPolygon *a, const TlPolygon *b, double allowance)
+{
+    TlRect ra = tl_polygon_bounds(a), rb = tl_polygon_bounds(b);
+    if (ra.left >= rb.right + allowance || rb.left >= ra.right + allowance || ra.top >= rb.bottom + allowance ||
+        rb.top >= ra.bottom + allowance)
+        return true;
+    return tl_polygons_overlap_area(a, b) < 1 &&
+           fmin(edges_distance(a, b), edges_distance(b, a)) >= allowance - 1e-6;
+}
+
+static double piece_area(const TlPiece *piece)
+{
+    const TlPolygon *outline = piece_outline(&piece->ref);
+    return outline ? fabs(tl_polygon_signed_area(outline)) : 0;
+}
+
+/* Жадно: самый большой кусок — с самым большим, что помещается рядом. */
+static TlOffcutPairList pair_figured(const TlPieceList *pieces, double allowance)
+{
+    TlOffcutPairList pairs = {0};
+    size_t n = pieces->count;
+    bool *used = tl_calloc(n + 1, sizeof *used);
+    double *area = tl_malloc((n + 1) * sizeof *area);
+    for (size_t i = 0; i < n; i++)
+        area[i] = piece_area(&pieces->items[i]);
+    for (;;) {
+        size_t first = SIZE_MAX;
+        for (size_t i = 0; i < n; i++)
+            if (!used[i] && area[i] > 0 && (first == SIZE_MAX || area[i] > area[first]))
+                first = i;
+        if (first == SIZE_MAX)
+            break;
+        used[first] = true;
+        const TlPolygon *a = piece_outline(&pieces->items[first].ref);
+        size_t mate = SIZE_MAX;
+        for (size_t j = 0; j < n; j++)
+            if (!used[j] && area[j] > 0 && (mate == SIZE_MAX || area[j] > area[mate]) &&
+                cut_apart(a, piece_outline(&pieces->items[j].ref), allowance))
+                mate = j;
+        if (mate != SIZE_MAX) {
+            used[mate] = true;
+            tl_offcut_pair_list_push(&pairs, (TlOffcutPair){pieces->items[first].ref, pieces->items[mate].ref, false});
+        }
+    }
+    free(area);
+    free(used);
+    return pairs;
+}
+
 /* Пары обрезков и запас — по виду плитки целиком: запас округляется один раз,
  * а не в каждой комнате. */
 static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *tally)
 {
     TlOffcutPairList pairs =
-        tl_report_offcut_pairs(type->spec.laid_width, type->spec.laid_height, tally->allowance, &tally->pieces);
+        tl_report_offcut_pairs(type->spec.laid_width, type->spec.laid_height, tally->allowance, !type->tile->directional,
+                               &tally->pieces);
+    TlOffcutPairList figured = pair_figured(&tally->figured, tally->allowance);
+    for (size_t i = 0; i < figured.count; i++)
+        tl_offcut_pair_list_push(&pairs, figured.items[i]);
+    tl_offcut_pair_list_free(&figured);
     double reserve = type->count > 0 ? tally->reserved / type->count : 1.0;
     type->offcut_saving = (int)pairs.count;
     type->count -= (int)pairs.count;
@@ -329,6 +412,7 @@ static void finish_type(TlSummary *summary, TlTileTypeSummary *type, TypeTally *
         tl_offcut_pair_list_push(&summary->offcut_pairs, pairs.items[i]);
     tl_offcut_pair_list_free(&pairs);
     tl_piece_list_free(&tally->pieces);
+    tl_piece_list_free(&tally->figured);
 }
 
 /* Длина стен комнаты без дверей, мм — по ней заход гидроизоляции и лента. */
@@ -404,7 +488,7 @@ static void summarize_thresholds(TlSummary *summary, TlProject *project)
             TlSpace *space = project->spaces.items[s];
             const TlTileSettings *tile = tl_space_effective_tile(space);
             TlVec2 from, to;
-            if (!tile->enabled || !tile->threshold_profile ||
+            if (!tl_space_floor_on(space) || !tile->threshold_profile ||
                 !tl_project_space_door_edge(project, space, opening, &from, &to))
                 continue;
             add_to_pack_line(&summary->thresholds, tile->profile_length, tile->price_threshold, tl_distance(from, to));
@@ -453,7 +537,7 @@ static void summarize_room_materials(TlSummary *summary, TlRoomSummary *room)
                                  tl_space_layout_on_wall(room->space, i));
     for (size_t i = 0; i < room->space->pannos.count; i++) {
         bool on_wall = room->space->pannos.items[i].wall != TL_PANNO_FLOOR;
-        if (on_wall && !room->space->walls.enabled)
+        if (on_wall && !tl_space_walls_on(room->space))
             continue;
         TlLayout *layout = tl_space_panno_layout(room->space, i);
         TlTileSettings tile = tl_space_panno_tile(room->space, i);
@@ -481,7 +565,7 @@ TlSummary tl_report_summarize(TlProject *project)
         for (size_t l = 0; l < tl_space_layout_count(space) && !room.tiled; l++)
             room.tiled = tl_space_layout_counted(space, l);
         for (size_t p = 0; p < space->pannos.count && !room.tiled; p++)
-            room.tiled = space->pannos.items[p].wall == TL_PANNO_FLOOR ? room.floor_tiled : space->walls.enabled;
+            room.tiled = space->pannos.items[p].wall == TL_PANNO_FLOOR ? room.floor_tiled : tl_space_walls_on(space);
         summary.floor_area += tl_space_area(space);
         summary.room_area += tl_space_room_area(space);
         if (room.tiled)

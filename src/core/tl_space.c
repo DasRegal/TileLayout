@@ -99,6 +99,10 @@ const TlPolygon *tl_space_frame(const TlSpace *space) { return tl_space_room_out
 
 bool tl_space_has_shared_floor(const TlSpace *space) { return space->layout_source != space; }
 
+bool tl_space_floor_on(const TlSpace *space) { return !space->excluded && space->layout_source->tile.enabled; }
+
+bool tl_space_walls_on(const TlSpace *space) { return !space->excluded && space->walls.enabled; }
+
 TlPolygon tl_space_wall_outline(const TlSpace *space)
 {
     TlPolygon outline = tl_polygon_copy(tl_space_room_outline(space));
@@ -124,6 +128,13 @@ size_t tl_space_area_of_region(const TlSpace *space, size_t region)
         if (tl_region_contains(&space->regions.items[region], space->areas.items[i].anchor))
             return i;
     return SIZE_MAX;
+}
+
+TlTileSettings *tl_space_region_tile(TlSpace *space, size_t region)
+{
+    size_t area = tl_space_area_of_region(space, region);
+    return area != SIZE_MAX && space->areas.items[area].tiled ? &space->areas.items[area].zone.tile
+                                                              : tl_space_effective_tile(space);
 }
 
 static TlRegion region_copy(const TlRegion *region)

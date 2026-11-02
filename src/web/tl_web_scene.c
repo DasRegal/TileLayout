@@ -294,7 +294,7 @@ static TlJson *space_json(TlProject *project, TlSpace *space)
                                                                         : tl_json_null());
     const TlTileSettings *tile = tl_space_effective_tile(space);
     tl_json_object_set(json, "tile", tl_web_tile_json(tile));
-    tl_json_object_set(json, "layout", tile->enabled ? tl_web_layout_json(tl_space_layout(space)) : tl_json_null());
+    tl_json_object_set(json, "layout", tl_space_floor_on(space) ? tl_web_layout_json(tl_space_layout(space)) : tl_json_null());
     TlJson *zones = tl_json_array(); /* бордюр (по раскладке на стену), ковёр — поверх основного пола */
     for (size_t l = 1; l < tl_space_floor_layout_count(space); l++) { /* участок со своей плиткой — и без плитки пола */
         if (!tl_space_layout_counted(space, l))
@@ -305,7 +305,7 @@ static TlJson *space_json(TlProject *project, TlSpace *space)
     }
     tl_json_object_set(json, "zones", zones);
     TlJson *pannos = tl_json_array(); /* панно на полу — поверх пола */
-    for (size_t i = 0; tile->enabled && i < space->pannos.count; i++) {
+    for (size_t i = 0; tl_space_floor_on(space) && i < space->pannos.count; i++) {
         TlJson *panno = space->pannos.items[i].wall == TL_PANNO_FLOOR ? tl_web_panno_json(space, i, NULL) : NULL;
         if (panno)
             tl_json_array_push(pannos, panno);

@@ -123,8 +123,8 @@ const char *tl_web_cut_cards(void)
     return tl_web_keep(&text, list);
 }
 
-/* Карта раскроя: [{"name", "color", "stacks": [{"width", "height", "numbers": [..]}],
-   "pairs": [{"first", "second", "sizes": [a, b]}]}]. */
+/* Карта раскроя: [{"name", "color", "figured" (шеврон, вставка: куски у разных торцов, не полосы),
+   "stacks": [{"width", "height", "numbers": [..]}], "pairs": [{"first", "second", "sizes": [a, b]}]}]. */
 const char *tl_web_cut_map(void)
 {
     static char *text;
@@ -138,6 +138,7 @@ const char *tl_web_cut_map(void)
         tl_tile_spec_name(&entry->type->spec, name, sizeof name);
         tl_json_object_set(type, "name", tl_json_string(name));
         tl_json_object_set(type, "color", tl_json_string(entry->type->spec.color));
+        tl_json_object_set(type, "figured", tl_json_bool(!entry->type->spec.rectangular));
         for (size_t k = 0; k < entry->stacks.count; k++) {
             const TlCutStack *stack = &entry->stacks.items[k];
             TlJson *item = tl_json_object(), *numbers = tl_json_array();

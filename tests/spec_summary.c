@@ -236,6 +236,23 @@ void spec_summary(void)
         }
     }
 
+    DESCRIBE("Плитка с рисунком: куски не поворачиваются")
+    {
+        IT("квадрат 300×300: полосы 100 поперёк ширины и 150 поперёк высоты — пара только у однотонной")
+        {
+            TlPieceList pieces = {0};
+            tl_piece_list_push(&pieces, (TlPiece){.width = 100, .height = 300});
+            tl_piece_list_push(&pieces, (TlPiece){.width = 300, .height = 150});
+            TlOffcutPairList plain = tl_report_offcut_pairs(300, 300, 3, true, &pieces);
+            TlOffcutPairList figured = tl_report_offcut_pairs(300, 300, 3, false, &pieces);
+            EXPECT_INT(plain.count, 1);
+            EXPECT_INT(figured.count, 0);
+            tl_offcut_pair_list_free(&plain);
+            tl_offcut_pair_list_free(&figured);
+            tl_piece_list_free(&pieces);
+        }
+    }
+
     DESCRIBE("Угловые куски из одной плитки")
     {
         IT("два угловых куска — пара: каждый в своём углу плитки, между ними — запас на рез, не внахлёст")

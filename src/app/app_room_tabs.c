@@ -187,7 +187,7 @@ static Grab pick(RoomPage *page, TlSpace *space, TlVec2 screen, size_t *index)
             return GRAB_RULER;
     }
     TlVec2 world = app_view_to_world(view, screen);
-    for (size_t i = space->pannos.count; space->walls.enabled && i-- > 0;) { /* панно на стенах */
+    for (size_t i = space->pannos.count; tl_space_walls_on(space) && i-- > 0;) { /* панно на стенах */
         if (space->pannos.items[i].wall == TL_PANNO_FLOOR)
             continue;
         TlPolygon outline = tl_space_panno_outline(space, i);

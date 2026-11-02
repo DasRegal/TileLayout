@@ -89,6 +89,7 @@ static const TlTileField FIELDS[] = {
     FIELD("svp_short", TL_FIELD_INT, clips_per_short_side, true),
     FIELD("svp_pack", TL_FIELD_INT, clips_per_pack, true),
     FIELD("reuse", TL_FIELD_BOOL, reuse_offcuts, true),
+    FIELD("directional", TL_FIELD_BOOL, directional, true),
     FIELD("cut_allow", TL_FIELD_DOUBLE, cut_allowance, true),
     FIELD("wall_gap", TL_FIELD_DOUBLE, wall_gap, true),
     FIELD("texture", TL_FIELD_TEXT, texture, true),

@@ -68,7 +68,7 @@ const char *tl_zone_name(TlZoneKind kind) { return kind == TL_ZONE_BORDER ? "Б�
 /* Что относится к самой плитке зоны и её укладке; остальное (клей, СВП, затирка, грунт) — от комнаты. */
 static const char *const OWN_FIELDS[] = {
     "w", "h", "real_w", "real_h", "gap", "off_x", "off_y", "angle", "shift", "pattern", "color", "color2", "texture", "pattern_angle",
-    "insert", "min_cut", "reserve", "wall_gap", "price_tile", "price_work", "price_tile_unit", "tile_pack",
+    "insert", "min_cut", "reserve", "wall_gap", "price_tile", "price_work", "price_tile_unit", "tile_pack", "directional",
 };
 
 bool tl_zone_field_is_own(const char *key)

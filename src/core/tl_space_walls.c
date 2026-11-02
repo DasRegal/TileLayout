@@ -586,7 +586,7 @@ static bool square_to_wall(const TlAffine *m)
 bool tl_space_wall_align_floor(TlSpace *space, size_t wall)
 {
     const TlRoomWall *room_wall = tl_space_wall_at(space, wall);
-    if (!room_wall || !space->walls.enabled)
+    if (!room_wall || !tl_space_walls_on(space))
         return false;
     TlAffine to_development = tl_space_wall_floor_affine(space, wall);
     /* швы пола у стены: края плиток, касающихся стены (основной пол или бордюр) */

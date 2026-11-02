@@ -80,7 +80,7 @@ static TlJson *floor_strip(TlSpace *space, size_t wall)
 {
     TlJson *layouts = tl_json_array();
     const TlRoomWall *room_wall = tl_space_wall_at(space, wall);
-    if (!tl_space_effective_tile(space)->enabled)
+    if (!tl_space_floor_on(space))
         return layouts;
     TlRect strip = {room_wall->x - 1, space->height - 1, room_wall->x + room_wall->length + 1,
                     space->height + TL_WALL_FLOOR_DEPTH + 1};
@@ -154,7 +154,7 @@ const char *tl_web_room_walls(int space_id)
         tl_json_array_push(holes, item);
     }
     tl_report_assign_numbers(project);
-    for (size_t i = 0; i < tl_space_wall_layout_count(space); i++) {
+    for (size_t i = 0; !space->excluded && i < tl_space_wall_layout_count(space); i++) { /* и ступени */
         TlWallBand band;
         TlLayout *layout = tl_space_wall_layout_at(space, i, NULL, &band);
         TlJson *item = tl_web_layout_json(layout);
@@ -202,7 +202,7 @@ const char *tl_web_room_walls(int space_id)
         tl_json_array_push(rulers, item);
     }
     TlJson *pannos = tl_json_array();
-    for (size_t i = 0; space->walls.enabled && i < space->pannos.count; i++) {
+    for (size_t i = 0; tl_space_walls_on(space) && i < space->pannos.count; i++) {
         const TlPanno *panno = &space->pannos.items[i];
         size_t wall = panno->wall == TL_PANNO_FLOOR ? SIZE_MAX : tl_space_wall_of_edge(space, panno->wall);
         TlJson *item = wall == SIZE_MAX ? NULL : tl_web_panno_json(space, i, NULL);

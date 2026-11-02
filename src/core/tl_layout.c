@@ -770,6 +770,21 @@ void tl_layout_normalize_offsets(const TlTileSettings *tile, double *offset_x, d
     *offset_y = reduced.y;
 }
 
+TlVec2 tl_layout_axes_delta(const TlTileSettings *tile, TlVec2 delta)
+{
+    double radians = tile->rotation_degrees * TL_PI / 180;
+    return tl_vec2(delta.x * cos(radians) + delta.y * sin(radians), -delta.x * sin(radians) + delta.y * cos(radians));
+}
+
+void tl_layout_shift_offsets(TlTileSettings *tile, TlVec2 delta)
+{
+    TlVec2 local = tl_layout_axes_delta(tile, delta);
+    double x = tile->offset_x + local.x, y = tile->offset_y + local.y;
+    tl_layout_normalize_offsets(tile, &x, &y);
+    tile->offset_x = x;
+    tile->offset_y = y;
+}
+
 /* Первая плитка модуля — от неё считаются «целая в углу» и «по центру». */
 static TlRect first_tile(const TlTileSettings *tile)
 {

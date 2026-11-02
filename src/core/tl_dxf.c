@@ -203,7 +203,7 @@ char *tl_dxf_plan(TlProject *project)
         polygon(&dxf, FLOOR, &space->outline, NULL, tl_vec2(0, 0), true);
         for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) {
             const TlLayout *layout = tl_space_layout_at(space, l);
-            if (layout && !layout->too_many && tl_space_layout_tile(space, l)->enabled)
+            if (layout && tl_space_layout_counted(space, l))
                 plan_tiles(&dxf, layout);
         }
         TlRect bounds = tl_polygon_bounds(&space->outline);

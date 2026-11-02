@@ -85,7 +85,7 @@ static void add_pair_parts(TlCutCard *card, bool across_width, const char *first
 {
     double w = card->width, h = card->height, w1, h1;
     tl_tile_piece_size(first, &w1, &h1);
-    if (fabs(w - h) < 0.5) { /* у квадрата куски поворачиваются: узкой стороной — по ширине */
+    if (fabs(w - h) < 0.5 && !card->tile->directional) { /* у однотонного квадрата куски поворачиваются */
         double s1 = fmin(w1, h1), l1 = fmax(w1, h1), s2 = fmin(w2, h2), l2 = fmax(w2, h2);
         w1 = s1, h1 = l1, w2 = s2, h2 = l2;
     }
@@ -195,6 +195,17 @@ static void append_drills(char *text, size_t size, const TlTile *tile)
     }
 }
 
+/* Шеврон (у вида — исполнение «левая»/«правая»): какой торец плитки у куска остаётся — резать с другого. */
+static const char *chevron_end(const TlLayout *layout, const TlTile *tile)
+{
+    if (!tl_layout_spec(layout, tile)->variant[0] || tile->outline.count < 3 || !tile->shapes.count)
+        return NULL;
+    TlRect plate = tl_polygon_bounds(&tile->outline), piece = tl_polygon_bounds(&tile->shapes.items[0]);
+    bool left = piece.left <= plate.left + 0.5, right = piece.right >= plate.right - 0.5;
+    return left && right ? "оба торца целые" : left ? "у левого торца" : right ? "у правого торца"
+                                                                       : "середина, оба торца срезаны";
+}
+
 static TlCutCard single_card(const char *name, const TlLayout *layout, const TlTile *tile,
                              const TlTileSettings *settings)
 {
@@ -206,8 +217,9 @@ static TlCutCard single_card(const char *name, const TlLayout *layout, const TlT
     if (whole)
         snprintf(card.subtitle, sizeof card.subtitle, "%s", "целая");
     else
-        snprintf(card.subtitle, sizeof card.subtitle, "%.0f×%.0f, %s", tile->piece_width, tile->piece_height,
-                 tile->figured ? "фигурная" : "прямая");
+        snprintf(card.subtitle, sizeof card.subtitle, "%.0f×%.0f, %s%s%s", tile->piece_width, tile->piece_height,
+                 tile->figured ? "фигурная" : "прямая", chevron_end(layout, tile) ? ", " : "",
+                 chevron_end(layout, tile) ? chevron_end(layout, tile) : "");
     append_drills(card.subtitle, sizeof card.subtitle, tile);
     return card;
 }
@@ -267,7 +279,12 @@ static void add_layout_cards(TlCutCardList *cards, const TlSummary *summary, TlL
         card.width = spec->laid_width;
         card.height = spec->laid_height;
         card.narrow = tile->kind == TL_TILE_NARROW || mate_tile->kind == TL_TILE_NARROW;
-        add_pair_parts(&card, pair->across_width, name, tile, mate_w, mate_h, mate_name, mate_tile);
+        if (spec->rectangular) {
+            add_pair_parts(&card, pair->across_width, name, tile, mate_w, mate_h, mate_name, mate_tile);
+        } else { /* шеврон, вставка: куски — где они в плитке (у своих торцов), отход между ними */
+            tl_cut_part_list_push(&card.parts, make_part(name, tile->number, tile));
+            tl_cut_part_list_push(&card.parts, make_part(mate_name, mate_tile->number, mate_tile));
+        }
         if (strcmp(name, mate_name) == 0)
             snprintf(card.title, sizeof card.title, "№%d + №%d  %s", tile->number, mate_tile->number, name);
         else

@@ -57,8 +57,9 @@ bool tl_web_set_rooms_tile_fields(const char *space_ids, const char *fields, dou
 bool tl_web_set_zone_fields(const char *space_ids, const char *zone, const char *fields, double now_seconds);
 /* Поменять длину и ширину плитки у комнат space_ids (JSON-массив id) — одним шагом. */
 bool tl_web_swap_tiles(const char *space_ids, double now_seconds);
-/* Высота помещения и облицовка стен у комнат space_ids: fields — {"room_height", "enabled", "height"}
-   (height 0 — до потолка). В tl_web_space_tile — объект "walls" с полосами "bands". */
+/* Высота помещения, облицовка стен и «Комната в расчёте» у комнат space_ids: fields — {"room_height",
+   "enabled", "height", "counted"} (height 0 — до потолка). В tl_web_space_tile — объект "walls" с полосами
+   "bands" и "counted". */
 bool tl_web_set_walls(const char *space_ids, const char *fields, double now_seconds);
 /* Часть пола region комнаты (между линиями раздела и швами; в tl_web_space_tile — "regions"):
    covering "room" | "own" (своя плитка) | "none" (без плитки) | "" — не менять; name — название участка

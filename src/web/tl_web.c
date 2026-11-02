@@ -171,6 +171,7 @@ const char *tl_web_space_tile(int space_id)
     tl_json_object_set(result, "source", tl_space_has_shared_floor(space) ? tl_json_string(space->layout_source->name)
                                                                           : tl_json_null());
     tl_json_object_set(result, "source_id", tl_json_number(space->source_id));
+    tl_json_object_set(result, "counted", tl_json_bool(!space->excluded));
     TlJson *sources = tl_json_array();
     TlProject *project = tl_web_project();
     for (size_t i = 0; i < project->spaces.count; i++) {
@@ -524,10 +525,11 @@ bool tl_web_set_walls(const char *space_ids, const char *fields, double now_seco
     size_t count = spaces_by_ids(space_ids, spaces);
     TlJson *parsed = tl_json_parse(fields, NULL, 0);
     const TlJson *room_height = tl_json_get(parsed, "room_height"), *enabled = tl_json_get(parsed, "enabled");
-    const TlJson *height = tl_json_get(parsed, "height");
+    const TlJson *height = tl_json_get(parsed, "height"), *counted = tl_json_get(parsed, "counted");
     bool ok = count > 0 && parsed && tl_json_type(parsed) == TL_JSON_OBJECT &&
               (!room_height || tl_json_number_or(room_height, 0) >= 500) &&
-              (!height || tl_json_number_or(height, -1) >= 0) && (!enabled || tl_json_type(enabled) == TL_JSON_BOOL);
+              (!height || tl_json_number_or(height, -1) >= 0) && (!enabled || tl_json_type(enabled) == TL_JSON_BOOL) &&
+              (!counted || tl_json_type(counted) == TL_JSON_BOOL);
     if (ok) {
         char merge_key[200] = "";
         if (tl_json_length(parsed) == 1)
@@ -540,6 +542,8 @@ bool tl_web_set_walls(const char *space_ids, const char *fields, double now_seco
                 spaces[i]->walls.enabled = tl_json_bool_or(enabled, false);
             if (height)
                 spaces[i]->walls.height = tl_json_number_or(height, 0);
+            if (counted)
+                spaces[i]->excluded = !tl_json_bool_or(counted, true);
         }
     }
     tl_json_free(parsed);

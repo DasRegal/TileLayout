@@ -145,7 +145,7 @@ const panel = new Panel(document.getElementById('panel'), {
   },
   chooseTile: () => pickTile(),
   chooseZoneTile: (zone) => pickZoneTile(zone),
-  colorOnly: () => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '' })),
+  colorOnly: () => editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '', directional: false })),
   toggleMulti: () => {
     state.multi = !state.multi;
     say(state.multi ? 'Касайтесь комнат, чтобы добавить или убрать их; поля применятся ко всем.' : '');
@@ -1251,7 +1251,7 @@ async function pickZoneTile(zone) {
   const choice = await chooseTile(catalogs, zoneData(room, zone).tile.texture);
   const [ids, key] = zone === 'area' ? [[selectedSpace()], `area:${selectedRegion()}`] : [selectedSpaces(), zone];
   if (choice === 'color-only') {
-    editRoom(() => state.core.setZoneFields(ids, key, { texture: '' }));
+    editRoom(() => state.core.setZoneFields(ids, key, { texture: '', directional: false }));
   } else if (choice) {
     const fields = await catalogs.fieldsFor(choice.catalog, choice.tile);
     editRoom(() => state.core.setZoneFields(ids, key, fields));
@@ -1263,7 +1263,7 @@ async function pickTile() {
   const room = state.core.spaceTile(selectedSpace());
   const choice = await chooseTile(catalogs, room.tile.texture);
   if (choice === 'color-only') {
-    editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '' }));
+    editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), { texture: '', directional: false }));
   } else if (choice) {
     const fields = await catalogs.fieldsFor(choice.catalog, choice.tile);
     editRoom(() => state.core.setRoomsTileFields(selectedSpaces(), fields));
@@ -1444,6 +1444,17 @@ async function shareProject() {
   } catch {
     say('Скопируйте ссылку из окна.');
   }
+}
+
+/** Сколько разных рисунков плитки проекта нет на сайте (свои каталоги настольной программы):
+ *  в ссылке — только «каталог/плитка», у таких плиток на плане — только цвет. */
+function texturesMissingOnSite() {
+  const references = new Set(state.core.scene().spaces.flatMap((space) => [
+    space.tile.texture,
+    ...(space.zones || []).map((zone) => zone.tile?.texture),
+    ...(space.pannos || []).map((panno) => panno.tile?.texture),
+  ]).filter(Boolean));
+  return [...references].filter((reference) => !catalogs.find(reference)).length;
 }
 
 /** Проект по ссылке: прошлый черновик — в запас, кнопка «Вернуть мой проект». */
@@ -1799,6 +1810,8 @@ async function start() {
   let message = 'Пример проекта. Щёлкните комнату, чтобы настроить плитку; откройте свой файл кнопкой «Открыть».';
   if (await openFromLink()) {
     message = 'Открыт проект по ссылке.' + (document.getElementById('restore-draft').hidden ? '' : ' Ваш прошлый проект — кнопка «Вернуть мой проект».');
+    const missing = texturesMissingOnSite();
+    if (missing) message += ` Рисунков ${missing === 1 ? 'одной плитки' : `${missing} плиток`} на сайте нет — они из своих каталогов настольной программы, показан цвет.`;
   } else if (draft) {
     try {
       state.core.open(draft.text);

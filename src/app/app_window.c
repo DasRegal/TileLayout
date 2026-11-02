@@ -415,6 +415,15 @@ static void on_share_link(GtkMenuItem *item, AppWindow *self)
     char *note = g_strdup_printf("Ссылка скопирована (%zu знаков). Проект целиком — в самой ссылке, на сервер он "
                                  "не попадает; по ней он откроется на сайте или здесь — «Файл → Открыть ссылку». "
                                  "Фото-подложка в ссылку не входит.", strlen(link));
+    char *missing = app_catalogs_missing_on_site(self->document->project);
+    if (missing) { /* в ссылке — только «каталог/плитка»; своих каталогов на сайте нет */
+        char *longer = g_strdup_printf("%s\n\nРисунки плитки из ваших каталогов в ссылку не входят — на сайте у неё "
+                                       "будет только цвет: %s. Здесь, в программе, рисунки видны.",
+                                       note, missing);
+        g_free(note);
+        note = longer;
+        g_free(missing);
+    }
     GtkWidget *label = gtk_label_new(note);
     g_free(note);
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);

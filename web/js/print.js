@@ -539,8 +539,10 @@ function cutMapSheet(types, title, mono) {
         type.stacks.map((s) => `<tr><td>${s.width} × ${s.height}</td><td class="n">${s.numbers.length}</td><td>${s.numbers.join(', ')}</td></tr>`).join('')}</tbody></table>`
       : '';
     const pairs = type.pairs.length
-      ? `<p><b>Две подрезки из одной плитки</b> (полосы — по ширине, остальное — в отход)</p>
-        <table><thead><tr><th>Куски</th><th>Полосы, мм</th></tr></thead><tbody>${
+      ? `<p><b>Две подрезки из одной плитки</b> ${type.figured
+        ? '(куски у разных торцов плитки — как на чертеже, между ними — отход)'
+        : '(полосы — по ширине, остальное — в отход)'}</p>
+        <table><thead><tr><th>Куски</th><th>${type.figured ? 'Габарит, мм' : 'Полосы, мм'}</th></tr></thead><tbody>${
         type.pairs.map((p) => `<tr><td>№${p.first} + №${p.second}</td><td>${p.sizes[0]} + ${p.sizes[1]}</td></tr>`).join('')}</tbody></table>`
       : '';
     return `<h2>${swatch(type.color)}Плитка ${escape(type.name)}</h2>${stacks}${pairs}`;

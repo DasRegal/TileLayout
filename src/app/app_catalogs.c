@@ -13,6 +13,7 @@ static struct {
     bool loaded;
     TlCatalogList list;
     GPtrArray *folders;  /* папка каждого каталога — параллельно list */
+    size_t builtin_count; /* первые в list — встроенные: они же на сайте */
     GHashTable *images;  /* ссылка → cairo_surface_t (или NULL — не загрузился) */
     char *user_directory;
 } catalogs;
@@ -162,6 +163,7 @@ void app_catalogs_reload(void)
     char *builtin = builtin_directory();
     load_root(builtin);
     g_free(builtin);
+    catalogs.builtin_count = catalogs.list.count;
     load_root(app_catalogs_user_directory());
     catalogs.loaded = true;
 }
@@ -171,6 +173,40 @@ const TlCatalogList *app_catalogs(void)
     if (!catalogs.loaded)
         app_catalogs_reload();
     return &catalogs.list;
+}
+
+/* ---- что не дойдёт по ссылке ---------------------------------------------------- */
+
+static void note_missing(GString *names, const char *reference)
+{
+    const TlCatalog *catalog = NULL;
+    const TlCatalogTile *tile = reference[0] ? tl_catalog_find(app_catalogs(), reference, &catalog) : NULL;
+    if (!tile)
+        return;
+    for (size_t i = 0; i < catalogs.builtin_count; i++)
+        if (catalogs.list.items[i] == catalog)
+            return; /* встроенный каталог — есть и на сайте */
+    if (strstr(names->str, tile->name)) /* уже в списке */
+        return;
+    g_string_append_printf(names, "%s%s", names->len ? ", " : "", tile->name);
+}
+
+char *app_catalogs_missing_on_site(const TlProject *project)
+{
+    GString *names = g_string_new(NULL);
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        const TlSpace *space = project->spaces.items[s];
+        note_missing(names, space->tile.texture);
+        for (int z = 0; z < TL_ZONE_COUNT; z++)
+            note_missing(names, space->zones[z].tile.texture);
+        for (int b = 0; b < TL_WALL_BAND_COUNT; b++)
+            note_missing(names, space->walls.bands[b].tile.texture);
+        for (size_t a = 0; a < space->areas.count; a++)
+            note_missing(names, space->areas.items[a].zone.tile.texture);
+        for (size_t p = 0; p < space->pannos.count; p++)
+            note_missing(names, space->pannos.items[p].texture);
+    }
+    return g_string_free(names, names->len == 0);
 }
 
 /* ---- рисунки ------------------------------------------------------------------- */

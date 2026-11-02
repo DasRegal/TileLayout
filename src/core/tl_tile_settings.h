@@ -40,6 +40,7 @@ typedef struct TlTileSettings {
     int clips_per_short_side;
     int clips_per_pack;
     bool reuse_offcuts;              /* остаток подрезки идёт в другую подрезку */
+    bool directional;                /* рисунок с направлением: куски не поворачивать (у однотонной — можно) */
     double cut_allowance;            /* теряется на рез, мм */
     double wall_gap;                 /* отступ плитки от стен, мм */
 

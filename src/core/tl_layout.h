@@ -235,6 +235,10 @@ int tl_layout_cross_count(const TlLayout *layout);
 TlAffine tl_layout_world_to_local(TlSpace *space);
 /* К одному модулю рисунка, не меняя рисунок (при сдвиге рядов компенсирует X). */
 void tl_layout_normalize_offsets(const TlTileSettings *tile, double *offset_x, double *offset_y);
+/* Сдвиг на плане (мм, оси плана) — в оси раскладки: у повёрнутой плитки они повёрнуты. */
+TlVec2 tl_layout_axes_delta(const TlTileSettings *tile, TlVec2 delta);
+/* Сдвинуть сетку плитки на delta по плану — туда же, куда на экране (стрелки), при любом повороте. */
+void tl_layout_shift_offsets(TlTileSettings *tile, TlVec2 delta);
 /* Крайний угол комнаты в осях раскладки. */
 TlVec2 tl_layout_local_corner(TlSpace *space, TlLayoutCorner corner);
 /* Целая плитка в выбранном углу (с учётом отступа от стены). */

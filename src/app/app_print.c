@@ -117,7 +117,7 @@ AppPrintJob *app_print_job_new(TlProject *project, const char *title, const AppP
     if (options->cuts)
         add_pages(job->pages, PAGE_PLAN_NUMBERS, plan_pages);
     for (size_t s = 0; s < project->spaces.count; s++) /* развёртка — у комнат с облицовкой стен */
-        if (project->spaces.items[s]->walls.enabled && tl_space_wall_count(project->spaces.items[s]) > 0) {
+        if (tl_space_walls_on(project->spaces.items[s]) && tl_space_wall_count(project->spaces.items[s]) > 0) {
             Page page = {PAGE_WALLS, (int)s};
             g_array_append_val(job->pages, page);
         }

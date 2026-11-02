@@ -143,6 +143,8 @@ const SECTIONS = [
       { key: 'wall_gap', label: 'Отступ от стены', min: 0, max: 100, step: 1, unit: 'мм' },
       { key: 'min_cut', label: 'Мин. ширина подрезки', min: 0, max: 1000, step: 5, unit: 'мм' },
       { key: 'reuse', label: 'Использовать остатки подрезок', check: true },
+      { key: 'directional', label: 'Рисунок с направлением', check: true,
+        title: 'Куски не поворачивать на 90°, когда две подрезки режутся из одной плитки (у квадратной). Плитка из каталога — включено; «только цвет» или мрамор без направления — можно снять.' },
       { key: 'cut_allow', label: 'Запас на рез', min: 0, max: 20, step: 0.5, unit: 'мм' },
       { key: 'reserve', label: 'Запас', min: 0, max: 100, step: 1, unit: '%' },
     ],
@@ -540,6 +542,8 @@ export class Panel {
     this.root.querySelector('#swap-tile').addEventListener('click', () => this.actions.swapTile());
     this.enabled = this.root.querySelector('#tile-enabled');
     this.enabled.addEventListener('change', () => this.actions.setField('enabled', this.enabled.checked));
+    this.counted = this.root.querySelector('#room-counted');
+    this.counted.addEventListener('change', () => this.actions.setWalls('counted', this.counted.checked));
     this.textureName = this.root.querySelector('#texture-name');
     this.textureImage = this.root.querySelector('#texture-image');
     this.root.querySelector('#choose-tile').addEventListener('click', () => this.actions.chooseTile());
@@ -784,6 +788,7 @@ export class Panel {
     const caption = document.createElement('span');
     caption.className = 'caption';
     caption.textContent = field.label;
+    if (field.title) row.title = field.title;
     let input;
     if (field.options) {
       input = document.createElement('select');
@@ -1034,6 +1039,7 @@ export class Panel {
     for (const block of this.floorBlocks) block.hidden = walls;
     for (const block of this.bandBlocks) block.hidden = !walls;
     this.tileEnabledRow.hidden = walls;
+    this.counted.closest('.row').hidden = walls;
     this.texture.hidden = walls;
     this.wallsOpen.hidden = walls;
     this.wallsVolume.hidden = walls;
@@ -1111,6 +1117,8 @@ export class Panel {
     const single = rooms.length === 1;
     this.enabled.checked = tile.enabled;
     this.enabled.indeterminate = !same('enabled');
+    this.counted.checked = rooms[0].counted !== false;
+    this.counted.indeterminate = !rooms.every((r) => r.counted === rooms[0].counted);
     const samePattern = rooms.every((r) => patternOf(r.tile) === patternOf(tile));
     for (const { field, input, note, row } of this.inputs.values()) {
       const value = tile[field.key];
