@@ -103,6 +103,8 @@ function averageColor(url) {
  * плитки выбранного раздела с поиском. Возвращает {catalog, tile},
  * 'color-only' («Только цвет») или null (отмена).
  */
+const MAX_CARDS = 240; // карточек за раз — как в программе
+
 export function chooseTile(catalogs, currentReference) {
   const dialog = document.getElementById('catalog-dialog');
   const tree = dialog.querySelector('.catalog-tree');
@@ -125,22 +127,28 @@ export function chooseTile(catalogs, currentReference) {
       const node = treeItem(catalog.name, catalog.tiles.length, catalog, '');
       rootList.append(node.item);
       const groups = new Map([['', node.item]]); // группа → <li>
+      const counts = new Map(); // группа с вложенными → плиток (один проход: каталог бывает на десятки тысяч)
+      for (const tile of catalog.tiles) {
+        for (let group = tile.group; group; group = group.slice(0, Math.max(0, group.lastIndexOf('/')))) {
+          counts.set(group, (counts.get(group) || 0) + 1);
+        }
+      }
       const groupsSorted = [...new Set(catalog.tiles.map((t) => t.group).filter(Boolean))].sort();
-      for (const group of groupsSorted) ensureGroup(catalog, group, groups);
+      for (const group of groupsSorted) ensureGroup(catalog, group, groups, counts);
     }
     markActive();
   }
 
-  function ensureGroup(catalog, group, groups) {
+  function ensureGroup(catalog, group, groups, counts) {
     if (groups.has(group)) return groups.get(group);
     const slash = group.lastIndexOf('/');
-    const parent = ensureGroup(catalog, slash < 0 ? '' : group.slice(0, slash), groups);
+    const parent = ensureGroup(catalog, slash < 0 ? '' : group.slice(0, slash), groups, counts);
     let list = parent.querySelector(':scope > ul');
     if (!list) {
       list = document.createElement('ul');
       parent.append(list);
     }
-    const count = catalog.tiles.filter((t) => inGroup(t, group)).length;
+    const count = counts.get(group) || 0;
     const node = treeItem(group.slice(slash + 1), count, catalog, group);
     list.append(node.item);
     groups.set(group, node.item);
@@ -173,21 +181,34 @@ export function chooseTile(catalogs, currentReference) {
     }
   }
 
-  function matches(tile) {
-    const query = search.value.trim().toLowerCase();
-    if (!query) return true;
-    const sizes = `${tile.width}×${tile.height} ${tile.width}x${tile.height} ${tile.width}х${tile.height}`;
-    return tile.name.toLowerCase().includes(query) || sizes.includes(query);
+  // Каждое слово запроса — в каталоге, производителе/коллекции (папках), названии или размере (мм или см).
+  function matcher() {
+    const words = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return () => true;
+    return (catalog, tile) => {
+      const { width: w, height: h } = tile;
+      const sizes = [[w, h], [w / 10, h / 10]].map(([a, b]) => `${a}×${b} ${a}x${b} ${a}х${b}`).join(' ');
+      const text = `${catalog.name}/${tile.group}/${tile.name} ${sizes}`.toLowerCase();
+      return words.every((word) => text.includes(word));
+    };
   }
 
   function renderGrid() {
     grid.replaceChildren();
+    let found = 0;
+    const matches = matcher();
     for (const catalog of catalogs.list) {
       if (filter.catalog && filter.catalog !== catalog) continue;
       for (const tile of catalog.tiles) {
-        if (!inGroup(tile, filter.group) || !matches(tile)) continue;
-        grid.append(card(catalog, tile));
+        if (!inGroup(tile, filter.group) || !matches(catalog, tile)) continue;
+        if (found++ < MAX_CARDS) grid.append(card(catalog, tile)); // в большом каталоге — десятки тысяч
       }
+    }
+    if (found > MAX_CARDS) {
+      const more = document.createElement('p');
+      more.className = 'empty';
+      more.textContent = `Показано ${MAX_CARDS} из ${found} — выберите раздел слева или уточните поиск.`;
+      grid.prepend(more);
     }
     if (!grid.children.length) {
       const empty = document.createElement('p');

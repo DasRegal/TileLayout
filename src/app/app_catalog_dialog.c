@@ -6,6 +6,8 @@
 #include "app_commands.h"
 
 #define THUMBNAIL_SIZE 112
+#define MAX_CARDS 240       /* карточек за раз: в больших каталогах — десятки тысяч плиток */
+#define THUMBNAILS_PER_IDLE 6
 #define DIALOG_WIDTH 820
 #define DIALOG_HEIGHT 600
 
@@ -15,10 +17,13 @@ enum { RESPONSE_COLOR_ONLY = 1, RESPONSE_OPEN_FOLDER, RESPONSE_RELOAD };
 enum { COLUMN_LABEL, COLUMN_CATALOG, COLUMN_GROUP, COLUMN_COUNT };
 
 typedef struct Picker {
-    GtkWidget *dialog, *catalogs, *tiles, *search, *choose;
+    GtkWidget *dialog, *catalogs, *tiles, *search, *choose, *shown;
     GtkTreeStore *tree;
     const TlCatalog *catalog; /* NULL — все каталоги */
     char *group;              /* группа внутри каталога; пусто — весь каталог */
+    const char *current;      /* ссылка на плитку комнаты — выделить её */
+    GPtrArray *pending;       /* карточки без рисунка: рисунки грузятся понемногу, окно не замирает */
+    guint loader;
 } Picker;
 
 static void destroy_child(GtkWidget *child, gpointer data)
@@ -29,15 +34,12 @@ static void destroy_child(GtkWidget *child, gpointer data)
 
 /* ---- плитки ---------------------------------------------------------------------- */
 
-static GtkWidget *tile_card(const TlCatalog *catalog, const TlCatalogTile *tile)
+/* Карточка — сразу без рисунка (он грузится потом, load_thumbnails); picture — его место. */
+static GtkWidget *tile_card(const TlCatalog *catalog, const TlCatalogTile *tile, GtkWidget **picture_out)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_widget_set_size_request(box, THUMBNAIL_SIZE + 16, -1);
-    GdkPixbuf *thumbnail = app_catalogs_thumbnail(catalog, tile, THUMBNAIL_SIZE);
-    GtkWidget *picture = thumbnail ? gtk_image_new_from_pixbuf(thumbnail)
-                                   : gtk_image_new_from_icon_name("image-missing", GTK_ICON_SIZE_DIALOG);
-    if (thumbnail)
-        g_object_unref(thumbnail);
+    GtkWidget *picture = *picture_out = gtk_image_new();
     gtk_widget_set_size_request(picture, THUMBNAIL_SIZE, THUMBNAIL_SIZE);
     gtk_box_pack_start(GTK_BOX(box), picture, FALSE, FALSE, 0);
     GtkWidget *name = gtk_label_new(tile->name);
@@ -64,56 +66,135 @@ static bool card_tile(GtkFlowBoxChild *child, const TlCatalog **catalog, const T
     return *catalog && *tile;
 }
 
-/* Видна ли карточка: каталог или группа выбраны слева (или все), название или размер — в поиске. */
-static gboolean show_card(GtkFlowBoxChild *child, gpointer data)
+/* Плитка в выбранном слева (каталог, раздел или все) и в поиске (название или размер; needle — casefold). */
+/* Подходит ли плитка: в выбранном слева разделе и каждое слово запроса есть в каталоге,
+ * производителе/коллекции (папках), названии или размере (мм или см: «600×300», «60x30»). */
+static bool tile_matches(const Picker *picker, const TlCatalog *catalog, const TlCatalogTile *tile,
+                         char *const *words)
 {
-    Picker *picker = data;
-    const TlCatalog *catalog;
-    const TlCatalogTile *tile;
-    if (!card_tile(child, &catalog, &tile))
-        return FALSE;
     if (picker->catalog && (picker->catalog != catalog || !tl_catalog_tile_in_group(tile, picker->group)))
-        return FALSE;
-    const char *query = gtk_entry_get_text(GTK_ENTRY(picker->search));
-    if (!query[0])
-        return TRUE;
-    char *size = g_strdup_printf("%g×%g %gx%g", tile->width, tile->height, tile->width, tile->height);
-    char *haystack = g_utf8_casefold(tile->name, -1), *needle = g_utf8_casefold(query, -1);
-    bool found = strstr(haystack, needle) || strstr(size, query);
-    g_free(size);
+        return false;
+    if (!words[0])
+        return true;
+    char *text = g_strdup_printf("%s/%s/%s %g×%g %gx%g %gх%g %g×%g %gx%g %gх%g", catalog->name, tile->group,
+                                 tile->name, tile->width, tile->height, tile->width, tile->height, tile->width,
+                                 tile->height, tile->width / 10, tile->height / 10, tile->width / 10,
+                                 tile->height / 10, tile->width / 10, tile->height / 10);
+    char *haystack = g_utf8_casefold(text, -1);
+    bool found = true;
+    for (size_t i = 0; found && words[i]; i++)
+        found = strstr(haystack, words[i]) != NULL;
     g_free(haystack);
-    g_free(needle);
+    g_free(text);
     return found;
 }
 
-static void fill_tiles(Picker *picker, const char *current)
+/* Рисунок карточки (виджет и плитка — в данных картинки). */
+typedef struct PendingCard {
+    GtkWidget *picture;
+    const TlCatalog *catalog;
+    const TlCatalogTile *tile;
+} PendingCard;
+
+static void stop_loader(Picker *picker)
 {
+    if (picker->loader)
+        g_source_remove(picker->loader);
+    picker->loader = 0;
+    if (picker->pending)
+        g_ptr_array_set_size(picker->pending, 0);
+}
+
+/* Несколько рисунков за раз, между ними окно отвечает. */
+static gboolean load_thumbnails(gpointer data)
+{
+    Picker *picker = data;
+    for (int n = 0; n < THUMBNAILS_PER_IDLE && picker->pending->len; n++) {
+        PendingCard *card = g_ptr_array_index(picker->pending, 0);
+        GdkPixbuf *thumbnail = app_catalogs_thumbnail(card->catalog, card->tile, THUMBNAIL_SIZE);
+        if (thumbnail) {
+            gtk_image_set_from_pixbuf(GTK_IMAGE(card->picture), thumbnail);
+            g_object_unref(thumbnail);
+        } else {
+            gtk_image_set_from_icon_name(GTK_IMAGE(card->picture), "image-missing", GTK_ICON_SIZE_DIALOG);
+        }
+        g_ptr_array_remove_index(picker->pending, 0);
+    }
+    if (picker->pending->len)
+        return G_SOURCE_CONTINUE;
+    picker->loader = 0;
+    return G_SOURCE_REMOVE;
+}
+
+/* Карточки выбранного слева и найденного — не больше MAX_CARDS (в большом каталоге — десятки тысяч). */
+static void fill_tiles(Picker *picker)
+{
+    stop_loader(picker);
     gtk_container_foreach(GTK_CONTAINER(picker->tiles), destroy_child, NULL);
     const TlCatalogList *list = app_catalogs();
+    const char *query = gtk_entry_get_text(GTK_ENTRY(picker->search));
+    char *needle = g_utf8_casefold(query, -1);
+    char **words = g_strsplit_set(g_strstrip(needle), " \t", -1);
+    size_t kept = 0; /* без пустых слов от двойных пробелов */
+    for (size_t i = 0; words[i]; i++)
+        if (words[i][0])
+            words[kept++] = words[i];
+        else
+            g_free(words[i]);
+    words[kept] = NULL;
+    size_t found = 0;
     for (size_t c = 0; c < list->count; c++)
         for (size_t t = 0; t < list->items[c]->tiles.count; t++) {
             const TlCatalogTile *tile = &list->items[c]->tiles.items[t];
-            GtkWidget *child = gtk_flow_box_child_new();
-            gtk_container_add(GTK_CONTAINER(child), tile_card(list->items[c], tile));
+            if (!tile_matches(picker, list->items[c], tile, words) || found++ >= MAX_CARDS)
+                continue;
+            GtkWidget *child = gtk_flow_box_child_new(), *picture;
+            gtk_container_add(GTK_CONTAINER(child), tile_card(list->items[c], tile, &picture));
             g_object_set_data(G_OBJECT(child), "catalog", list->items[c]);
             g_object_set_data(G_OBJECT(child), "tile", (gpointer)tile);
             gtk_container_add(GTK_CONTAINER(picker->tiles), child);
+            PendingCard *card = g_new(PendingCard, 1);
+            *card = (PendingCard){picture, list->items[c], tile};
+            g_ptr_array_add(picker->pending, card);
             char reference[TL_TEXTURE_LENGTH];
             tl_catalog_reference(list->items[c], tile, reference, sizeof reference);
-            if (current && strcmp(reference, current) == 0)
+            if (picker->current && strcmp(reference, picker->current) == 0)
                 gtk_flow_box_select_child(GTK_FLOW_BOX(picker->tiles), GTK_FLOW_BOX_CHILD(child));
         }
+    g_strfreev(words);
+    g_free(needle);
     gtk_widget_show_all(picker->tiles);
+    if (picker->pending->len)
+        picker->loader = g_idle_add(load_thumbnails, picker);
+    char *text = found > MAX_CARDS ? g_strdup_printf("Показано %d из %zu — выберите раздел слева или уточните поиск.",
+                                                     MAX_CARDS, found)
+                 : found == 0      ? g_strdup("Ничего не найдено.")
+                                   : NULL;
+    gtk_label_set_text(GTK_LABEL(picker->shown), text ? text : "");
+    gtk_widget_set_visible(picker->shown, text != NULL);
+    g_free(text);
 }
 
 /* ---- каталоги и группы слева ---------------------------------------------------- */
 
-static size_t tiles_in(const TlCatalog *catalog, const char *group)
+/* Плиток в каждой группе каталога вместе с вложенными: группа → число (за один проход). */
+static GHashTable *count_groups(const TlCatalog *catalog)
 {
-    size_t count = 0;
-    for (size_t t = 0; t < catalog->tiles.count; t++)
-        count += tl_catalog_tile_in_group(&catalog->tiles.items[t], group);
-    return count;
+    GHashTable *counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (size_t t = 0; t < catalog->tiles.count; t++) {
+        char *group = g_strdup(catalog->tiles.items[t].group);
+        while (group[0]) { /* «Фирма/60×120», затем «Фирма» */
+            gpointer count = g_hash_table_lookup(counts, group);
+            g_hash_table_insert(counts, g_strdup(group), GSIZE_TO_POINTER(GPOINTER_TO_SIZE(count) + 1));
+            char *slash = strrchr(group, '/');
+            if (slash)
+                *slash = '\0';
+            else
+                group[0] = '\0';
+        }
+        g_free(group);
+    }
+    return counts;
 }
 
 static void add_row(Picker *picker, GtkTreeIter *row, GtkTreeIter *parent, const char *name, size_t count,
@@ -126,8 +207,8 @@ static void add_row(Picker *picker, GtkTreeIter *row, GtkTreeIter *parent, const
 }
 
 /* Строка группы group каталога (и строки всех групп над ней) — из rows или новая. */
-static GtkTreeIter group_row(Picker *picker, GHashTable *rows, GtkTreeIter *catalog_row, const TlCatalog *catalog,
-                             const char *group)
+static GtkTreeIter group_row(Picker *picker, GHashTable *rows, GHashTable *counts, GtkTreeIter *catalog_row,
+                             const TlCatalog *catalog, const char *group)
 {
     GtkTreeIter *known = g_hash_table_lookup(rows, group);
     if (known)
@@ -136,11 +217,12 @@ static GtkTreeIter group_row(Picker *picker, GHashTable *rows, GtkTreeIter *cata
     GtkTreeIter parent = *catalog_row;
     if (slash) {
         char *upper = g_strndup(group, (gsize)(slash - group));
-        parent = group_row(picker, rows, catalog_row, catalog, upper);
+        parent = group_row(picker, rows, counts, catalog_row, catalog, upper);
         g_free(upper);
     }
     GtkTreeIter row;
-    add_row(picker, &row, &parent, slash ? slash + 1 : group, tiles_in(catalog, group), catalog, group);
+    add_row(picker, &row, &parent, slash ? slash + 1 : group, GPOINTER_TO_SIZE(g_hash_table_lookup(counts, group)),
+            catalog, group);
     g_hash_table_insert(rows, g_strdup(group), gtk_tree_iter_copy(&row));
     return row;
 }
@@ -159,9 +241,11 @@ static void fill_catalogs(Picker *picker)
         GtkTreeIter catalog_row;
         add_row(picker, &catalog_row, &all, catalog->name, catalog->tiles.count, catalog, "");
         GHashTable *rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)gtk_tree_iter_free);
+        GHashTable *counts = count_groups(catalog);
         for (size_t t = 0; t < catalog->tiles.count; t++)
             if (catalog->tiles.items[t].group[0])
-                group_row(picker, rows, &catalog_row, catalog, catalog->tiles.items[t].group);
+                group_row(picker, rows, counts, &catalog_row, catalog, catalog->tiles.items[t].group);
+        g_hash_table_destroy(counts);
         g_hash_table_destroy(rows);
     }
     /* Раскрыты каталоги — видны их группы верхнего уровня (фирмы и т. п.). */
@@ -185,13 +269,52 @@ static void on_catalog_selected(GtkTreeSelection *selection, Picker *picker)
     picker->catalog = NULL;
     if (gtk_tree_selection_get_selected(selection, &model, &row))
         gtk_tree_model_get(model, &row, COLUMN_CATALOG, &picker->catalog, COLUMN_GROUP, &picker->group, -1);
-    gtk_flow_box_invalidate_filter(GTK_FLOW_BOX(picker->tiles));
+    fill_tiles(picker);
 }
 
 static void on_search_changed(GtkSearchEntry *entry, Picker *picker)
 {
     (void)entry;
-    gtk_flow_box_invalidate_filter(GTK_FLOW_BOX(picker->tiles));
+    fill_tiles(picker);
+}
+
+/* Плитка комнаты — открыть её раздел (в большом каталоге среди первых карточек её может не быть). */
+typedef struct FindRow {
+    const TlCatalog *catalog;
+    const char *group;
+    GtkTreePath *path;
+} FindRow;
+
+static gboolean find_group_row(GtkTreeModel *model, GtkTreePath *path, GtkTreeIter *row, gpointer data)
+{
+    FindRow *find = data;
+    const TlCatalog *catalog;
+    char *group;
+    gtk_tree_model_get(model, row, COLUMN_CATALOG, &catalog, COLUMN_GROUP, &group, -1);
+    bool same = catalog == find->catalog && group && strcmp(group, find->group) == 0;
+    g_free(group);
+    if (same)
+        find->path = gtk_tree_path_copy(path);
+    return same;
+}
+
+static void select_current_group(Picker *picker)
+{
+    const TlCatalog *catalog = NULL;
+    const TlCatalogTile *tile = picker->current && picker->current[0]
+                                    ? tl_catalog_find(app_catalogs(), picker->current, &catalog)
+                                    : NULL;
+    if (!tile)
+        return;
+    FindRow find = {catalog, tile->group, NULL};
+    gtk_tree_model_foreach(GTK_TREE_MODEL(picker->tree), find_group_row, &find);
+    if (!find.path)
+        return;
+    GtkTreeView *view = GTK_TREE_VIEW(picker->catalogs);
+    gtk_tree_view_expand_to_path(view, find.path);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(view), find.path);
+    gtk_tree_view_scroll_to_cell(view, find.path, NULL, TRUE, 0.3f, 0);
+    gtk_tree_path_free(find.path);
 }
 
 static void on_tile_selected(GtkFlowBox *box, Picker *picker)
@@ -233,7 +356,7 @@ static void build(Picker *picker, GtkWindow *parent)
     GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(picker->dialog));
     gtk_box_set_spacing(GTK_BOX(content), 6);
     picker->search = gtk_search_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(picker->search), "Название или размер, например 600×300");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(picker->search), "Производитель, коллекция, слово из названия или размер (600×300)");
     g_signal_connect(picker->search, "search-changed", G_CALLBACK(on_search_changed), picker);
     gtk_box_pack_start(GTK_BOX(content), picker->search, FALSE, FALSE, 0);
 
@@ -256,10 +379,17 @@ static void build(Picker *picker, GtkWindow *parent)
     gtk_flow_box_set_activate_on_single_click(GTK_FLOW_BOX(picker->tiles), FALSE);
     gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(picker->tiles), TRUE);
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(picker->tiles), 12);
-    gtk_flow_box_set_filter_func(GTK_FLOW_BOX(picker->tiles), show_card, picker, NULL);
     g_signal_connect(picker->tiles, "selected-children-changed", G_CALLBACK(on_tile_selected), picker);
     g_signal_connect(picker->tiles, "child-activated", G_CALLBACK(on_tile_activated), picker);
-    gtk_paned_pack2(GTK_PANED(panes), scrolled(picker->tiles, GTK_POLICY_NEVER), TRUE, FALSE);
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    picker->shown = gtk_label_new(NULL); /* в большом каталоге показаны не все — подсказка */
+    gtk_label_set_xalign(GTK_LABEL(picker->shown), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(picker->shown), TRUE);
+    gtk_widget_set_no_show_all(picker->shown, TRUE);
+    g_object_set(picker->shown, "margin-start", 6, NULL);
+    gtk_box_pack_start(GTK_BOX(right), picker->shown, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(right), scrolled(picker->tiles, GTK_POLICY_NEVER), TRUE, TRUE, 0);
+    gtk_paned_pack2(GTK_PANED(panes), right, TRUE, FALSE);
     gtk_box_pack_start(GTK_BOX(content), panes, TRUE, TRUE, 0);
 
     GtkWidget *note = gtk_label_new(NULL);
@@ -298,13 +428,13 @@ static void run_dialog(GtkWindow *parent, AppDocument *document, int zone)
         app_document_status(document, "Выделите комнату — плитка выбирается для неё");
         return;
     }
-    Picker picker = {0};
+    Picker picker = {.pending = g_ptr_array_new_with_free_func(g_free)};
     build(&picker, parent);
-    const char *current = zone == APP_ZONE_PANNO ? space->pannos.items[document->selection.index].texture
-                          : zone == TL_ZONE_COUNT ? tl_space_effective_tile(space)->texture
-                                                  : app_space_zone(space, zone)->tile.texture;
-    fill_catalogs(&picker);
-    fill_tiles(&picker, current);
+    picker.current = zone == APP_ZONE_PANNO ? space->pannos.items[document->selection.index].texture
+                     : zone == TL_ZONE_COUNT ? tl_space_effective_tile(space)->texture
+                                             : app_space_zone(space, zone)->tile.texture;
+    fill_catalogs(&picker); /* выделяет «все» — карточки заполняет on_catalog_selected */
+    select_current_group(&picker);
     on_tile_selected(GTK_FLOW_BOX(picker.tiles), &picker);
     gtk_widget_show_all(picker.dialog);
     for (;;) {
@@ -316,7 +446,7 @@ static void run_dialog(GtkWindow *parent, AppDocument *document, int zone)
         if (response == RESPONSE_RELOAD) { /* добавили свои картинки — перечитать, не закрывая */
             app_catalogs_reload();
             fill_catalogs(&picker);
-            fill_tiles(&picker, current);
+            select_current_group(&picker);
             continue;
         }
         if (response == RESPONSE_COLOR_ONLY) {
@@ -331,8 +461,11 @@ static void run_dialog(GtkWindow *parent, AppDocument *document, int zone)
         }
         break;
     }
+    stop_loader(&picker);
     g_signal_handlers_disconnect_by_data(gtk_tree_view_get_selection(GTK_TREE_VIEW(picker.catalogs)), &picker);
+    g_signal_handlers_disconnect_by_data(picker.search, &picker);
     gtk_widget_destroy(picker.dialog);
+    g_ptr_array_free(picker.pending, TRUE);
     g_free(picker.group);
 }
 

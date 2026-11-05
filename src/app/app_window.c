@@ -1033,12 +1033,19 @@ static void compact_toolbar_buttons(GtkWidget *toolbar)
 
 static void on_print_button(GtkToolButton *button, AppWindow *self) { open_print_dialog(self); }
 
-/* Сверху: отмена, вид, печать. */
+/* Сверху: выход, сохранение, отмена, вид, печать. */
 static GtkWidget *build_toolbar(AppWindow *self)
 {
     GtkWidget *toolbar = gtk_toolbar_new();
     gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
     compact_toolbar_buttons(toolbar);
+    GtkToolItem *quit = tool_button(gtk_tool_button_new(NULL, NULL), "exit", "Выход", "Закрыть программу (Ctrl+Q)");
+    g_signal_connect(quit, "clicked", G_CALLBACK(on_quit), self);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), quit, -1);
+    GtkToolItem *save_item = tool_button(gtk_tool_button_new(NULL, NULL), "save", "Сохранить", "Сохранить проект (Ctrl+S)");
+    g_signal_connect(save_item, "clicked", G_CALLBACK(on_save), self);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), save_item, -1);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
     GtkToolItem *undo = tool_button(gtk_tool_button_new(NULL, NULL), "undo", "Отменить", "Отменить (Ctrl+Z)");
     g_signal_connect(undo, "clicked", G_CALLBACK(on_undo), self);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), undo, -1);

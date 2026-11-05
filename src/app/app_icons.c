@@ -446,6 +446,43 @@ static void draw_print(cairo_t *cr)
     cairo_stroke(cr);
 }
 
+/* Дискета. */
+static void draw_save(cairo_t *cr)
+{
+    app_rounded_rect(cr, 5, 5, 22, 22, 2.5);
+    fill_hex(cr, "#1a73e8");
+    cairo_fill_preserve(cr);
+    ink(cr, "#0d47a1", 1.6);
+    cairo_stroke(cr);
+    fill_hex(cr, "#ffffff");
+    cairo_rectangle(cr, 10, 5.8, 12, 7);
+    cairo_fill(cr);
+    fill_hex(cr, "#0d47a1");
+    cairo_rectangle(cr, 18, 7, 2.4, 4.6);
+    cairo_fill(cr);
+    fill_hex(cr, "#e3eefc");
+    cairo_rectangle(cr, 9, 17, 14, 9.2);
+    cairo_fill(cr);
+}
+
+/* Дверь со стрелкой наружу. */
+static void draw_exit(cairo_t *cr)
+{
+    fill_hex(cr, "#e8e4dc");
+    cairo_rectangle(cr, 5, 4, 14, 24);
+    cairo_fill_preserve(cr);
+    ink(cr, "#37474f", 1.8);
+    cairo_stroke(cr);
+    fill_hex(cr, "#7a6a4f");
+    cairo_arc(cr, 15.5, 16, 1.3, 0, 2 * G_PI);
+    cairo_fill(cr);
+    ink(cr, "#c62828", 2.6);
+    cairo_move_to(cr, 14, 16);
+    cairo_line_to(cr, 25, 16);
+    cairo_stroke(cr);
+    arrow_head(cr, 29, 16, 0, 7);
+}
+
 typedef struct IconEntry {
     const char *name;
     void (*draw)(cairo_t *cr);
@@ -506,6 +543,7 @@ static const IconEntry ICONS[] = {
     {"delete", draw_delete}, {"magic", draw_magic}, {"print", draw_print}, {"heart", draw_heart},
     {"ruler", draw_ruler}, {"expansion_joint", draw_expansion_joint}, {"pipe", draw_pipe},
     {"walls", draw_walls}, {"divider", draw_divider}, {"fixture", draw_fixture}, {"drain", draw_drain}, {"theme", draw_theme},
+    {"save", draw_save}, {"exit", draw_exit},
 };
 
 void app_icon_draw(cairo_t *cr, const char *name, double x, double y, double size)
