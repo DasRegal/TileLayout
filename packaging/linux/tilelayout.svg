@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Значок TileLayout: буквы TL из квадратной плитки на сетке 7×5 (тот же рисунок — draw_app в src/app/app_icons.c) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#1f5f6b"/>
+  <rect x="7.15" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="14.3" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="21.45" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="28.6" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="35.75" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="42.9" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="50.05" y="14.6" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="7.15" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="14.3" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="21.45" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="28.6" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="35.75" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="42.9" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="50.05" y="21.75" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="7.15" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="14.3" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="21.45" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="28.6" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="35.75" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="42.9" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="50.05" y="28.9" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="7.15" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="14.3" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="21.45" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="28.6" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="35.75" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="42.9" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="50.05" y="36.05" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="7.15" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="14.3" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="21.45" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="28.6" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#ffffff" fill-opacity="0.12"/>
+  <rect x="35.75" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+  <rect x="42.9" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#f6f1e6"/>
+  <rect x="50.05" y="43.2" width="6.3" height="6.3" rx="0.8" fill="#e6dbc2"/>
+</svg>

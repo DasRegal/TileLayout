@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=TileLayout
+GenericName=Раскладка плитки
+GenericName[en]=Tile layout
+Comment=План дома, раскладка и расчёт плитки, клея и СВП
+Comment[en]=House plan, tile layout and calculation of tiles, adhesive and levelling clips
+Exec=tilelayout %f
+Icon=tilelayout
+Terminal=false
+Categories=Graphics;Engineering;
+Keywords=плитка;раскладка;кафель;tile;layout;floor;
+StartupWMClass=tilelayout

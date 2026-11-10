@@ -1,0 +1,793 @@
+// Рисование плана на Canvas — как в настольной программе (src/app/app_render.c):
+// пол с раскладкой, трубы, стены и перегородки одним силуэтом, проёмы, размеры,
+// подписи комнат. Сцена — от ядра (src/web/tl_web_scene.c), всё в мм.
+
+import { drawPipe, visibleMidpoint } from './tools.js';
+
+const COLOR = {
+  background: '#f4f5f7',
+  wall: '#6f7681',
+  wallEdge: '#2c3038',
+  grout: '#8f8a82',
+  narrow: '#e8826e',
+  gap: '#f3eee4',
+  openingFloor: '#ece5d5',
+  openingEdge: '#7a6a4f',
+  clip: '#c2410c',
+  innerDim: '#1f4e9c',
+  outerDim: '#8a5a00',
+  openingDim: '#6b3fa0',
+  threshold: '#a0522d',
+  selection: '#2563eb',
+  ruler: '#5f6b7a',
+  joint: '#37414d',
+  jointGap: '#fbfaf6',
+  dimBox: 'rgba(255, 255, 255, 0.84)', // плашка под цифрой размера
+  labelBox: 'rgba(255, 255, 255, 0.9)', // подпись комнаты
+  labelEdge: 'rgba(44, 48, 56, 0.35)',
+  labelText: '#1f2328',
+};
+
+/* Тёмная тема (как Dracula): фон, размеры и линейки светлые на тёмном; плитка, стены и предметы — как есть. */
+const DARK = {
+  ...COLOR,
+  background: '#2d2f3d',
+  innerDim: '#8be9fd',
+  outerDim: '#ffb86c',
+  openingDim: '#ff79c6',
+  threshold: '#ffb86c',
+  selection: '#bd93f9',
+  ruler: '#c0c4da',
+  joint: '#d4d7e6',
+  dimBox: 'rgba(40, 42, 54, 0.88)',
+  labelBox: 'rgba(40, 42, 54, 0.92)',
+  labelEdge: 'rgba(189, 147, 249, 0.4)',
+  labelText: '#f8f8f2',
+};
+
+/* Ч/б печать: без заливок цветом, линии — чёрные. */
+const MONO = {
+  ...COLOR,
+  background: '#ffffff',
+  wall: '#d4d4d4',
+  wallEdge: '#000000',
+  grout: '#000000',
+  narrow: '#ffffff',
+  gap: '#ffffff',
+  openingFloor: '#ffffff',
+  openingEdge: '#000000',
+  clip: '#000000',
+  innerDim: '#000000',
+  outerDim: '#000000',
+  openingDim: '#000000',
+  threshold: '#000000',
+  ruler: '#000000',
+  joint: '#000000',
+  jointGap: '#ffffff',
+};
+
+/* Слои плана: что показывать (меню «Вид», настройки печати). */
+export const DEFAULT_LAYERS = {
+  tiles: true, numbers: false, dims: true, clips: true, labels: true, joints: true, rulers: true,
+};
+
+let C = COLOR; // палитра текущей отрисовки
+
+const FONT = '"Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+const TILE_KIND = { whole: 0, cut: 1, narrow: 2 };
+const TILE_STRIDE = 6; // left, top, right, bottom, вид, плитка рисунка
+
+/**
+ * Нарисовать сцену. options: {selected — id выделенных комнат, highlight — контуры
+ * выделенного предмета (плоские массивы, мм), image(reference) — картинка плитки
+ * или null (ещё грузится / нет), dpr — плотность пикселей, overlay(ctx) —
+ * рисование инструмента поверх, в пикселях экрана, layers — слои (DEFAULT_LAYERS),
+ * numbers — номера плиток (tl_web_tile_numbers), printing — лист печати (белый
+ * фон, без выделения), mono — ч/б}.
+ */
+export function drawScene(ctx, scene, view, options) {
+  const { width, height } = ctx.canvas;
+  const dpr = options.dpr;
+  const layers = { ...DEFAULT_LAYERS, ...options.layers };
+  const world = () => ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.panX, dpr * view.panY);
+  const screen = () => ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const px = (pixels) => pixels / view.scale; // пиксели экрана — в мм
+  C = options.mono ? MONO : options.dark && !options.printing ? DARK : COLOR; // печать и PNG — всегда светлые
+  const image = options.mono ? () => null : options.image;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = options.printing ? '#ffffff' : C.background;
+  ctx.fillRect(0, 0, width, height);
+  if (!scene) return;
+
+  world();
+  if (options.underlay && !options.printing) drawUnderlay(ctx, scene.underlay, options.underlay, px);
+  for (const space of scene.spaces) drawFloor(ctx, space, view, px, { ...options, image, layers });
+  if (layers.joints) for (const joint of scene.joints) drawJoint(ctx, joint, px);
+  for (const fixture of scene.fixtures || []) drawFixture(ctx, fixture, view, px);
+  drawDrains(ctx, scene, px);
+  drawWalls(ctx, scene, view, px, dpr, options.mono);
+  drawOpenings(ctx, scene, view, px);
+  screen(); // трубы — поверх стен: у стены видны целиком
+  for (const pipe of scene.pipes) drawPipe(ctx, view.toScreen(...pipe.center), (pipe.diameter * view.scale) / 2);
+  world();
+  const selected = scene.spaces.filter((space) => options.selected?.includes(space.id));
+  const outlines = options.printing
+    ? []
+    : selected.length
+      ? selected.flatMap((space) => [space.outline, ...space.holes])
+      : options.highlight || [];
+  if (outlines.length) {
+    ctx.beginPath();
+    for (const outline of outlines) polygonPath(ctx, outline, false);
+    ctx.lineWidth = px(2.5);
+    ctx.strokeStyle = C.selection;
+    ctx.setLineDash([px(8), px(5)]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  screen();
+  if (layers.numbers && options.numbers) drawTileNumbers(ctx, scene, options.numbers, view, options.printing);
+  /* подписи размеров, которые можно ввести числом: hit(рамка подписи, что меняет) — main.js */
+  const hit = options.hits && !options.printing ? (box, target) => options.hits.push({ ...box, target }) : null;
+  if (layers.dims) {
+    for (const dimension of scene.dimensions) drawOuterDimension(ctx, dimension, view, hit);
+    for (const opening of scene.openings) drawOpeningWidth(ctx, opening, view, hit);
+    for (const space of scene.spaces) drawRoomLengths(ctx, space, view, hit);
+  }
+  if (layers.labels) for (const space of scene.spaces) drawRoomLabel(ctx, space, view);
+  for (const fixture of scene.fixtures || []) drawFixtureLabel(ctx, fixture, view);
+  if (layers.rulers) {
+    scene.rulers.forEach((ruler, index) => {
+      drawRuler(ctx, ruler, view, C.ruler, hit && ((box) => hit(box, { kind: 'ruler', index, value: ruler.length })),
+        index === options.activeRuler);
+    });
+  }
+  if (options.overlay) options.overlay(ctx);
+}
+
+/** Номера плиток: в центре куска, узкая полоса — вдоль неё (как в программе). */
+function drawTileNumbers(ctx, scene, numbers, view, printing) {
+  const size = printing ? 8.7 : 10;
+  ctx.font = `600 ${size}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const room of numbers) {
+    const space = scene.spaces.find((s) => s.id === room.space);
+    if (!space || !space.layout || !space.tile.enabled) continue;
+    if (!printing && Math.min(space.tile.w, space.tile.h) * view.scale < 18) continue;
+    const list = room.numbers;
+    for (let i = 0; i < list.length; i += 5) { // x, y, номер, ширина и высота куска
+      const [x, y] = view.toScreen(list[i], list[i + 1]);
+      const text = String(list[i + 2]);
+      const boxW = list[i + 3] * view.scale;
+      const boxH = list[i + 4] * view.scale;
+      const textW = ctx.measureText(text).width;
+      let angle = room.rotation;
+      if (textW + 4 > boxW && boxH > boxW) angle += 90; // узкая полоса — вдоль неё
+      angle = ((((angle + 90) % 180) + 180) % 180) - 90;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate((-angle * Math.PI) / 180);
+      ctx.fillStyle = printing ? '#ffffff' : 'rgba(255, 255, 255, 0.67)';
+      ctx.fillRect(-textW / 2 - 2, -size / 2 - 1, textW + 4, size + 2);
+      ctx.fillStyle = '#20242a';
+      ctx.fillText(text, 0, 0.5);
+      ctx.restore();
+    }
+  }
+}
+
+// ---- контуры -----------------------------------------------------------------
+
+function polygonPath(ctx, points, begin) {
+  if (begin) ctx.beginPath();
+  for (let i = 0; i < points.length; i += 2) {
+    if (i === 0) ctx.moveTo(points[0], points[1]);
+    else ctx.lineTo(points[i], points[i + 1]);
+  }
+  if (points.length) ctx.closePath();
+}
+
+function line(ctx, segment) {
+  ctx.moveTo(segment[0], segment[1]);
+  ctx.lineTo(segment[2], segment[3]);
+}
+
+/** Вся видимая область в мм — рамка для «рисовать всюду, кроме». */
+function visibleRect(ctx, view) {
+  const [left, top] = view.toWorld(-10, -10);
+  const [right, bottom] = view.toWorld(ctx.canvas.width + 10, ctx.canvas.height + 10);
+  return [left, top, right - left, bottom - top];
+}
+
+/** Обрезать всё, кроме многоугольников (пол под проёмами). */
+function clipOut(ctx, view, polygons) {
+  ctx.beginPath();
+  ctx.rect(...visibleRect(ctx, view));
+  for (const polygon of polygons) polygonPath(ctx, polygon, false);
+  ctx.clip('evenodd');
+}
+
+// ---- пол и плитка ----------------------------------------------------------------
+
+function hexToRgb(hex) {
+  const value = parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function darker(hex, factor) {
+  const [r, g, b] = hexToRgb(hex).map((c) => Math.round(c / factor));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function drawFloor(ctx, space, view, px, options) {
+  const tile = space.tile;
+  ctx.save();
+  polygonPath(ctx, space.outline, true);
+  for (const hole of space.holes) polygonPath(ctx, hole, false);
+  const layout = space.layout;
+  if (!options.layers.tiles || (!layout && !space.zones.length)) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fill('evenodd');
+    ctx.restore();
+    return;
+  }
+  ctx.clip('evenodd');
+  if (!layout) { // без плитки на полу — участки со своей плиткой
+    ctx.fillStyle = '#ffffff';
+    ctx.fill('evenodd');
+    for (const zone of space.zones) drawLayout(ctx, zone.tile, zone, view, px, options);
+    ctx.restore();
+    return;
+  }
+  if (layout.too_many) {
+    ctx.fillStyle = tile.color;
+    ctx.fill('evenodd');
+    ctx.restore();
+    return;
+  }
+  if (tile.wall_gap > 0) {
+    ctx.fillStyle = C.gap;
+    ctx.fill('evenodd');
+  }
+  drawLayout(ctx, tile, layout, view, px, options);
+  for (const zone of space.zones) drawLayout(ctx, zone.tile, zone, view, px, options); // бордюр, ковёр
+  for (const panno of space.pannos || []) drawPanno(ctx, panno, view, px, options);
+  ctx.restore();
+}
+
+/** Панно (tl_web_panno_json): картинка на всё панно, у каждой плитки — своя часть; без картинки — цвет. */
+export function drawPanno(ctx, panno, view, px, options) {
+  ctx.save();
+  const [a, b, c, d, tx, ty] = panno.matrix;
+  ctx.transform(a, b, c, d, tx, ty);
+  const [width, height] = panno.size;
+  ctx.fillStyle = C.grout;
+  ctx.fillRect(0, 0, width, height);
+  const image = options.mono ? null : options.image(panno.tile.texture);
+  const tiles = panno.tiles;
+  for (let i = 0; i < tiles.length; i += TILE_STRIDE) {
+    const [left, top, right, bottom] = [tiles[i], tiles[i + 1], tiles[i + 2], tiles[i + 3]];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, top, right - left, bottom - top);
+    if (image) {
+      ctx.clip();
+      ctx.drawImage(image, 0, 0, width, height);
+    } else {
+      ctx.fillStyle = options.mono ? '#ffffff' : panno.tile.color;
+      ctx.fill();
+      ctx.lineWidth = px(0.8);
+      ctx.strokeStyle = options.mono ? '#000000' : darker(panno.tile.color, 1.5);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/** Одна раскладка (основной пол, зона, полоса стены): швы — заливкой пола, поверх — плитки.
+ *  options: {image(reference), layers, mono}; ctx — в мм (мир). */
+export function drawLayout(ctx, tile, layout, view, px, options) {
+  ctx.save();
+  const [a, b, c, d, tx, ty] = layout.matrix;
+  ctx.transform(a, b, c, d, tx, ty);
+  polygonPath(ctx, layout.floor, true);
+  for (const hole of layout.holes) polygonPath(ctx, hole, false);
+  ctx.clip('evenodd');
+  ctx.fillStyle = C.grout;
+  ctx.fill('evenodd');
+  drawTiles(ctx, tile, layout, view, px, options.image(tile.texture), options);
+  ctx.restore();
+}
+
+function drawTiles(ctx, tile, layout, view, px, image, options) {
+  const { tiles, specs, shapes } = layout;
+  const thinJoints = options.mono || tile.gap * view.scale < 1.2; // в ч/б — контур каждой плитки
+  /* цвета по видам плитки рисунка (у шахматки вторая — своим цветом): целая, подрезка, узкая */
+  const palettes = specs.map((spec) =>
+    options.mono ? ['#ffffff', '#ffffff', '#ffffff'] : [spec.color, darker(spec.color, 1.12), C.narrow]);
+  for (let i = 0, n = 0; i < tiles.length; i += TILE_STRIDE, n++) {
+    const left = tiles[i];
+    const top = tiles[i + 1];
+    const w = tiles[i + 2] - left;
+    const h = tiles[i + 3] - top;
+    const kind = tiles[i + 4];
+    const spec = specs[tiles[i + 5]];
+    const shape = shapes[n]; // шеврон, вставка — многоугольник
+    const path = () => {
+      ctx.beginPath();
+      if (shape) polygonPath(ctx, shape, false);
+      else ctx.rect(left, top, w, h);
+    };
+    path();
+    if (image && spec.textured) {
+      ctx.save();
+      ctx.clip();
+      drawTexture(ctx, image, left, top, w, h);
+      if (kind !== TILE_KIND.whole) {
+        ctx.fillStyle = kind === TILE_KIND.narrow ? 'rgba(232, 130, 110, 0.7)' : 'rgba(0, 0, 0, 0.12)';
+        ctx.fillRect(left, top, w, h);
+      }
+      ctx.restore();
+    } else {
+      ctx.fillStyle = palettes[tiles[i + 5]][kind];
+      ctx.fill();
+    }
+    if (thinJoints) {
+      path();
+      ctx.lineWidth = px(options.mono ? 0.5 : 0.6);
+      ctx.strokeStyle = options.mono ? '#000000' : darker(spec.color, 1.5);
+      ctx.stroke();
+    }
+  }
+  if (options.layers.clips && Math.min(tile.w, tile.h) * view.scale > 24) {
+    const size = px(5);
+    if (tile.crosses) { // крестики — на пересечениях швов
+      const crosses = layout.crosses;
+      ctx.beginPath();
+      for (let i = 0; i < crosses.length; i += 2) {
+        ctx.moveTo(crosses[i] - size, crosses[i + 1]);
+        ctx.lineTo(crosses[i] + size, crosses[i + 1]);
+        ctx.moveTo(crosses[i], crosses[i + 1] - size);
+        ctx.lineTo(crosses[i], crosses[i + 1] + size);
+      }
+      ctx.strokeStyle = C.clip;
+      ctx.lineWidth = px(1.6);
+      ctx.stroke();
+      return;
+    }
+    const clips = layout.clips;
+    ctx.fillStyle = C.clip;
+    for (let i = 0; i < clips.length; i += 2) ctx.fillRect(clips[i] - size / 2, clips[i + 1] - size / 2, size, size);
+  }
+}
+
+/** Рисунок — на прямоугольник плитки. Картинка лежит вдоль длинной стороны
+ *  плитки: плитка поперёк картинки — рисунок повёрнут на 90°. */
+function drawTexture(ctx, image, left, top, w, h) {
+  const iw = image.naturalWidth;
+  const ih = image.naturalHeight;
+  ctx.save();
+  if (iw >= ih === w >= h || Math.abs(w - h) < 0.5) {
+    ctx.drawImage(image, left, top, w, h);
+  } else {
+    ctx.transform(0, h / iw, -w / ih, 0, left + w, top);
+    ctx.drawImage(image, 0, 0);
+  }
+  ctx.restore();
+}
+
+// ---- стены и перегородки ---------------------------------------------------------
+
+let hatchCache = null;
+
+/** Штриховка тел стен: 8 px экрана при любом масштабе. */
+function hatch(ctx, view, dpr) {
+  const size = Math.round(8 * dpr);
+  if (!hatchCache || hatchCache.size !== size) {
+    const tile = document.createElement('canvas');
+    tile.width = tile.height = size;
+    const t = tile.getContext('2d');
+    t.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    t.lineWidth = dpr;
+    t.beginPath();
+    t.moveTo(0, size);
+    t.lineTo(size, 0);
+    t.stroke();
+    hatchCache = { size, tile };
+  }
+  const pattern = ctx.createPattern(hatchCache.tile, 'repeat');
+  pattern.setTransform(new DOMMatrix().scale(1 / (view.scale * dpr)));
+  return pattern;
+}
+
+/** Сначала все обводки вдвое толще, затем заливки поверх — стыки скрываются. */
+function drawWalls(ctx, scene, view, px, dpr, mono) {
+  ctx.save();
+  clipOut(ctx, view, scene.doorways);
+  ctx.beginPath();
+  for (const wall of scene.walls) {
+    polygonPath(ctx, wall.outer, false);
+    polygonPath(ctx, wall.inner, false);
+  }
+  for (const body of scene.partitions) polygonPath(ctx, body, false);
+  ctx.lineJoin = 'miter';
+  ctx.miterLimit = 1.5;
+  ctx.lineWidth = px(2.8);
+  ctx.strokeStyle = C.wallEdge;
+  ctx.stroke();
+
+  const pattern = mono ? null : hatch(ctx, view, dpr);
+  ctx.beginPath();
+  for (const wall of scene.walls) {
+    polygonPath(ctx, wall.outer, false);
+    polygonPath(ctx, wall.inner, false);
+  }
+  fillWithHatch(ctx, pattern, 'evenodd');
+  ctx.beginPath();
+  for (const body of scene.partitions) polygonPath(ctx, body, false);
+  fillWithHatch(ctx, pattern, 'nonzero');
+  ctx.restore();
+}
+
+function fillWithHatch(ctx, pattern, rule) {
+  ctx.fillStyle = C.wall;
+  ctx.fill(rule);
+  if (!pattern) return;
+  ctx.fillStyle = pattern;
+  ctx.fill(rule);
+}
+
+// ---- проёмы -------------------------------------------------------------------
+
+function drawOpenings(ctx, scene, view, px) {
+  ctx.lineJoin = 'round';
+  for (const opening of scene.openings) {
+    if (opening.kind === 'wall') {
+      const cut = opening.cut;
+      ctx.save();
+      if (opening.threshold) clipOut(ctx, view, scene.doorways); // пол под проёмом не закрашиваем
+      polygonPath(ctx, cut, true);
+      ctx.fillStyle = C.openingFloor;
+      ctx.fill();
+      ctx.beginPath();
+      line(ctx, [cut[0], cut[1], cut[2], cut[3]]); // линии порога
+      line(ctx, [cut[6], cut[7], cut[4], cut[5]]);
+      stroke(ctx, C.openingEdge, px(1), [px(4), px(4)]);
+      ctx.restore();
+      ctx.beginPath();
+      line(ctx, [cut[2], cut[3], cut[4], cut[5]]); // откосы
+      line(ctx, [cut[6], cut[7], cut[0], cut[1]]);
+      stroke(ctx, C.wallEdge, px(1.4));
+    } else {
+      ctx.beginPath();
+      for (const jamb of opening.jambs) line(ctx, jamb);
+      stroke(ctx, C.wallEdge, px(1.4));
+    }
+    if (opening.threshold) {
+      ctx.beginPath();
+      line(ctx, opening.threshold);
+      stroke(ctx, C.threshold, px(2), [px(5), px(5)]);
+    }
+  }
+}
+
+/** Ширина проёма — поперёк него, посередине. */
+function drawOpeningWidth(ctx, opening, view, hit) {
+  const a = view.toScreen(...opening.from);
+  const b = view.toScreen(...opening.to);
+  if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 22) {
+    const width = String(Math.round(opening.width));
+    const box = textAlong(ctx, opening.name ? `${opening.name} · ${width}` : width, a, b, [0, 0], 0, C.openingDim, true);
+    if (hit) hit(box, { kind: 'opening', index: opening.index, value: Math.round(opening.width) });
+  }
+}
+
+function stroke(ctx, color, width, dash = []) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.setLineDash(dash);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// ---- деформационные швы и линейки -------------------------------------------------
+
+/** Шов: щель шириной gap (не уже 3 px) и пунктир по оси. */
+/** Предмет на плане: контур, значок вида, название и размер. */
+function drawFixture(ctx, fixture, view, px) {
+  const o = fixture.outline;
+  ctx.beginPath();
+  for (let i = 0; i < o.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, o[i], o[i + 1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(247, 248, 250, 0.92)';
+  ctx.fill();
+  stroke(ctx, C.wall, px(1.6));
+  const radians = (fixture.angle * Math.PI) / 180;
+  const at = (x, y) => [fixture.center[0] + x * Math.cos(radians) - y * Math.sin(radians),
+    fixture.center[1] + x * Math.sin(radians) + y * Math.cos(radians)];
+  const w = fixture.w / 2;
+  const d = fixture.d / 2;
+  const segment = (x0, y0, x1, y1) => {
+    ctx.moveTo(...at(x0, y0));
+    ctx.lineTo(...at(x1, y1));
+  };
+  ctx.beginPath();
+  if (fixture.kind === 'bath') {
+    const inset = Math.min(60, Math.min(w, d) / 3);
+    segment(-w + inset, -d + inset, w - inset, -d + inset);
+    segment(w - inset, -d + inset, w - inset, d - inset);
+    segment(w - inset, d - inset, -w + inset, d - inset);
+    segment(-w + inset, d - inset, -w + inset, -d + inset);
+  } else if (fixture.kind === 'tray') {
+    segment(-w, -d, w, d);
+    segment(w, -d, -w, d);
+  } else if (fixture.kind === 'installation') {
+    for (let x = -w; x < w; x += 100) segment(x, -d, Math.min(x + 2 * d, w), d);
+  } else if (fixture.kind === 'cabinet') {
+    segment(0, -d, 0, d);
+  } else if (fixture.kind === 'stairs') { // ступени и стрелка подъёма — от переда к спинке
+    const steps = fixture.steps || 1;
+    const inset = Math.min(60, Math.min(w, d) / 3);
+    for (let i = 1; i < steps; i++) segment(-w, d - (2 * d * i) / steps, w, d - (2 * d * i) / steps);
+    segment(0, d - inset, 0, -d + inset);
+    segment(0, -d + inset, -inset / 2, -d + 2 * inset);
+    segment(0, -d + inset, inset / 2, -d + 2 * inset);
+  } else {
+    for (let x = -w + 600; x < w - 1; x += 600) segment(x, -d, x, d);
+  }
+  stroke(ctx, C.wall, px(0.9));
+}
+
+/**
+ * Подложка под планом: фото или линии DXF-плана с её прозрачностью. place — положение из сцены,
+ * content — {image: загруженная картинка, lines: [[x0, y0, …], …]} (src/web/tl_web_underlay.c).
+ */
+function drawUnderlay(ctx, place, content, px) {
+  if (!place?.present || !place.visible) return;
+  ctx.save();
+  ctx.globalAlpha = place.opacity;
+  ctx.translate(place.origin[0], place.origin[1]);
+  ctx.scale(place.scale, place.scale);
+  if (content.image?.complete && content.image.naturalWidth) {
+    ctx.drawImage(content.image, 0, 0, content.size[0], content.size[1]);
+  } else if (content.lines) {
+    ctx.beginPath();
+    for (const line of content.lines) {
+      ctx.moveTo(line[0], line[1]);
+      for (let i = 2; i < line.length; i += 2) ctx.lineTo(line[i], line[i + 1]);
+    }
+    ctx.strokeStyle = '#8c5c1f'; // коричневым — не спутать со стенами
+    ctx.lineWidth = px(1) / place.scale;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Трапы: разрезы конверта пунктиром, решётка или лоток. */
+function drawDrains(ctx, scene, px) {
+  const slopes = scene.slopes || [];
+  ctx.beginPath();
+  for (let i = 0; i < slopes.length; i += 4) {
+    ctx.moveTo(slopes[i], slopes[i + 1]);
+    ctx.lineTo(slopes[i + 2], slopes[i + 3]);
+  }
+  stroke(ctx, '#3d5a80', px(1.2), [px(6), px(5)]);
+  for (const drain of scene.drains || []) {
+    const o = drain.outline;
+    ctx.beginPath();
+    for (let i = 0; i < o.length; i += 2) (i ? ctx.lineTo : ctx.moveTo).call(ctx, o[i], o[i + 1]);
+    ctx.closePath();
+    ctx.fillStyle = '#d7dde3';
+    ctx.fill();
+    stroke(ctx, '#3d5a80', px(1.6));
+    const lerp = (a, b, t) => [o[a] + (o[b] - o[a]) * t, o[a + 1] + (o[b + 1] - o[a + 1]) * t];
+    ctx.beginPath();
+    const slots = drain.kind === 'linear' ? 1 : 4;
+    for (let k = 1; k <= slots; k++) { // решётка — полосы, лоток — продольная щель
+      const t = k / (slots + 1);
+      const [a, b] = drain.kind === 'linear' ? [lerp(0, 6, t), lerp(2, 4, t)] : [lerp(0, 2, t), lerp(6, 4, t)];
+      ctx.moveTo(...a);
+      ctx.lineTo(...b);
+    }
+    stroke(ctx, '#3d5a80', px(0.9));
+  }
+}
+
+/** Название и размер предмета — в пикселях экрана. */
+function drawFixtureLabel(ctx, fixture, view) {
+  if (Math.min(fixture.w, fixture.d) * view.scale < 30) return;
+  ctx.save();
+  const [sx, sy] = view.toScreen(...fixture.center);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = C.wall;
+  ctx.font = `600 10.5px ${FONT}`;
+  ctx.fillText(fixture.name, sx, sy - 7);
+  ctx.font = `10.5px ${FONT}`;
+  ctx.fillText(`${Math.round(fixture.w)}×${Math.round(fixture.d)}`, sx, sy + 7);
+  ctx.restore();
+}
+
+function drawJoint(ctx, joint, px) {
+  const [x0, y0, x1, y1] = joint.line;
+  const length = Math.hypot(x1 - x0, y1 - y0);
+  if (length < px(1)) return;
+  if (joint.divider) { // линия раздела — сплошная, шов обычный
+    ctx.beginPath();
+    line(ctx, joint.line);
+    stroke(ctx, C.joint, Math.max(px(1.6), joint.gap));
+    return;
+  }
+  const half = Math.max(joint.gap, px(3)) / 2;
+  const [nx, ny] = [(-(y1 - y0) / length) * half, ((x1 - x0) / length) * half];
+  ctx.beginPath();
+  ctx.moveTo(x0 + nx, y0 + ny);
+  ctx.lineTo(x1 + nx, y1 + ny);
+  ctx.lineTo(x1 - nx, y1 - ny);
+  ctx.lineTo(x0 - nx, y0 - ny);
+  ctx.closePath();
+  ctx.fillStyle = C.jointGap;
+  ctx.fill();
+  stroke(ctx, C.joint, px(1));
+  ctx.beginPath();
+  line(ctx, joint.line);
+  stroke(ctx, C.joint, px(1), [px(4), px(4)]);
+}
+
+/** Линейка: отрезок с засечками и длиной (в пикселях экрана). Подпись длиннее самой линейки на
+ *  экране (мелкий масштаб) не показывается — кроме линейки, которую правят (active): у неё подпись
+ *  всегда есть и не уходит за край экрана. */
+export function drawRuler(ctx, ruler, view, color = C.ruler, hit = null, active = false) {
+  const a = view.toScreen(ruler.line[0], ruler.line[1]);
+  const b = view.toScreen(ruler.line[2], ruler.line[3]);
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (length < 1) return;
+  const normal = [-(b[1] - a[1]) / length, (b[0] - a[0]) / length];
+  ctx.beginPath();
+  ctx.moveTo(...a);
+  ctx.lineTo(...b);
+  for (const end of [a, b]) {
+    ctx.moveTo(end[0] - normal[0] * 4, end[1] - normal[1] * 4);
+    ctx.lineTo(end[0] + normal[0] * 4, end[1] + normal[1] * 4);
+  }
+  stroke(ctx, color, 1);
+  const text = ruler.name ? `${ruler.name} · ${ruler.length}` : String(ruler.length);
+  if (!active) {
+    ctx.font = `11.3px ${FONT}`;
+    if (ctx.measureText(text).width + 16 > length) return;
+  }
+  const box = textAlong(ctx, text, a, b, normal, 9, color, false, active);
+  if (hit) hit(box);
+}
+
+// ---- подписи (в пикселях экрана) ---------------------------------------------------
+
+/** Текст вдоль отрезка a→b (px), не вверх ногами; offset — сдвиг по normal; onScreen — у середины
+ *  видимой части отрезка, не за краем экрана. */
+function textAlong(ctx, text, a, b, normal, offset, color, bold = false, onScreen = false) {
+  let angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+  if (angle > Math.PI / 2 || angle < -Math.PI / 2) angle += Math.PI;
+  const [mx, my] = onScreen ? visibleMidpoint(ctx, a, b, 40) : [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const x = mx + normal[0] * offset;
+  const y = my + normal[1] * offset;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.font = `${bold ? '600 ' : ''}11.3px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const width = ctx.measureText(text).width;
+  ctx.fillStyle = C.dimBox;
+  roundRect(ctx, -width / 2 - 3, -8, width + 6, 16, 3);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.fillText(text, 0, 0.5);
+  ctx.restore();
+  return { x, y, angle, width: width + 6, height: 16 }; // рамка подписи, px экрана
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** Размер стены снаружи дома: размерная линия с засечками в 18 px от стены. */
+function drawOuterDimension(ctx, dimension, view, hit) {
+  const a = view.toScreen(...dimension.from);
+  const b = view.toScreen(...dimension.to);
+  if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 28) return;
+  const [nx, ny] = dimension.normal;
+  const offset = 18;
+  const da = [a[0] + nx * offset, a[1] + ny * offset];
+  const db = [b[0] + nx * offset, b[1] + ny * offset];
+  ctx.beginPath();
+  ctx.moveTo(...da);
+  ctx.lineTo(...db);
+  for (const end of [a, b]) {
+    ctx.moveTo(...end);
+    ctx.lineTo(end[0] + nx * (offset + 4), end[1] + ny * (offset + 4));
+  }
+  const length = Math.hypot(db[0] - da[0], db[1] - da[1]);
+  const along = [(db[0] - da[0]) / length, (db[1] - da[1]) / length];
+  const tick = [(along[0] + along[1]) * 3, (along[1] - along[0]) * 3]; // засечка 45°
+  for (const end of [da, db]) {
+    ctx.moveTo(end[0] - tick[0], end[1] - tick[1]);
+    ctx.lineTo(end[0] + tick[0], end[1] + tick[1]);
+  }
+  stroke(ctx, C.outerDim, 1);
+  const box = textAlong(ctx, String(dimension.length), da, db, [0, 0], 0, C.outerDim);
+  if (hit) hit(box, { kind: 'wall', house: dimension.house, wall: dimension.wall, outer: true, value: dimension.length });
+}
+
+/** Точка внутри многоугольника (плоский массив). */
+function inside(points, x, y) {
+  let result = false;
+  for (let i = 0, j = points.length - 2; i < points.length; j = i, i += 2) {
+    const [xi, yi, xj, yj] = [points[i], points[i + 1], points[j], points[j + 1]];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) result = !result;
+  }
+  return result;
+}
+
+/** Длины стен комнаты — внутри, вдоль каждой стороны. */
+function drawRoomLengths(ctx, space, view, hit) {
+  const room = space.room;
+  const n = room.length / 2;
+  for (let i = 0; i < n; i++) {
+    const [x0, y0] = [room[2 * i], room[2 * i + 1]];
+    const [x1, y1] = [room[(2 * i + 2) % room.length], room[(2 * i + 3) % room.length]];
+    const a = view.toScreen(x0, y0);
+    const b = view.toScreen(x1, y1);
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 28) continue;
+    const length = Math.hypot(x1 - x0, y1 - y0);
+    let normal = [-(y1 - y0) / length, (x1 - x0) / length];
+    const probe = 1 / view.scale; // 1 px внутрь
+    if (!inside(room, (x0 + x1) / 2 + normal[0] * probe, (y0 + y1) / 2 + normal[1] * probe)) {
+      normal = [-normal[0], -normal[1]];
+    }
+    const box = textAlong(ctx, length.toFixed(0), a, b, normal, 11, C.innerDim);
+    const edge = space.edges?.[i]; // вся внутренняя грань стены дома — длину можно ввести
+    if (hit && edge) hit(box, { kind: 'wall', house: edge[0], wall: edge[1], outer: false, value: Math.round(length) });
+  }
+}
+
+/** Подпись комнаты: название, площадь, плиток, общий пол. */
+function drawRoomLabel(ctx, space, view) {
+  const lines = [space.name, `${space.area.toFixed(2)} м²`];
+  if (space.layout && !space.layout.too_many) { // с зонами: бордюр, ковёр
+    lines.push(`плиток: ${space.zones.reduce((sum, zone) => sum + zone.count, space.layout.count)}`);
+  }
+  if (space.source) lines.push(`пол как: ${space.source}`);
+  const [x, y] = view.toScreen(...space.label);
+  const size = 12.7;
+  const lineHeight = size * 1.3;
+  ctx.font = `${size}px ${FONT}`;
+  const widths = lines.map((text, i) => {
+    ctx.font = `${i === 0 ? '600 ' : ''}${size}px ${FONT}`;
+    return ctx.measureText(text).width;
+  });
+  const w = Math.max(...widths) + 16;
+  const h = lines.length * lineHeight + 8;
+  roundRect(ctx, x - w / 2, y - h / 2, w, h, 5);
+  ctx.fillStyle = C.labelBox;
+  ctx.fill();
+  ctx.strokeStyle = C.labelEdge;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = C.labelText;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  lines.forEach((text, i) => {
+    ctx.font = `${i === 0 ? '600 ' : ''}${size}px ${FONT}`;
+    ctx.fillText(text, x, y - h / 2 + 4 + lineHeight * (i + 0.5));
+  });
+}

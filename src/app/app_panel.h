@@ -1,0 +1,26 @@
+/* Панель свойств: комнаты, дом, стены, перегородки, проёмы, плитка, клей, СВП, расчёт. */
+#ifndef APP_PANEL_H
+#define APP_PANEL_H
+
+#include <gtk/gtk.h>
+
+#include "app_canvas.h"
+#include "app_document.h"
+
+/* Действия, которые выполняет окно (диалоги). */
+typedef struct AppPanelActions {
+    void (*add_house)(void *user_data);
+    void (*print)(void *user_data);
+    void (*open_walls)(void *user_data); /* вкладка стен выделенной комнаты */
+    void (*open_3d)(void *user_data);    /* она же — сразу в 3D */
+    void *user_data;
+} AppPanelActions;
+
+typedef struct AppPanel AppPanel;
+
+AppPanel *app_panel_new(AppDocument *document, AppCanvas *canvas, AppPanelActions actions);
+GtkWidget *app_panel_widget(AppPanel *panel);
+/* Сменился инструмент: настройки рисования видны, пока рисуют или ничего не выделено. */
+void app_panel_tool_changed(AppPanel *panel);
+
+#endif

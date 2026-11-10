@@ -1,0 +1,149 @@
+# Сборка и спецификации на Linux и Windows; пакеты: .deb для Linux,
+# переносные zip для Windows x64 и x86. Релиз выходит, только если собрались все три.
+# Тег vX.Y (совпадающий с версией в CMakeLists.txt и с разделом в CHANGELOG.md) —
+# релиз на GitHub. Имена файлов релиза постоянные (без версии): на них ведут
+# ссылки «скачать последнюю версию» в README.
+name: Сборка
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (.deb)
+    # Пакет требует glibc не новее той, с которой собран, поэтому собирается в самой
+    # старой из поддерживаемых систем — Ubuntu 20.04 (glibc 2.31). Он ставится на
+    # Ubuntu 20.04+, Linux Mint 20+, Debian 11+. Своих машин с 20.04 у GitHub больше нет —
+    # отсюда контейнер.
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v4
+      # Те же пакеты, что в README; file нужен CPack, чтобы найти зависимости программы.
+      - name: Зависимости
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config file libgtk-3-dev
+      - name: Сборка
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+      - name: Спецификации
+        run: (cd build && ctest --output-on-failure)
+      - name: Пакет .deb
+        run: |
+          (cd build && cpack -G DEB)
+          mkdir -p dist
+          cp build/tilelayout_*_amd64.deb dist/TileLayout-linux-amd64.deb
+          dpkg-deb --info dist/TileLayout-linux-amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TileLayout-linux-amd64
+          path: dist/*.deb
+
+  windows:
+    name: Windows ${{ matrix.title }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - msystem: MINGW64
+            title: x64
+            artifact: TileLayout-win64
+            gtk: gtk3:p librsvg:p
+          # В каталоге MSYS2 для 32-битного окружения GTK больше нет — его ставит
+          # packaging/windows/install-mingw32-gtk.sh из архива репозитория.
+          - msystem: MINGW32
+            title: x86
+            artifact: TileLayout-win32
+            gtk: ''
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: zip
+          pacboy: >-
+            toolchain:p cmake:p ninja:p ${{ matrix.gtk }}
+      - name: GTK из архива MSYS2
+        if: matrix.msystem == 'MINGW32'
+        run: packaging/windows/install-mingw32-gtk.sh
+      - name: Версия
+        id: version
+        run: |
+          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            version="$version-dev.${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Проверка GTK
+        run: |
+          if ! command -v pkg-config >/dev/null; then
+            echo "::error::Нет pkg-config"
+            exit 1
+          fi
+          if ! pkg-config --exists --print-errors gtk+-3.0 2>gtk-errors.txt; then
+            echo "::error::GTK для сборки не найден: $(tr '\n' ' ' <gtk-errors.txt)"
+            exit 1
+          fi
+          echo "GTK $(pkg-config --modversion gtk+-3.0)"
+      - name: Сборка
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+      - name: Спецификации
+        run: (cd build && ctest --output-on-failure)
+      - name: Переносная сборка
+        run: packaging/windows/make-portable.sh build "${{ steps.version.outputs.version }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*.zip
+
+  release:
+    name: Релиз
+    if: github.ref_type == 'tag'
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Версия и описание релиза из CHANGELOG.md
+        run: |
+          version=$(sed -nE 's/^project\(TileLayout VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Тег $GITHUB_REF_NAME не совпадает с версией $version в CMakeLists.txt"
+            exit 1
+          fi
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { inside = 1; next }
+            inside && /^## \[/ { exit }
+            inside { print }
+          ' CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "::error::В CHANGELOG.md нет раздела ## [$version]"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Файлы релиза
+        run: ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: release-notes.md

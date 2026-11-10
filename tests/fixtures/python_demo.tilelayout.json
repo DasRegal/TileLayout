@@ -1,0 +1,229 @@
+{
+ "version": 3,
+ "outlines": [
+  {
+   "pts": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     6400.0,
+     0.0
+    ],
+    [
+     6400.0,
+     3600.0
+    ],
+    [
+     0.0,
+     3600.0
+    ]
+   ],
+   "thick": [
+    250.0,
+    250.0,
+    250.0,
+    250.0
+   ],
+   "locked": [
+    false,
+    true,
+    false,
+    false
+   ]
+  }
+ ],
+ "partitions": [
+  {
+   "p1": [
+    4260.0,
+    0.0
+   ],
+   "p2": [
+    4260.0,
+    2460.0
+   ],
+   "thick": 120.0,
+   "locked": true
+  },
+  {
+   "p1": [
+    4200.0,
+    2400.0
+   ],
+   "p2": [
+    6400.0,
+    2400.0
+   ],
+   "thick": 120.0,
+   "locked": false
+  },
+  {
+   "p1": [
+    2000.0,
+    0.0
+   ],
+   "p2": [
+    2000.0,
+    3600.0
+   ],
+   "thick": 100.0,
+   "locked": false
+  }
+ ],
+ "openings": [
+  {
+   "x": 4260.0,
+   "y": 1750.0,
+   "width": 700.0,
+   "locked": false
+  }
+ ],
+ "spaces": [
+  {
+   "id": 1,
+   "name": "Гостиная",
+   "tile": {
+    "enabled": true,
+    "w": 600,
+    "h": 300,
+    "gap": 2,
+    "off_x": 0.0,
+    "off_y": 0.0,
+    "angle": 0.0,
+    "shift": 0.5,
+    "min_cut": 50.0,
+    "reserve": 10.0,
+    "color": "#d9c9a8",
+    "glue_rate": 1.5,
+    "glue_mm": 4.0,
+    "glue_bag": 25.0,
+    "svp_long": 2,
+    "svp_short": 1,
+    "svp_pack": 100,
+    "reuse": true,
+    "cut_allow": 3.0,
+    "wall_gap": 0.0
+   },
+   "source": null,
+   "pts": [
+    [
+     4200.0,
+     0.0
+    ],
+    [
+     4200.0,
+     2460.05
+    ],
+    [
+     6400.0,
+     2460.0
+    ],
+    [
+     6400.0,
+     3600.0
+    ],
+    [
+     2050.0,
+     3600.0
+    ],
+    [
+     2050.0,
+     0.0
+    ]
+   ]
+  },
+  {
+   "id": 2,
+   "name": "Ванная",
+   "tile": {
+    "enabled": true,
+    "w": 300,
+    "h": 300,
+    "gap": 2,
+    "off_x": 0.0,
+    "off_y": 0.0,
+    "angle": 0.0,
+    "shift": 0.0,
+    "min_cut": 50.0,
+    "reserve": 10.0,
+    "color": "#b9d3dc",
+    "glue_rate": 1.5,
+    "glue_mm": 3.0,
+    "glue_bag": 25.0,
+    "svp_long": 2,
+    "svp_short": 1,
+    "svp_pack": 100,
+    "reuse": true,
+    "cut_allow": 3.0,
+    "wall_gap": 0.0
+   },
+   "source": null,
+   "pts": [
+    [
+     4320.0,
+     0.0
+    ],
+    [
+     6400.0,
+     0.0
+    ],
+    [
+     6400.0,
+     2340.0
+    ],
+    [
+     4320.0,
+     2340.0
+    ]
+   ]
+  },
+  {
+   "id": 3,
+   "name": "Спальня",
+   "tile": {
+    "enabled": true,
+    "w": 600,
+    "h": 300,
+    "gap": 2,
+    "off_x": 0.0,
+    "off_y": 0.0,
+    "angle": 0.0,
+    "shift": 0.5,
+    "min_cut": 50.0,
+    "reserve": 10.0,
+    "color": "#d9c9a8",
+    "glue_rate": 1.5,
+    "glue_mm": 4.0,
+    "glue_bag": 25.0,
+    "svp_long": 2,
+    "svp_short": 1,
+    "svp_pack": 100,
+    "reuse": true,
+    "cut_allow": 3.0,
+    "wall_gap": 0.0
+   },
+   "source": 1,
+   "pts": [
+    [
+     1950.0,
+     0.0
+    ],
+    [
+     1950.0,
+     3600.0
+    ],
+    [
+     0.0,
+     3600.0
+    ],
+    [
+     0.0,
+     0.0
+    ]
+   ]
+  }
+ ],
+ "next_id": 4
+}

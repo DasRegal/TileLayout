@@ -1,0 +1,177 @@
+/*
+ * Для печати и плана с номерами: номера плиток (сквозные, как в программе) и
+ * карточки чертежей подрезок.
+ *
+ * tl_web_tile_numbers:
+ * [{"space": id, "numbers": [x, y, номер, ширина куска, высота куска, …]}] — по
+ * раскладке комнаты (основной пол и зоны): центр куска в мм плана, габарит
+ * куска по осям плитки; "rotation" — поворот раскладки, °.
+ *
+ * tl_web_cut_cards:
+ * [{"kind": "single" | "shared" | "offcut" | "drilled", "title", "subtitle", "narrow": bool,
+ *   "tile": {"w", "h", "color", "min_cut"},
+ *   "outline": [x0, y0, …] | null — плитка-многоугольник (шеврон, вставка) от угла габарита,
+ *   "parts": [{"room", "number", "shapes": [[x0, y0, …], …], "drills": [[x, y, диаметр], …],
+ *              "miters": [[x0, y0, x1, y1], …] — стороны с запилом 45°}]}] —
+ * контуры и центры отверстий от угла плитки, мм; первый контур части — внешний, далее дыры.
+ */
+#include <math.h>
+#include <stdlib.h>
+
+#include "tl_dxf.h"
+#include "tl_report.h"
+#include "tl_web.h"
+#include "tl_web_internal.h"
+
+/* Номера одной раскладки комнаты: у бордюра — поворот вдоль своей стены. */
+static TlJson *layout_numbers(const TlSpace *space, const TlLayout *layout)
+{
+    TlJson *numbers = tl_json_array();
+    for (size_t i = 0; i < layout->tiles.count; i++) {
+        const TlTile *t = &layout->tiles.items[i];
+        TlVec2 world = tl_affine_apply(&layout->local_to_world, t->center);
+        bool whole = t->kind == TL_TILE_WHOLE;
+        tl_json_array_push(numbers, tl_web_number(world.x));
+        tl_json_array_push(numbers, tl_web_number(world.y));
+        tl_json_array_push(numbers, tl_json_number(t->number));
+        tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_width(t->rect) : t->piece_width));
+        tl_json_array_push(numbers, tl_web_number(whole ? tl_rect_height(t->rect) : t->piece_height));
+    }
+    TlJson *json = tl_json_object();
+    tl_json_object_set(json, "space", tl_json_number(space->id));
+    const TlAffine *m = &layout->local_to_world;
+    tl_json_object_set(json, "rotation", tl_json_number(atan2(m->b, m->a) * 180 / TL_PI));
+    tl_json_object_set(json, "numbers", numbers);
+    return json;
+}
+
+const char *tl_web_tile_numbers(void)
+{
+    static char *text;
+    TlProject *project = tl_web_project();
+    tl_report_assign_numbers(project);
+    TlJson *layouts = tl_json_array();
+    for (size_t s = 0; s < project->spaces.count; s++) {
+        TlSpace *space = project->spaces.items[s];
+        for (size_t l = 0; l < tl_space_floor_layout_count(space); l++) { /* основной пол и зоны */
+            const TlLayout *layout = tl_space_layout_at(space, l);
+            if (tl_space_layout_counted(space, l))
+                tl_json_array_push(layouts, layout_numbers(space, layout));
+        }
+    }
+    return tl_web_keep(&text, layouts);
+}
+
+static const char *card_kind(TlCutCardKind kind)
+{
+    switch (kind) {
+    case TL_CARD_SHARED_TILE: return "shared";
+    case TL_CARD_OFFCUT_PAIR: return "offcut";
+    case TL_CARD_DRILLED: return "drilled";
+    default: return "single";
+    }
+}
+
+const char *tl_web_cut_cards(void)
+{
+    static char *text;
+    TlCutCardList cards = tl_report_cut_cards(tl_web_project());
+    TlJson *list = tl_json_array();
+    for (size_t c = 0; c < cards.count; c++) {
+        const TlCutCard *card = &cards.items[c];
+        TlJson *json = tl_json_object();
+        tl_json_object_set(json, "kind", tl_json_string(card_kind(card->kind)));
+        tl_json_object_set(json, "title", tl_json_string(card->title));
+        tl_json_object_set(json, "subtitle", tl_json_string(card->subtitle));
+        tl_json_object_set(json, "narrow", tl_json_bool(card->narrow));
+        TlJson *tile = tl_json_object();
+        tl_json_object_set(tile, "w", tl_json_number(card->width));
+        tl_json_object_set(tile, "h", tl_json_number(card->height));
+        tl_json_object_set(tile, "color", tl_json_string(card->color));
+        tl_json_object_set(tile, "min_cut", tl_json_number(card->tile->min_cut_width));
+        tl_json_object_set(json, "tile", tile);
+        tl_json_object_set(json, "outline", card->outline.count ? tl_web_polygon(&card->outline) : tl_json_null());
+        TlJson *parts = tl_json_array();
+        for (size_t p = 0; p < card->parts.count; p++) {
+            const TlCutPart *part = &card->parts.items[p];
+            TlJson *part_json = tl_json_object();
+            tl_json_object_set(part_json, "room", tl_json_string(part->room));
+            tl_json_object_set(part_json, "number", tl_json_number(part->number));
+            TlJson *shapes = tl_json_array();
+            for (size_t i = 0; i < part->shapes.count; i++)
+                tl_json_array_push(shapes, tl_web_polygon(&part->shapes.items[i]));
+            tl_json_object_set(part_json, "shapes", shapes);
+            TlJson *drills = tl_json_array();
+            for (size_t i = 0; i < part->drills.count; i++) {
+                TlJson *drill = tl_json_array();
+                tl_json_array_push(drill, tl_web_number(part->drills.items[i].center.x));
+                tl_json_array_push(drill, tl_web_number(part->drills.items[i].center.y));
+                tl_json_array_push(drill, tl_json_number(part->drills.items[i].diameter));
+                tl_json_array_push(drills, drill);
+            }
+            tl_json_object_set(part_json, "drills", drills);
+            TlJson *miters = tl_json_array(); /* стороны с запилом 45°: [x0, y0, x1, y1] */
+            for (size_t i = 0; i < part->miters.count; i++)
+                tl_json_array_push(miters, tl_web_polygon(&part->miters.items[i]));
+            tl_json_object_set(part_json, "miters", miters);
+            tl_json_array_push(parts, part_json);
+        }
+        tl_json_object_set(json, "parts", parts);
+        tl_json_array_push(list, json);
+    }
+    tl_cut_card_list_free_all(&cards);
+    return tl_web_keep(&text, list);
+}
+
+/* Карта раскроя: [{"name", "color", "figured" (шеврон, вставка: куски у разных торцов, не полосы),
+   "stacks": [{"width", "height", "numbers": [..]}], "pairs": [{"first", "second", "sizes": [a, b]}]}]. */
+const char *tl_web_cut_map(void)
+{
+    static char *text;
+    TlSummary summary = tl_report_summarize(tl_web_project());
+    TlCutMapTypeList map = tl_report_cut_map(&summary);
+    TlJson *types = tl_json_array();
+    for (size_t t = 0; t < map.count; t++) {
+        const TlCutMapType *entry = &map.items[t];
+        TlJson *type = tl_json_object(), *stacks = tl_json_array(), *pairs = tl_json_array();
+        char name[64];
+        tl_tile_spec_name(&entry->type->spec, name, sizeof name);
+        tl_json_object_set(type, "name", tl_json_string(name));
+        tl_json_object_set(type, "color", tl_json_string(entry->type->spec.color));
+        tl_json_object_set(type, "figured", tl_json_bool(!entry->type->spec.rectangular));
+        for (size_t k = 0; k < entry->stacks.count; k++) {
+            const TlCutStack *stack = &entry->stacks.items[k];
+            TlJson *item = tl_json_object(), *numbers = tl_json_array();
+            tl_json_object_set(item, "width", tl_json_number(stack->width));
+            tl_json_object_set(item, "height", tl_json_number(stack->height));
+            for (size_t n = 0; n < stack->numbers.count; n++)
+                tl_json_array_push(numbers, tl_json_number(stack->numbers.items[n]));
+            tl_json_object_set(item, "numbers", numbers);
+            tl_json_array_push(stacks, item);
+        }
+        for (size_t k = 0; k < entry->pairs.count; k++) {
+            const TlCutMapPair *pair = &entry->pairs.items[k];
+            TlJson *item = tl_json_object(), *sizes = tl_json_array();
+            tl_json_object_set(item, "first", tl_json_number(pair->first));
+            tl_json_object_set(item, "second", tl_json_number(pair->second));
+            tl_json_array_push(sizes, tl_json_number(pair->first_size));
+            tl_json_array_push(sizes, tl_json_number(pair->second_size));
+            tl_json_object_set(item, "sizes", sizes);
+            tl_json_array_push(pairs, item);
+        }
+        tl_json_object_set(type, "stacks", stacks);
+        tl_json_object_set(type, "pairs", pairs);
+        tl_json_array_push(types, type);
+    }
+    tl_cut_map_free(&map);
+    tl_summary_free(&summary);
+    return tl_web_keep(&text, types);
+}
+
+const char *tl_web_dxf(int cuts)
+{
+    static char *text;
+    free(text);
+    text = cuts ? tl_dxf_cuts(tl_web_project()) : tl_dxf_plan(tl_web_project());
+    return text;
+}
